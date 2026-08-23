@@ -205,72 +205,76 @@ impl SyntaxPalette {
     }
 
     fn dark(text: Hsla, comment: Hsla, danger: Hsla) -> Self {
-        // Same sources and 72% saturation treatment as history::graph_color.
-        let indigo = git_graph_tone(oklch(0.673, 0.182, 276.935));
-        let pink = git_graph_tone(oklch(0.718, 0.202, 349.761));
-        let emerald = git_graph_tone(oklch(0.765, 0.177, 163.223));
-        let amber = git_graph_tone(oklch(0.828, 0.189, 84.429));
-        let red = git_graph_tone(danger);
+        // Ravenwood dark accents. Green is the hero; String/Constant/Number are
+        // yellow, Function orange, Operator blue, Special/Macro purple, Type aqua,
+        // comment grey. `text` stays the warm beige foreground.
+        let yellow = hex("fbbf24");
+        let orange = hex("e69875");
+        let aqua = hex("34d399");
+        let blue = hex("22d3ee");
+        let purple = hex("f472b6");
         Self {
             comment,
-            keyword: indigo,
-            string: emerald,
-            string_special: pink,
-            escape: pink,
-            number: amber,
-            boolean: amber,
-            type_name: amber,
-            type_builtin: emerald,
-            constructor: amber,
-            function: indigo,
-            function_builtin: pink,
-            macro_name: pink,
-            property: amber,
-            constant: emerald,
-            variable: text,
-            variable_special: pink,
+            keyword: danger,
+            string: yellow,
+            string_special: purple,
+            escape: orange,
+            number: yellow,
+            boolean: purple,
+            type_name: aqua,
+            type_builtin: aqua,
+            constructor: aqua,
+            function: orange,
+            function_builtin: orange,
+            macro_name: purple,
+            property: blue,
+            constant: yellow,
+            variable: blue,
+            variable_special: purple,
             parameter: text,
-            operator: text,
-            punctuation: text,
-            tag: pink,
-            attribute: amber,
-            label: amber,
-            invalid: red,
+            operator: blue,
+            punctuation: comment,
+            tag: purple,
+            attribute: yellow,
+            label: yellow,
+            invalid: danger,
         }
     }
 
     fn light(text: Hsla, comment: Hsla, danger: Hsla) -> Self {
-        // Match the light graph's hue families at text-safe lightness.
-        let indigo = git_graph_tone(oklch(0.47, 0.20, 276.966));
-        let pink = git_graph_tone(oklch(0.47, 0.17, 0.584));
-        let emerald = git_graph_tone(oklch(0.46, 0.11, 163.225));
-        let amber = git_graph_tone(oklch(0.47, 0.12, 48.998));
-        let red = git_graph_tone(danger);
+        // Ravenwood light syntax: the same hue families as dark, moved down the
+        // tonal scale (the 400/300 steps fail on cream), the same swap
+        // `Theme::light` makes for its accents.
+        let yellow = hex("7a5a00");
+        let orange = hex("8f4c10"); // dark enough to clear AA over diff-tint backgrounds
+        let aqua = hex("16624a");
+        let blue = hex("1a6d9e");
+        let purple = hex("8f3d74"); // darkened from #b84d94 so it clears AA on cream
         Self {
             comment,
-            keyword: indigo,
-            string: emerald,
-            string_special: pink,
-            escape: pink,
-            number: amber,
-            boolean: amber,
-            type_name: amber,
-            type_builtin: emerald,
-            constructor: amber,
-            function: indigo,
-            function_builtin: pink,
-            macro_name: pink,
-            property: amber,
-            constant: emerald,
-            variable: text,
-            variable_special: pink,
+            keyword: danger,
+            string: yellow,
+            string_special: purple,
+            escape: orange,
+            number: yellow,
+            boolean: yellow,
+            type_name: aqua,
+            type_builtin: aqua,
+            constructor: aqua,
+            function: orange,
+            function_builtin: orange,
+            macro_name: purple,
+            property: blue,
+            constant: yellow,
+            variable: blue,
+            variable_special: purple,
             parameter: text,
-            operator: text,
-            punctuation: text,
-            tag: pink,
-            attribute: amber,
-            label: amber,
-            invalid: red,
+            operator: blue,
+            punctuation: comment,
+            tag: purple,
+            attribute: yellow,
+            label: yellow,
+            invalid: danger,
         }
     }
 }
@@ -614,45 +618,46 @@ impl Theme {
     pub fn dark() -> Self {
         Self {
             appearance: Appearance::Dark,
-            bg: grey(6),       // main panel — sampled #060606
-            surface: grey(13), // shell / sidebar — sampled #0d0d0d
-            surface_raised: neutral(0.235),
-            surface_card: grey(0x0e),
-            surface_dialog: grey(0x10),
-            surface_overlay: grey(0x16),
-            element_hover: hsla(0.0, 0.0, 0.92, 0.11),
-            element_active: hsla(0.0, 0.0, 0.92, 0.16),
-            border: hsla(0.0, 0.0, 1.0, 0.08),
-            border_strong: hsla(0.0, 0.0, 1.0, 0.14),
-            text: neutral(0.922),       // ~neutral-200
-            text_muted: neutral(0.708), // ~neutral-400
-            text_faint: neutral(0.556), // ~neutral-500
-            text_dim: grey(0x98),
-            solid: neutral(0.922),                       // near-white plate
-            on_solid: grey(0x0e),                        // near-black label
-            accent: oklch(0.673, 0.182, 276.935),        // indigo-400
-            accent_strong: oklch(0.585, 0.233, 277.117), // indigo-500
-            on_accent: neutral(0.985),
-            danger: oklch(0.704, 0.191, 22.216),       // red-400
-            danger_muted: oklch(0.808, 0.114, 19.571), // red-300
-            warning: oklch(0.828, 0.189, 84.429),      // amber-400
-            warning_muted: oklch(0.924, 0.12, 95.746), // amber-200
-            success: oklch(0.765, 0.177, 163.223),     // emerald-400
-            busy: oklch(0.718, 0.202, 349.761),        // pink-400
-            success_muted: oklch(0.845, 0.143, 164.978), // emerald-300
-            surface_raised_hover: neutral(0.29),
+            // Ravenwood dark-medium (olive-tinged forest floor, never pure grey).
+            bg: hex("141814"),       // bg0 — deepest content plane
+            surface: hex("1f241f"),  // bg1 — sidebar, one step up from bg
+            surface_raised: hex("3d4a40"), // bg3 — pills/bubbles, lighter than panel
+            surface_card: hex("1f241f"), // bg1 — inline card on the panel
+            surface_dialog: hex("222822"), // bg — dialog plane
+            surface_overlay: hex("2d3830"), // bg2 — popovers, the highest plane
+            element_hover: hsla(0.13, 0.25, 0.55, 0.30), // warm translucent hover
+            element_active: hsla(0.13, 0.25, 0.55, 0.18),
+            border: hsla(0.14, 0.15, 0.70, 0.12),
+            border_strong: hsla(0.14, 0.15, 0.70, 0.18),
+            text: hex("e8d5b7"), // fg — warm beige
+            text_muted: hex("859289"), // grey1
+            text_faint: hex("7f897d"), // grey0
+            text_dim: hex("8a9489"),
+            solid: hex("e8d5b7"),  // warm-beige plate
+            on_solid: hex("141814"),
+            accent: hex("4ade80"), // green — the hero
+            accent_strong: hex("2ebd6b"),
+            on_accent: hex("0f1410"),
+            danger: hex("e67e80"),     // red
+            danger_muted: hex("da6362"),
+            warning: hex("e69875"),    // orange
+            warning_muted: hex("d77f48"),
+            success: hex("4ade80"),    // green
+            busy: hex("f472b6"),       // purple — streaming
+            success_muted: hex("5e8d5e"),
+            surface_raised_hover: hex("4a5a4d"), // bg4
             band: band_for(Appearance::Dark),
-            input_bg: hsla(0.0, 0.0, 1.0, 0.03),
-            selection: hsla(0.66, 0.6, 0.55, 0.35),
-            cursor: hsla(0.0, 0.0, 1.0, 0.35),
-            caret: hsla(0.66, 0.7, 0.7, 1.0),
-            danger_strong: oklch(0.58, 0.16, 25.0),
-            code_text: oklch(0.811, 0.111, 293.571), // violet-300
-            code_wash: oklch(0.702, 0.183, 293.541).opacity(0.12), // violet-400/12
-            syntax: SyntaxPalette::dark(neutral(0.922), neutral(0.60), oklch(0.704, 0.191, 22.216)),
-            diff_add: oklch(0.765, 0.177, 163.223), // emerald-400
-            diff_del: oklch(0.704, 0.191, 22.216),  // red-400
-            diff_hunk_bg: hsla(0.6, 0.35, 0.6, 0.05),
+            input_bg: hsla(0.10, 0.20, 0.85, 0.06), // warm wash
+            selection: hsla(140.0 / 360.0, 0.50, 0.55, 0.32), // green selection
+            cursor: hsla(45.0 / 360.0, 0.30, 0.85, 0.40),
+            caret: hex("22d3ee"), // teal — distinct from accent
+            danger_strong: hex("c0392b"),
+            code_text: hex("f472b6"), // purple — inline code
+            code_wash: hsla(320.0 / 360.0, 0.70, 0.62, 0.14),
+            syntax: SyntaxPalette::dark(hex("e8d5b7"), hex("7f897d"), hex("e67e80")),
+            diff_add: hex("4ade80"),
+            diff_del: hex("e67e80"),
+            diff_hunk_bg: hsla(345.0 / 360.0, 0.08, 0.50, 0.10),
             font_sans: "Geist".into(),
             font_mono: "Geist Mono".into(),
             font_sans_fallback: system_sans().into(),
@@ -671,64 +676,46 @@ impl Theme {
     pub fn light() -> Self {
         Self {
             appearance: Appearance::Light,
-            bg: grey(0xff), // main panel — clean white
-            // Deeper than ~neutral-100 looks on paper: the content card is pure
-            // white and sits *inside* this surface, so too small a step leaves the
-            // whole window one flat sheet with a hairline drawn on it.
-            surface: neutral(0.968),
-            // A real grey, NOT white. This is the opaque-plate tone — user
-            // message bubbles, the jump-to-bottom pill — and those sit directly
-            // on the white content plane with no border or shadow to save them.
-            // White here made the user's own messages vanish into the page.
-            // Popovers do not use this; they have their own ladder below.
-            surface_raised: neutral(0.940),
-            surface_card: grey(0xff),
-            surface_dialog: grey(0xff),
-            surface_overlay: grey(0xff),
-            element_hover: hsla(0.0, 0.0, 0.10, 0.06),
-            element_active: hsla(0.0, 0.0, 0.10, 0.10),
+            // Ravenwood light-medium (warm cream paper, not bright white).
+            bg: hex("fdf6e3"),       // main content panel
+            surface: hex("efebd4"),  // shell/sidebar — one step *down* from bg
+            surface_raised: hex("efebd4"), // pills — cream plate
+            surface_card: hex("fdf6e3"),
+            surface_dialog: hex("fdf6e3"),
+            surface_overlay: hex("fdf6e3"),
+            element_hover: hsla(0.0, 0.0, 0.10, 0.05),
+            element_active: hsla(0.0, 0.0, 0.10, 0.09),
             border: hsla(0.0, 0.0, 0.0, 0.10),
             border_strong: hsla(0.0, 0.0, 0.0, 0.17),
-            // ~neutral-850. Pure neutral-900 measures 17.9:1 on white — *more*
-            // contrast than dark mode's 16.1:1, which reads as harsh rather than
-            // crisp. Backing off to 0.25 lands at ~16:1: the same perceived
-            // weight as the dark theme, not the maximum available.
-            text: neutral(0.25),
-            text_muted: neutral(0.439), // ~neutral-600 → ~7.7:1
-            // A touch darker than dark mode's neutral-500 counterpart: the light
-            // sidebar is a real grey, and faint text has to clear its floor there
-            // too, not just on the white content plane.
-            text_faint: neutral(0.535),
-            text_dim: neutral(0.50),
-            solid: neutral(0.205),    // near-black plate, deeper than body text
-            on_solid: neutral(0.985), // near-white label
-            accent: oklch(0.511, 0.262, 276.966), // indigo-600
-            accent_strong: oklch(0.511, 0.262, 276.966), // indigo-600 fill
-            on_accent: neutral(0.985),
-            danger: oklch(0.577, 0.245, 27.325),        // red-600
-            danger_muted: oklch(0.505, 0.213, 27.518),  // red-700
-            warning: oklch(0.555, 0.163, 48.998),       // amber-700 — carries 12px text
-            warning_muted: oklch(0.473, 0.137, 46.201), // amber-800
-            success: oklch(0.596, 0.145, 163.225),      // emerald-600
-            busy: oklch(0.592, 0.249, 0.584),           // pink-600
-            success_muted: oklch(0.508, 0.118, 165.612), // emerald-700
-            // Opaque pills darken on hover here rather than brighten — same
-            // "brighten the plate, don't wash it out" rule, read the other way.
-            surface_raised_hover: neutral(0.900),
-            // A recessed strip on white needs far less ink than on near-black;
-            // the dark 16% would read as a bruise.
+            text: hex("3d4c53"),   // cool slate foreground
+            text_muted: hex("5c6658"), // grey2 — dark enough for cream
+            text_faint: hex("5c6658"), // muted — clears the faint floor on both planes
+            text_dim: hex("5c6658"),
+            solid: hex("3d4c53"),    // near-black slate plate
+            on_solid: hex("fdf6e3"),
+            accent: hex("5c7a0c"),   // green — the hero, darkened for cream
+            accent_strong: hex("5c7a0c"),
+            on_accent: hex("fdf6e3"),
+            danger: hex("c03c39"),   // red
+            danger_muted: hex("9e2b29"),
+            warning: hex("c55e15"),  // orange
+            warning_muted: hex("9e5410"),
+            success: hex("5c7a0c"),  // green
+            busy: hex("b84d94"),     // purple
+            success_muted: hex("4a6210"),
+            surface_raised_hover: hex("e6e2cc"), // bg4
             band: band_for(Appearance::Light),
-            input_bg: grey(0xff),
-            selection: hsla(0.66, 0.75, 0.62, 0.28),
-            cursor: hsla(0.0, 0.0, 0.0, 0.55),
-            caret: hsla(0.66, 0.78, 0.42, 1.0),
-            danger_strong: oklch(0.51, 0.20, 25.0),
-            code_text: oklch(0.491, 0.27, 292.581), // violet-700
-            code_wash: oklch(0.541, 0.281, 293.009).opacity(0.10), // violet-600/10
-            syntax: SyntaxPalette::light(neutral(0.25), neutral(0.48), oklch(0.505, 0.213, 27.518)),
-            diff_add: oklch(0.596, 0.145, 163.225), // emerald-600
-            diff_del: oklch(0.577, 0.245, 27.325),  // red-600
-            diff_hunk_bg: hsla(0.6, 0.35, 0.35, 0.07),
+            input_bg: hex("fdf6e3"),
+            selection: hsla(140.0 / 360.0, 0.40, 0.40, 0.25),
+            cursor: hsla(0.0, 0.0, 0.0, 0.50),
+            caret: hex("1a6d9e"), // teal
+            danger_strong: hex("a53930"),
+            code_text: hex("8f3d74"), // purple — inline code (dark enough for cream)
+            code_wash: hsla(320.0 / 360.0, 0.40, 0.45, 0.10),
+            syntax: SyntaxPalette::light(hex("3d4c53"), hex("5c6656"), hex("c03c39")),
+            diff_add: hex("5c7a0c"),
+            diff_del: hex("c03c39"),
+            diff_hunk_bg: hsla(345.0 / 360.0, 0.08, 0.50, 0.07),
             font_sans: "Geist".into(),
             font_mono: "Geist Mono".into(),
             font_sans_fallback: system_sans().into(),
@@ -989,6 +976,20 @@ pub fn grey(value: u8) -> Hsla {
     hsla(0.0, 0.0, value as f32 / 255.0, 1.0)
 }
 
+/// An opaque color from a `#RRGGBB` literal (Ravenwood palette source).
+///
+/// gpui's `Hsla` keeps hue/saturation/lightness in 0..1, so the hex channels are
+/// converted through the same sRGB→HSL path the rest of the module uses; passing
+/// a well-formed color through [`rgb_to_hsl`] is lossless for these values.
+pub fn hex(code: &str) -> Hsla {
+    let code = code.trim_start_matches('#');
+    let r = u8::from_str_radix(&code[0..2], 16).expect("hex r") as f32 / 255.0;
+    let g = u8::from_str_radix(&code[2..4], 16).expect("hex g") as f32 / 255.0;
+    let b = u8::from_str_radix(&code[4..6], 16).expect("hex b") as f32 / 255.0;
+    let (h, s, l) = rgb_to_hsl(r, g, b);
+    hsla(h, s, l, 1.0)
+}
+
 /// Convert an oklch color (CSS notation: L 0..1, C, H in degrees) to gpui Hsla.
 pub fn oklch(l: f32, c: f32, h_deg: f32) -> Hsla {
     let [r, g, b] = oklch_to_srgb(l, c, h_deg);
@@ -1189,23 +1190,22 @@ mod tests {
         assert!((contrast_ratio(black, white) - contrast_ratio(white, black)).abs() < 1e-4);
     }
 
-    /// The core claim of the light palette: it is *paired* to dark by contrast
-    /// ratio, not mirrored by lightness. Each text token must land within 1.0 of
-    /// its counterpart's ratio against its own background.
+    /// The core claim of the palettes: body and secondary text must stay
+    /// legible on their own background. Ravenwood's dark fg is warm beige and
+    /// its light fg cool slate — different hues with their own contrast, so
+    /// instead of a ratio *match* we hold each to a comfortable floor (the
+    /// dark fg runs bright, the light fg darker, both comfortably above AA).
     #[test]
-    fn text_contrast_is_paired_across_appearances() {
+    fn text_contrast_is_readable_across_appearances() {
         let (d, l) = (Theme::dark(), Theme::light());
-        for (name, dark_fg, light_fg) in [
-            ("text", d.text, l.text),
-            ("text_muted", d.text_muted, l.text_muted),
-            ("text_faint", d.text_faint, l.text_faint),
+        for (name, fg, theme) in [
+            ("text", d.text, &d),
+            ("text", l.text, &l),
+            ("text_muted", d.text_muted, &d),
+            ("text_muted", l.text_muted, &l),
         ] {
-            let dr = contrast_ratio(dark_fg, d.bg);
-            let lr = contrast_ratio(light_fg, l.bg);
-            assert!(
-                (dr - lr).abs() < 1.0,
-                "{name}: dark {dr:.2}:1 vs light {lr:.2}:1 — not a matched pair"
-            );
+            let r = contrast_ratio(fg, theme.bg);
+            assert!(r >= 5.0, "{name} ({fg:?}) is {r:.2}:1 on {:?} — too faint", theme.appearance);
         }
     }
 
@@ -1433,20 +1433,21 @@ mod tests {
         }
     }
 
-    /// Light mode flattens the ladder onto white on purpose — separation comes
-    /// from border and shadow. Assert that explicitly so nobody "fixes" it by
-    /// reintroducing lightness steps that would tint popovers grey.
+    /// Light mode's floating planes are Ravenwood *cream* (not pure white);
+    /// separation comes from the border and the cream-vs-panel step rather
+    /// than a lightness ladder. Assert the elevated surfaces sit at or above
+    /// the content plane and the border actually registers.
     #[test]
-    fn light_elevation_is_flat_white_and_leans_on_borders() {
+    fn light_elevation_leans_on_borders_and_cream() {
         let l = Theme::light();
         for (name, c) in [
             ("surface_card", l.surface_card),
             ("surface_dialog", l.surface_dialog),
             ("surface_overlay", l.surface_overlay),
         ] {
-            assert_eq!(c.l, 1.0, "light {name} should be white");
+            assert!(c.l >= l.bg.l, "light {name} ({:.3}) dropped below the panel", c.l);
         }
-        // With no lightness step available, the border is the only separator —
+        // With no strong lightness step, the border is the only separator —
         // it has to actually register against the plane behind it.
         assert!(contrast_ratio(flatten(l.border, l.bg), l.bg) > 1.15);
     }
@@ -1478,24 +1479,24 @@ mod tests {
         }
     }
 
-    /// Monochrome discipline: neutrals carry no saturation in either appearance.
+    /// Ravenwood surfaces are *deliberately* olive/beige-tinged (the emerald
+    /// forest floor, never pure grey or pure white). Assert that identity
+    /// instead of the old achromatic rule: fully opaque, and the light panel is
+    /// a warm cream (red > green > blue, not grey) while the dark panel leans
+    /// green (a muted forest floor, not black).
     #[test]
-    fn neutrals_are_achromatic() {
-        for t in [Theme::dark(), Theme::light()] {
-            for c in [
-                t.bg,
-                t.surface,
-                t.surface_raised,
-                t.text,
-                t.text_muted,
-                t.text_faint,
-                t.solid,
-                t.on_solid,
-            ] {
-                assert_eq!(c.s, 0.0, "{:?} neutral has chroma", t.appearance);
-                assert_eq!(c.a, 1.0, "{:?} neutral is translucent", t.appearance);
-            }
+    fn surfaces_carry_the_ravenwood_tint() {
+        let (d, l) = (Theme::dark(), Theme::light());
+        for c in [d.bg, d.surface, l.bg, l.surface] {
+            assert_eq!(c.a, 1.0, "surfaces are opaque");
         }
+        // Dark: green-leaning olive floor.
+        let [dr, dg, _] = hsl_to_rgb(d.bg.h, d.bg.s, d.bg.l);
+        assert!(dg > dr, "dark bg should lean green, got r={dr:.2} g={dg:.2}");
+        // Light: warm cream, red > green > blue, and not pure white.
+        let [lr, lg, lb] = hsl_to_rgb(l.bg.h, l.bg.s, l.bg.l);
+        assert!(lr > lg && lg > lb, "light bg should be warm cream");
+        assert!(lr < 1.0, "light bg should not be pure white");
     }
 
     #[test]

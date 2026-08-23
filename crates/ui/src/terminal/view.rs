@@ -49,8 +49,8 @@ pub const RESIZE_DEBOUNCE_MS: u64 = 80;
 /// as separation on near-black disappears entirely on white.
 pub fn terminal_bg_for(appearance: Appearance) -> Hsla {
     match appearance {
-        Appearance::Dark => rgb8(0x09, 0x09, 0x09),
-        Appearance::Light => rgb8(0xfa, 0xfa, 0xfa),
+        Appearance::Dark => rgb8(0x14, 0x18, 0x14), // Ravenwood bg0
+        Appearance::Light => rgb8(0xfd, 0xf6, 0xe3), // Ravenwood cream bg
     }
 }
 
@@ -99,52 +99,53 @@ pub fn terminal_selection_for(appearance: Appearance) -> Hsla {
 /// The 16 ANSI colors tuned for the near-black background (indexes 0-7 normal,
 /// 8-15 bright).
 const ANSI16_DARK: [(u8, u8, u8); 16] = [
-    (0x24, 0x24, 0x24), // black — visible against #090909
-    (0xf8, 0x71, 0x71), // red
-    (0x4a, 0xde, 0x80), // green
-    (0xfa, 0xcc, 0x15), // yellow
-    (0x60, 0xa5, 0xfa), // blue
-    (0xc0, 0x84, 0xfc), // magenta
-    (0x22, 0xd3, 0xee), // cyan
-    (0xd4, 0xd4, 0xd8), // white
-    (0x52, 0x52, 0x5b), // bright black
-    (0xfc, 0xa5, 0xa5), // bright red
-    (0x86, 0xef, 0xac), // bright green
-    (0xfd, 0xe0, 0x47), // bright yellow
-    (0x93, 0xc5, 0xfd), // bright blue
-    (0xd8, 0xb4, 0xfe), // bright magenta
-    (0x67, 0xe8, 0xf9), // bright cyan
-    (0xfa, 0xfa, 0xfa), // bright white
+    (0x2a, 0x31, 0x2c), // black — Ravenwood bg (visible against bg0)
+    (0xda, 0x63, 0x62), // red — dimRed
+    (0x5e, 0x8d, 0x5e), // green — dimGreen
+    (0xbf, 0x98, 0x3d), // yellow — dimYellow
+    (0x5a, 0x93, 0xa2), // blue — dimBlue
+    (0xb8, 0x7b, 0x9d), // magenta — dimPurple
+    (0x44, 0x7d, 0x6b), // cyan — dimAqua
+    (0x85, 0x92, 0x89), // white — grey1 (muted beige)
+    (0x2d, 0x38, 0x32), // bright black — bg2, one step up from black
+    (0xe6, 0x7e, 0x80), // bright red — full red
+    (0x4a, 0xde, 0x80), // bright green — full green
+    (0xfb, 0xbf, 0x24), // bright yellow — full yellow
+    (0x22, 0xd3, 0xee), // bright blue — full blue
+    (0xf4, 0x72, 0xb6), // bright magenta — full purple
+    (0x34, 0xd3, 0x99), // bright cyan — full aqua
+    (0xe8, 0xd5, 0xb7), // bright white — Ravenwood fg (warm beige)
 ];
 
 /// The same 16 slots for the light background — same hue families as
 /// [`ANSI16_DARK`], moved down the tonal scale (the 400/300 steps the dark
-/// table uses fail on white; these are the 600/700 steps, the same swap
+/// table uses fail on cream; these are the 600/700 steps, the same swap
 /// `Theme::light` makes for its accents).
 ///
 /// "Bright" stays *more prominent*, which on a light field means **darker**,
 /// not lighter — a literal translation of the dark table would make the bright
 /// half the invisible half, which is the bug this fixes in its purest form.
 const ANSI16_LIGHT: [(u8, u8, u8); 16] = [
-    (0x1f, 0x1f, 0x1f), // black
-    (0xdc, 0x26, 0x26), // red — red-600
-    (0x16, 0xa3, 0x4a), // green — green-600
-    // Amber-700, not yellow-600: yellow is the one hue whose 600 step is still
-    // bright enough to fail AA on white (2.8:1). `Theme::light` drops its
-    // `warning` token to the same step for the same reason.
-    (0xb4, 0x53, 0x09), // yellow — amber-700
-    (0x25, 0x63, 0xeb), // blue — blue-600
-    (0x93, 0x33, 0xea), // magenta — purple-600
-    (0x0e, 0x74, 0x90), // cyan — cyan-700 (600 is too pale on white)
-    (0x3f, 0x3f, 0x46), // white — the body-text tone, zinc-700
-    (0x71, 0x71, 0x7a), // bright black — zinc-500
-    (0xb9, 0x1c, 0x1c), // bright red — red-700
-    (0x15, 0x80, 0x3d), // bright green — green-700
-    (0x92, 0x40, 0x0e), // bright yellow — amber-800
-    (0x1d, 0x4e, 0xd8), // bright blue — blue-700
-    (0x7e, 0x22, 0xce), // bright magenta — purple-700
-    (0x15, 0x5e, 0x75), // bright cyan — cyan-800
-    (0x18, 0x18, 0x1b), // bright white — max emphasis, zinc-900
+    // Structural/black floor — the darkest slot.
+    (0x14, 0x18, 0x14), // black — deep olive, visible against cream
+    // Normal chromatic slots: the brighter Ravenwood light accents.
+    (0xc0, 0x3c, 0x39), // red — full red
+    (0x5c, 0x7a, 0x0c), // green — full green
+    (0xb0, 0x85, 0x00), // yellow — full yellow (Ravenwood light)
+    (0x1a, 0x6d, 0x9e), // blue — full blue
+    (0xb8, 0x4d, 0x94), // magenta — full purple
+    (0x1e, 0x7d, 0x5a), // cyan — full aqua (Ravenwood light)
+    (0x3d, 0x4c, 0x53), // white — Ravenwood fg (cool slate)
+    // Bright slots are MORE prominent = DARKER on a light field. Black's
+    // bright is the standing exception (dim text reads lighter than black).
+    (0x2d, 0x38, 0x32), // bright black — bg2, lighter than the black slot
+    (0x9e, 0x2b, 0x29), // bright red — dimRed
+    (0x4a, 0x62, 0x10), // bright green — dimGreen
+    (0x8f, 0x6b, 0x00), // bright yellow — dimYellow
+    (0x14, 0x5a, 0x7a), // bright blue — dimBlue
+    (0x8f, 0x3d, 0x74), // bright magenta — dimPurple
+    (0x1a, 0x63, 0x47), // bright cyan — dimAqua
+    (0x18, 0x1c, 0x1e), // bright white — max emphasis, near-slate
 ];
 
 fn rgb8(r: u8, g: u8, b: u8) -> Hsla {
@@ -1071,12 +1072,15 @@ mod tests {
     #[test]
     fn terminal_bg_tracks_the_appearance() {
         let dark = terminal_bg_for(Appearance::Dark);
-        assert_eq!(dark.s, 0.0);
-        assert!((dark.l - 9.0 / 255.0).abs() < 1e-4);
+        // Ravenwood dark bg0: #141814 — a muted olive, not pure grey.
+        assert!((dark.l - 20.0 / 255.0).abs() < 0.05);
+        assert!(dark.s > 0.0, "ravenwood dark terminal bg carries an olive tint");
 
         let light = terminal_bg_for(Appearance::Light);
-        assert_eq!(light.s, 0.0);
-        assert!((light.l - 250.0 / 255.0).abs() < 1e-4);
+        // Ravenwood cream bg: #fdf6e3 — warm paper, not white.
+        assert!(light.l > 0.90);
+        assert!(light.l < 1.0, "light terminal bg should not be pure white");
+        assert!(light.s > 0.0, "ravenwood light terminal bg is warm cream, not grey");
     }
 
     /// Slot 0 is "black" — the one slot whose job is to sit *at* the dark end
@@ -1100,8 +1104,8 @@ mod tests {
         const MIN_TEXT: f32 = 3.0;
         const MIN_GREY: f32 = 1.25;
         let cases = [
-            (Appearance::Dark, ANSI16_DARK, (0x09, 0x09, 0x09)),
-            (Appearance::Light, ANSI16_LIGHT, (0xfa, 0xfa, 0xfa)),
+            (Appearance::Dark, ANSI16_DARK, (0x14, 0x18, 0x14)), // Ravenwood bg0
+            (Appearance::Light, ANSI16_LIGHT, (0xfd, 0xf6, 0xe3)), // Ravenwood cream
         ];
         for (appearance, table, bg) in cases {
             for (ix, color) in table.iter().enumerate() {

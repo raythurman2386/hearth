@@ -16,7 +16,7 @@
 
 use std::borrow::Cow;
 
-use gpui::{AssetSource, Hsla, Result, SharedString, Styled as _, Svg, svg};
+use gpui::{svg, AssetSource, Hsla, Result, SharedString, Styled as _, Svg};
 
 macro_rules! icon_assets {
     ($(($const_name:ident, $path:literal)),+ $(,)?) => {
@@ -162,6 +162,7 @@ icon_assets![
     (CURSOR_MARK, "cursor-mark"),
     (GROK_MARK, "grok-mark"),
     (HERMES_MARK, "hermes-mark"),
+    (RAVEN_MARK, "raven-mark"),
     (PI_MARK, "pi-mark"),
     (OPENCODE_MARK, "opencode-mark"),
 ];
