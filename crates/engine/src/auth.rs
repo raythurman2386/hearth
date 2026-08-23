@@ -1,5 +1,5 @@
 //! Auth — the engine owns the WorkOS session for its device (feature-inventory §3.7,
-//! ARCHITECTURE §5). Port of zeron's `apps/backend/src/auth.ts`.
+//! ARCHITECTURE §5). Port of hearth's `apps/backend/src/auth.ts`.
 //!
 //! The engine is a public client: it builds the AuthKit authorize URL itself but
 //! delegates the secret-bearing **code exchange** and **refresh** to the edge Worker
@@ -59,7 +59,7 @@ pub struct OrgMembership {
 }
 
 /// AuthStatus stream payload (`SignedOut | NeedsOrganization{user} |
-/// SignedIn{user, orgId?}`). Serializes as the canonical [`zeron_proto::AuthState`]
+/// SignedIn{user, orgId?}`). Serializes as the canonical [`hearth_proto::AuthState`]
 /// wire shape (`{"state": "signedIn", …}`) so every client parses one form.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AuthState {
@@ -93,18 +93,18 @@ impl AuthState {
     }
 
     /// The proto wire twin — the one shape the engine emits over AuthStatus.
-    pub fn to_proto(&self) -> zeron_proto::AuthState {
-        let profile = |user: &AuthUser| zeron_proto::UserProfile {
+    pub fn to_proto(&self) -> hearth_proto::AuthState {
+        let profile = |user: &AuthUser| hearth_proto::UserProfile {
             id: user.id.clone(),
             email: user.email.clone(),
             name: user.name.clone(),
         };
         match self {
-            AuthState::SignedOut => zeron_proto::AuthState::SignedOut,
-            AuthState::NeedsOrganization { user } => zeron_proto::AuthState::NeedsOrganization {
+            AuthState::SignedOut => hearth_proto::AuthState::SignedOut,
+            AuthState::NeedsOrganization { user } => hearth_proto::AuthState::NeedsOrganization {
                 user: profile(user),
             },
-            AuthState::SignedIn { user, org_id } => zeron_proto::AuthState::SignedIn {
+            AuthState::SignedIn { user, org_id } => hearth_proto::AuthState::SignedIn {
                 user: profile(user),
                 org_id: org_id.clone(),
             },
@@ -132,7 +132,7 @@ pub struct AuthConfig {
     pub workos_client_id: Option<String>,
     /// WorkOS API base (authorize URL host).
     pub workos_api_base: String,
-    /// Dev-mode bearer/user id (mirrors the old `ZERON_EDGE_TOKEN` behavior).
+    /// Dev-mode bearer/user id (mirrors the old `HEARTH_EDGE_TOKEN` behavior).
     pub dev_user_id: String,
     /// Loopback callback port; `None` = ephemeral.
     pub callback_port: Option<u16>,
@@ -381,8 +381,8 @@ impl Auth {
                 return;
             }
             let mut state_rx = auth.watch_state();
-            let mut wake = zeron_sync::wake::subscribe();
-            let mut online = zeron_sync::wake::subscribe_online();
+            let mut wake = hearth_sync::wake::subscribe();
+            let mut online = hearth_sync::wake::subscribe_online();
             loop {
                 if !state_rx.borrow().is_signed_in() {
                     if state_rx.changed().await.is_err() {
@@ -645,7 +645,7 @@ impl Auth {
         let sign_in = lock(&self.inner.sign_in);
         if sign_in.generation != generation {
             return Err(EngineError::Other(
-                "sign-in was canceled — start again from Zeron".into(),
+                "sign-in was canceled — start again from Hearth".into(),
             ));
         }
         let org_id = jwt_claims(&result.access_token).and_then(|c| c.org_id);
@@ -867,10 +867,10 @@ fn state_for(user: AuthUser, org_id: Option<String>) -> AuthState {
     }
 }
 
-/// The relay/room token seam: `Auth` IS a [`zeron_rpc::TokenSource`], so the host relay
+/// The relay/room token seam: `Auth` IS a [`hearth_rpc::TokenSource`], so the host relay
 /// and link cache always dial with a fresh bearer after refreshes.
 #[async_trait::async_trait]
-impl zeron_rpc::TokenSource for Auth {
+impl hearth_rpc::TokenSource for Auth {
     async fn token(&self) -> Option<String> {
         if self.inner.workos.is_some() && !self.state().is_signed_in() {
             return None;
@@ -938,7 +938,7 @@ async fn handle_loopback_conn(
         let invalid_callback = || {
             (
                 "400 Bad Request",
-                page("Invalid or expired sign-in link. Start again from Zeron."),
+                page("Invalid or expired sign-in link. Start again from Hearth."),
             )
         };
         match (code, state) {
@@ -947,14 +947,14 @@ async fn handle_loopback_conn(
                     Ok(result) => match auth.finish_sign_in(result, generation) {
                         Ok(()) => (
                             "200 OK",
-                            page("Signed in. You can close this tab and return to Zeron."),
+                            page("Signed in. You can close this tab and return to Hearth."),
                         ),
                         Err(err) => {
                             tracing::info!(error = %err, "auth: discarded canceled callback exchange");
                             (
                                 "409 Conflict",
                                 page(
-                                    "This sign-in was canceled. Start again from Zeron if you still want to enable sync.",
+                                    "This sign-in was canceled. Start again from Hearth if you still want to enable sync.",
                                 ),
                             )
                         }
@@ -963,7 +963,7 @@ async fn handle_loopback_conn(
                         tracing::warn!(error = %err, "auth: loopback code exchange failed");
                         (
                             "502 Bad Gateway",
-                            page("Sign-in failed during token exchange — check the Zeron logs."),
+                            page("Sign-in failed during token exchange — check the Hearth logs."),
                         )
                     }
                 },
@@ -1166,8 +1166,8 @@ mod tests {
             })
         );
         // The proto type itself round-trips the emitted value.
-        let parsed: zeron_proto::AuthState = serde_json::from_value(value).expect("proto parse");
-        assert!(matches!(parsed, zeron_proto::AuthState::SignedIn { .. }));
+        let parsed: hearth_proto::AuthState = serde_json::from_value(value).expect("proto parse");
+        assert!(matches!(parsed, hearth_proto::AuthState::SignedIn { .. }));
         assert_eq!(
             serde_json::to_value(AuthState::SignedOut).expect("json"),
             serde_json::json!({"state": "signedOut"})

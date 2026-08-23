@@ -1,12 +1,12 @@
 [package]
-name = "zeron-doc"
+name = "hearth-doc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
-zeron-proto.workspace = true
+hearth-proto.workspace = true
 loro.workspace = true
 serde.workspace = true
 serde_json.workspace = true

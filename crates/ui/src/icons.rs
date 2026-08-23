@@ -1,15 +1,15 @@
 //! Embedded icon assets + the gpui [`AssetSource`] that serves them.
 //!
-//! The set mirrors the original zeron's icon usage exactly:
+//! The set mirrors the original hearth's icon usage exactly:
 //! - Most glyphs come from the **Solar Icons** set (Linear weight) by 480 Design,
 //!   the same set the Electron app used via `@solar-icons/react`. Solar Icons is
 //!   licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/);
 //!   attribution: "Solar Icons by 480 Design".
 //! - The terminal tab glyphs (`terminal`, `plus`, `close`) and the stop square
-//!   are ports of the hand-drawn inline SVGs in zeron's `terminal-panel.tsx` /
+//!   are ports of the hand-drawn inline SVGs in hearth's `terminal-panel.tsx` /
 //!   `composer-actions.tsx`.
 //! - The harness brand marks (`claude-mark`, `openai-mark`, `cursor-mark`) are
-//!   ports of zeron's `icons.tsx`. gpui tints SVGs with the text color, so the
+//!   ports of hearth's `icons.tsx`. gpui tints SVGs with the text color, so the
 //!   Claude mark's brand orange is applied at the call site ([`CLAUDE_BRAND`]).
 //!
 //! Icons render via [`icon`]: `icon(icons::PAPERCLIP).size(px(16.)).text_color(…)`.
@@ -65,7 +65,7 @@ icon_assets![
     (CLOUD, "cloud"),
     (TAG, "tag"),
     (SIDEBAR_MINIMALISTIC, "sidebar-minimalistic"),
-    // Mirrored variant (zeron window-controls.tsx `-scale-x-100`): the LEFT
+    // Mirrored variant (hearth window-controls.tsx `-scale-x-100`): the LEFT
     // sidebar toggle shows the panel line on the left; gpui divs have no
     // scale transform at the pinned rev, so the flip is baked into the asset.
     (SIDEBAR_MINIMALISTIC_LEFT, "sidebar-minimalistic-left"),
@@ -130,7 +130,7 @@ icon_assets![
     // plus/return ports) — the embedded set has neither.
     (BELL, "bell"),
     (VOLUME_LOUD, "volume-loud"),
-    // Hand-drawn zeron glyphs (terminal-panel.tsx / composer-actions.tsx /
+    // Hand-drawn hearth glyphs (terminal-panel.tsx / composer-actions.tsx /
     // menu-check.tsx / logo.tsx).
     (TERMINAL, "terminal"),
     (PLUS, "plus"),
@@ -155,7 +155,7 @@ icon_assets![
     // favorited state and the picker's favorites rail tab.
     (STAR, "star"),
     (STAR_BOLD, "star-bold"),
-    (ZERON_LOGO, "zeron-logo"),
+    (HEARTH_LOGO, "hearth-logo"),
     // Harness brand marks (icons.tsx).
     (CLAUDE_MARK, "claude-mark"),
     (OPENAI_MARK, "openai-mark"),
@@ -167,7 +167,7 @@ icon_assets![
     (OPENCODE_MARK, "opencode-mark"),
 ];
 
-/// The Claude mark's brand orange (`#D97757`) — zeron keeps it even on the
+/// The Claude mark's brand orange (`#D97757`) — hearth keeps it even on the
 /// monochrome surface.
 pub fn claude_brand() -> Hsla {
     gpui::rgb(0xD97757).into()

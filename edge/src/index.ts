@@ -1,5 +1,5 @@
 /**
- * Zeron-native edge Worker (design §2, ARCHITECTURE §6): JWT auth at the
+ * Hearth-native edge Worker (design §2, ARCHITECTURE §6): JWT auth at the
  * edge, then forwarding into per-session, per-workspace, and per-device
  * Durable Objects. Also serves content-addressed R2 attachments (§1.2) and
  * the absorbed WorkOS auth routes (formerly apps/server).

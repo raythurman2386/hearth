@@ -135,7 +135,7 @@ const cliPage = (body: string): string => `<!doctype html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex" />
-<title>Zeron — sign in</title>
+<title>Hearth — sign in</title>
 <style>
   body { margin: 0; min-height: 100vh; display: grid; place-items: center;
          background: #0a0a0a; color: #ededed;

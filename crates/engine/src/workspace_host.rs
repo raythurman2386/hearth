@@ -25,9 +25,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use chrono::Utc;
 use tokio::sync::watch;
 
-use zeron_doc::{DeletedSpace, REGISTRY_DOC_ID, RegistryDoc, WorkspaceDoc};
-use zeron_proto::{Chat, ChatConfig, Device, Session, Space};
-use zeron_sync::{DocsStore, RegistryClient, RegistryTuning};
+use hearth_doc::{DeletedSpace, REGISTRY_DOC_ID, RegistryDoc, WorkspaceDoc};
+use hearth_proto::{Chat, ChatConfig, Device, Session, Space};
+use hearth_sync::{DocsStore, RegistryClient, RegistryTuning};
 
 use crate::doc_host::EdgeConfig;
 use crate::{EngineError, now_ms};
@@ -88,7 +88,7 @@ pub(crate) async fn token_changed(changes: &mut Option<tokio::sync::watch::Recei
     }
 }
 
-async fn token_revoked(token: &Option<Arc<dyn zeron_rpc::TokenSource>>) -> bool {
+async fn token_revoked(token: &Option<Arc<dyn hearth_rpc::TokenSource>>) -> bool {
     match token {
         Some(token) => token.token().await.is_none(),
         // Fixed test/dev URLs have no revocable credential source.
@@ -322,22 +322,22 @@ impl WorkspaceHost {
     /// server through this. Production always goes through [`Self::join_room`].
     #[doc(hidden)]
     pub fn connect_registry_url(&self, url: &str) {
-        self.spawn_join(Arc::new(zeron_sync::StaticUrl(url.to_string())), None, None);
+        self.spawn_join(Arc::new(hearth_sync::StaticUrl(url.to_string())), None, None);
     }
 
     fn spawn_join(
         &self,
-        url: Arc<dyn zeron_sync::UrlProvider>,
+        url: Arc<dyn hearth_sync::UrlProvider>,
         mut token_changes: Option<tokio::sync::watch::Receiver<u64>>,
-        token: Option<Arc<dyn zeron_rpc::TokenSource>>,
+        token: Option<Arc<dyn hearth_rpc::TokenSource>>,
     ) {
         let org_id = self.inner.config.org_id.clone();
         let reg = self.inner.reg.clone();
         let device_id = self.inner.config.device_id.clone();
         let weak = Arc::downgrade(&self.inner);
         tokio::spawn(async move {
-            let mut wake = zeron_sync::wake::subscribe();
-            let mut online = zeron_sync::wake::subscribe_online();
+            let mut wake = hearth_sync::wake::subscribe();
+            let mut online = hearth_sync::wake::subscribe_online();
             // `RegistryClient` only self-reconnects AFTER a first successful
             // join; an INITIAL failure (a 500 from an overloaded DO, a token
             // racing a refresh, an edge deploy) must not end this task and
@@ -394,7 +394,7 @@ impl WorkspaceHost {
                         loop {
                             tokio::select! {
                                 event = events.recv() => match event {
-                                    Ok(zeron_sync::RegistryEvent::Connected) => {
+                                    Ok(hearth_sync::RegistryEvent::Connected) => {
                                         let Some(inner) = weak.upgrade() else { return };
                                         // Re-join: restart the dial gate's
                                         // warm-up clock (presence map is empty
@@ -404,15 +404,15 @@ impl WorkspaceHost {
                                             .store(now_ms(), std::sync::atomic::Ordering::Relaxed);
                                         inner.bump_changed();
                                     }
-                                    Ok(zeron_sync::RegistryEvent::Applied) => {
+                                    Ok(hearth_sync::RegistryEvent::Applied) => {
                                         let Some(inner) = weak.upgrade() else { return };
                                         inner.bump_changed();
                                     }
-                                    Ok(zeron_sync::RegistryEvent::Presence) => {
+                                    Ok(hearth_sync::RegistryEvent::Presence) => {
                                         let Some(inner) = weak.upgrade() else { return };
                                         inner.publish();
                                     }
-                                    Ok(zeron_sync::RegistryEvent::Disconnected) => {}
+                                    Ok(hearth_sync::RegistryEvent::Disconnected) => {}
                                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                                 },
@@ -487,8 +487,8 @@ impl WorkspaceHost {
     /// down, relay fine: the 2026-08-18 03:45 incident shape) must never
     /// park the relay. Un-park is presence-driven: heartbeats resume → the
     /// verdict flips and the peer-alive hook clears any dial cooldown.
-    pub fn peer_liveness(&self, device_id: &str) -> zeron_rpc::PeerLiveness {
-        use zeron_rpc::PeerLiveness::{Dark, Live, Unknown};
+    pub fn peer_liveness(&self, device_id: &str) -> hearth_rpc::PeerLiveness {
+        use hearth_rpc::PeerLiveness::{Dark, Live, Unknown};
         if device_id == self.inner.config.device_id {
             return Live;
         }
@@ -575,15 +575,15 @@ impl WorkspaceHost {
         }
     }
 
-    /// Registry room introspection for SyncStatus / `zeron sync`.
+    /// Registry room introspection for SyncStatus / `hearth sync`.
     /// `None` = no room yet (edge-less, or the initial join is still retrying).
-    pub fn sync_status(&self) -> Option<zeron_sync::RoomStatsSnapshot> {
+    pub fn sync_status(&self) -> Option<hearth_sync::RoomStatsSnapshot> {
         lock(&self.inner.room).as_ref().map(|room| room.stats())
     }
 
     /// The registry room's reconnect posture (next-dial deadline + sticky
     /// last failure) for the connectivity stream. `None` = no room yet.
-    pub fn reconnect_state(&self) -> Option<zeron_sync::ReconnectState> {
+    pub fn reconnect_state(&self) -> Option<hearth_sync::ReconnectState> {
         lock(&self.inner.room)
             .as_ref()
             .map(|room| room.reconnect_state())
@@ -1034,7 +1034,7 @@ impl WorkspaceHost {
         Ok(self.mutate(|doc| doc.set_chat_archived(chat_id, archived))?)
     }
 
-    /// LWW full-config replace on the chat row (zeron `SetChatConfig` — the
+    /// LWW full-config replace on the chat row (hearth `SetChatConfig` — the
     /// composer's mid-session model/reasoning/options changes). Returns false
     /// when the chat doesn't exist.
     pub fn set_chat_config(&self, chat_id: &str, config: &ChatConfig) -> Result<bool, EngineError> {
@@ -1421,12 +1421,12 @@ fn device_name_on_boot(existing_name: Option<&str>, detected_name: &str) -> Stri
 /// auth path to maintain, and the `?beat=1` keeps presence alive for a
 /// device that can only reach the edge over HTTPS.
 struct WsDerivedRegistryTransport {
-    url: Arc<dyn zeron_sync::UrlProvider>,
+    url: Arc<dyn hearth_sync::UrlProvider>,
     client: reqwest::Client,
 }
 
 impl WsDerivedRegistryTransport {
-    fn new(url: Arc<dyn zeron_sync::UrlProvider>) -> Self {
+    fn new(url: Arc<dyn hearth_sync::UrlProvider>) -> Self {
         Self {
             url,
             client: reqwest::Client::new(),
@@ -1434,17 +1434,17 @@ impl WsDerivedRegistryTransport {
     }
 
     async fn leaf_url(
-        provider: &Arc<dyn zeron_sync::UrlProvider>,
+        provider: &Arc<dyn hearth_sync::UrlProvider>,
         leaf: &str,
-    ) -> Result<(reqwest::Url, Option<String>), zeron_sync::SyncError> {
+    ) -> Result<(reqwest::Url, Option<String>), hearth_sync::SyncError> {
         let ws = provider.url().await?;
         let mut u = reqwest::Url::parse(&ws)
-            .map_err(|e| zeron_sync::SyncError::Protocol(format!("bad ws url: {e}")))?;
+            .map_err(|e| hearth_sync::SyncError::Protocol(format!("bad ws url: {e}")))?;
         let scheme = if u.scheme() == "wss" { "https" } else { "http" };
         let _ = u.set_scheme(scheme);
         let path = u.path().to_string();
         let Some(base) = path.strip_suffix("/ws") else {
-            return Err(zeron_sync::SyncError::Protocol(
+            return Err(hearth_sync::SyncError::Protocol(
                 "ws url without /ws leaf".into(),
             ));
         };
@@ -1470,11 +1470,11 @@ impl WsDerivedRegistryTransport {
     }
 }
 
-impl zeron_sync::RegistryTransport for WsDerivedRegistryTransport {
+impl hearth_sync::RegistryTransport for WsDerivedRegistryTransport {
     fn fetch(
         &self,
         since: u64,
-    ) -> futures::future::BoxFuture<'static, Result<String, zeron_sync::SyncError>> {
+    ) -> futures::future::BoxFuture<'static, Result<String, hearth_sync::SyncError>> {
         let provider = self.url.clone();
         let client = self.client.clone();
         Box::pin(async move {
@@ -1489,23 +1489,23 @@ impl zeron_sync::RegistryTransport for WsDerivedRegistryTransport {
             let resp = req
                 .send()
                 .await
-                .map_err(|e| zeron_sync::SyncError::WebSocket(e.to_string()))?;
+                .map_err(|e| hearth_sync::SyncError::WebSocket(e.to_string()))?;
             if !resp.status().is_success() {
-                return Err(zeron_sync::SyncError::Protocol(format!(
+                return Err(hearth_sync::SyncError::Protocol(format!(
                     "registry pull http {}",
                     resp.status()
                 )));
             }
             resp.text()
                 .await
-                .map_err(|e| zeron_sync::SyncError::WebSocket(e.to_string()))
+                .map_err(|e| hearth_sync::SyncError::WebSocket(e.to_string()))
         })
     }
 
     fn push(
         &self,
         body: String,
-    ) -> futures::future::BoxFuture<'static, Result<String, zeron_sync::SyncError>> {
+    ) -> futures::future::BoxFuture<'static, Result<String, hearth_sync::SyncError>> {
         let provider = self.url.clone();
         let client = self.client.clone();
         Box::pin(async move {
@@ -1520,16 +1520,16 @@ impl zeron_sync::RegistryTransport for WsDerivedRegistryTransport {
             let resp = req
                 .send()
                 .await
-                .map_err(|e| zeron_sync::SyncError::WebSocket(e.to_string()))?;
+                .map_err(|e| hearth_sync::SyncError::WebSocket(e.to_string()))?;
             if !resp.status().is_success() {
-                return Err(zeron_sync::SyncError::Protocol(format!(
+                return Err(hearth_sync::SyncError::Protocol(format!(
                     "registry push http {}",
                     resp.status()
                 )));
             }
             resp.text()
                 .await
-                .map_err(|e| zeron_sync::SyncError::WebSocket(e.to_string()))
+                .map_err(|e| hearth_sync::SyncError::WebSocket(e.to_string()))
         })
     }
 }

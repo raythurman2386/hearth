@@ -301,7 +301,7 @@ struct Shared {
     gap_repair: bool,
 }
 
-/// `zeron sync` surface (plan: cursor / headSeq / floorLag / pendingPushes).
+/// `hearth sync` surface (plan: cursor / headSeq / floorLag / pendingPushes).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChatStatsSnapshot {
     pub connected: bool,

@@ -14,12 +14,12 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use zeron_doc::{
+use hearth_doc::{
     MessageRole, MessageStatus, SessionCommandPayload, SessionCommandStatus, SessionMessageEntry,
 };
-use zeron_engine::{EngineCore, HarnessRegistry};
-use zeron_harness::{Harness, HarnessError, RunControls};
-use zeron_proto::{
+use hearth_engine::{EngineCore, HarnessRegistry};
+use hearth_harness::{Harness, HarnessError, RunControls};
+use hearth_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SteeringMode,
 };
@@ -149,10 +149,10 @@ async fn run_defers_until_attachment_bytes_land_then_executes_rewritten() {
     )
     .expect("engine core assembles");
 
-    let client = zeron_rpc::memory_client(core.rpc_service());
+    let client = hearth_rpc::memory_client(core.rpc_service());
     client
         .call(
-            zeron_rpc::methods::MUTATE,
+            hearth_rpc::methods::MUTATE,
             serde_json::json!({ "op": "createChat", "chatId": CHAT, "deviceId": core.device_id }),
         )
         .await
@@ -193,7 +193,7 @@ async fn run_defers_until_attachment_bytes_land_then_executes_rewritten() {
     // The commit handler kicks the drains — no timers involved.
     client
         .call(
-            zeron_rpc::methods::UPLOAD_CHUNK,
+            hearth_rpc::methods::UPLOAD_CHUNK,
             serde_json::json!({
                 "uploadId": "att-1", "seq": 0, "data": BASE64.encode(b"png-bytes"),
             }),
@@ -202,7 +202,7 @@ async fn run_defers_until_attachment_bytes_land_then_executes_rewritten() {
         .expect("upload chunk");
     client
         .call(
-            zeron_rpc::methods::UPLOAD_COMMIT,
+            hearth_rpc::methods::UPLOAD_COMMIT,
             serde_json::json!({ "uploadId": "att-1", "fileName": "photo one.png" }),
         )
         .await
@@ -221,7 +221,7 @@ async fn run_defers_until_attachment_bytes_land_then_executes_rewritten() {
         .find(|e| e.role == MessageRole::User)
         .and_then(|e| {
             e.parts.iter().find_map(|p| match p {
-                zeron_doc::MessagePart::Text { text, .. } => Some(text.clone()),
+                hearth_doc::MessagePart::Text { text, .. } => Some(text.clone()),
                 _ => None,
             })
         })

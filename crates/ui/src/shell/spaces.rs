@@ -11,14 +11,14 @@
 use super::*;
 use crate::pickers::{breadcrumbs, browser_rows, completion_prefix_len, parent_path};
 use gpui::FocusHandle;
-use zeron_proto::{ChatIndicator, Device, DriveEntry, DriveListing, FolderListing, Space};
+use hearth_proto::{ChatIndicator, Device, DriveEntry, DriveListing, FolderListing, Space};
 
 struct ActiveChatRow {
     status: ChatIndicator,
-    chat: zeron_proto::Chat,
+    chat: hearth_proto::Chat,
     folder: String,
     branch: Option<String>,
-    change_request: Option<zeron_proto::ChangeRequestSummary>,
+    change_request: Option<hearth_proto::ChangeRequestSummary>,
 }
 
 /// The space-filter dropdown, `Some` while open. The same searchable-menu
@@ -671,7 +671,7 @@ impl Shell {
         const PAGE: usize = 25;
         let now = Utc::now();
         let filter = self.settings.space_filter.clone();
-        let rows: Vec<zeron_proto::Chat> = {
+        let rows: Vec<hearth_proto::Chat> = {
             let state = self.state.read(cx);
             state
                 .chats
@@ -1045,7 +1045,7 @@ impl Shell {
 
     /// The current listing's folder rows filtered by the search query
     /// (prefix matches first — `popover::filter_indices`).
-    fn add_space_filtered(&self, cx: &App) -> Vec<zeron_proto::FolderEntry> {
+    fn add_space_filtered(&self, cx: &App) -> Vec<hearth_proto::FolderEntry> {
         let Some(flow) = self.add_space.as_ref() else {
             return Vec::new();
         };
@@ -1631,7 +1631,7 @@ impl Shell {
                     .child(SharedString::from("esc")),
             );
 
-        // ── breadcrumbs ("MacBook Pro / Projects / zeron"): the quiet mono
+        // ── breadcrumbs ("MacBook Pro / Projects / hearth"): the quiet mono
         //    path voice, `/` separators. The device crumb stands in for home —
         //    everything up to the resolved home path folds into it; below
         //    home the full path shows. Ancestors (device crumb included) are

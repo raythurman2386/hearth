@@ -1,7 +1,7 @@
-// zeron cursor shim — a thin, zeron-owned wrapper around the PINNED
+// hearth cursor shim — a thin, hearth-owned wrapper around the PINNED
 // @cursor/sdk (see CURSOR_SDK_PIN in crates/harness/src/cursor/mod.rs; the
 // SDK is public beta with ~weekly releases — expect churn, revalidate on
-// every bump). Materialized by zeron into the SDK's managed install dir so
+// every bump). Materialized by hearth into the SDK's managed install dir so
 // `import("@cursor/sdk")` resolves from the sibling node_modules.
 //
 // Why a shim at all: @cursor/sdk does NOT wrap the cursor-agent binary — it
@@ -60,7 +60,7 @@ const { Agent, Cursor, FileCredentialStore, JsonlLocalAgentStore } = sdk;
 // ---- per-run agent store --------------------------------------------------
 // The SDK's default local store is SQLite keyed by WORKSPACE
 // (`getDefaultSdkStateRoot(cwd)`), designed for one process per workspace.
-// Zeron runs concurrent shims on the same cwd as a matter of course — the
+// Hearth runs concurrent shims on the same cwd as a matter of course — the
 // chat turn and its title generation start together, and two chats can share
 // a worktree — and the second `Agent.create` dies with "database is locked"
 // (reproduced live, 1.0.28). The shared-root JSONL backend is no better: its
@@ -134,7 +134,7 @@ if (process.argv[2] === "login") {
       openBrowser: false,
       onLoginUrl: (url) => out({ ev: "auth-url", url }),
       store: new FileCredentialStore(storePath),
-      apiKeyName: `zeron — ${os.hostname()}`,
+      apiKeyName: `hearth — ${os.hostname()}`,
     });
     out({
       ev: "logged-in",
@@ -304,7 +304,7 @@ async function start(msg) {
     model,
     // askQuestion has no public answer channel in this SDK (SDKRequestMessage
     // carries only a request id) — a question would block the run forever.
-    // generateImage has nowhere to land in a zeron session (ACP parity).
+    // generateImage has nowhere to land in a hearth session (ACP parity).
     disallowedTools: ["askQuestion", "generateImage"],
     local,
   };

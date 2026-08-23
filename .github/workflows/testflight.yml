@@ -101,16 +101,16 @@ jobs:
       - name: Compile iOS app and tests
         working-directory: apps/ios
         run: |
-          xcodebuild -project Zeron.xcodeproj -scheme Zeron \
+          xcodebuild -project Hearth.xcodeproj -scheme Hearth \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO build-for-testing
 
       - name: Archive build
         working-directory: apps/ios
         run: |
-          xcodebuild -project Zeron.xcodeproj -scheme Zeron \
+          xcodebuild -project Hearth.xcodeproj -scheme Hearth \
             -configuration Release -destination 'generic/platform=iOS' \
-            -archivePath "$RUNNER_TEMP/Zeron.xcarchive" archive \
+            -archivePath "$RUNNER_TEMP/Hearth.xcarchive" archive \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$AC_KEY_PATH" \
             -authenticationKeyID "$AC_API_KEY_ID" \
@@ -130,7 +130,7 @@ jobs:
             plutil -insert testFlightInternalTestingOnly -bool true "$options"
           fi
           xcodebuild -exportArchive \
-            -archivePath "$RUNNER_TEMP/Zeron.xcarchive" \
+            -archivePath "$RUNNER_TEMP/Hearth.xcarchive" \
             -exportPath "$RUNNER_TEMP/TestFlightExport" \
             -exportOptionsPlist "$options" \
             -allowProvisioningUpdates \

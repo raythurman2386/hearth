@@ -9,10 +9,10 @@ use std::time::Duration;
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 
-use zeron_harness::{
+use hearth_harness::{
     CancellationToken, ClaudeHarness, Harness, HarnessError, RunControls, SteerMessage,
 };
-use zeron_proto::{
+use hearth_proto::{
     AgentEvent, DoneStatus, HarnessId, RunRequest, SandboxLevel, ToolCall, UserInputAnswer,
     UserInputQuestion,
 };
@@ -574,7 +574,7 @@ async fn captured_live_background_subagent_frames_replay_correctly() {
 
 /// Live smoke against the REAL claude CLI (2.1.x, must be installed + authed):
 /// one trivial turn through the stdio permission channel, ending on the
-/// result frame. `cargo test -p zeron-harness --test claude -- --ignored`.
+/// result frame. `cargo test -p hearth-harness --test claude -- --ignored`.
 #[tokio::test]
 #[ignore = "spawns the real claude CLI; needs install + auth + network"]
 async fn live_real_cli_single_turn() {
@@ -638,7 +638,7 @@ async fn commands_come_from_the_initialize_control_request() {
     assert_eq!(again, commands);
 }
 
-/// Live smoke against the real CLI: `cargo test -p zeron-harness --test
+/// Live smoke against the real CLI: `cargo test -p hearth-harness --test
 /// claude -- --ignored live_commands`. No model turn, no API cost.
 #[tokio::test]
 #[ignore]

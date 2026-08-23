@@ -112,7 +112,7 @@ pub struct RunRequest {
     /// Absolute paths of image attachments already staged on the run device
     /// (composer uploads: UploadChunk/UploadCommit → durable path). The same
     /// paths also ride the prompt text as `Attached images (local files …)`
-    /// refs (zeron's `withAttachments` transport — that's what persists in the
+    /// refs (hearth's `withAttachments` transport — that's what persists in the
     /// doc); this field additionally lets a harness inline the bytes as image
     /// content blocks. Additive + serde-defaulted for wire compat.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -135,7 +135,7 @@ pub struct RunRequest {
 pub struct WorktreeSpec {
     /// The repo whose worktree to create (the space's folder on the host).
     pub repo_path: String,
-    /// Base ref the fresh `zeron/<name>` branch is created off.
+    /// Base ref the fresh `hearth/<name>` branch is created off.
     pub base: String,
 }
 
@@ -327,7 +327,7 @@ pub enum DoneStatus {
 
 /// The normalized streaming event every harness emits.
 ///
-/// Mirrors zeron's `AgentEvent` tagged enum.
+/// Mirrors hearth's `AgentEvent` tagged enum.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AgentEvent {

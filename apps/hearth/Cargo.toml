@@ -1,0 +1,27 @@
+[package]
+name = "hearth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "hearth"
+path = "src/main.rs"
+
+[dependencies]
+hearth-engine.workspace = true
+hearth-rpc.workspace = true
+hearth-ui.workspace = true
+hearth-update.workspace = true
+tokio.workspace = true
+clap.workspace = true
+mimalloc.workspace = true
+anyhow.workspace = true
+libc.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

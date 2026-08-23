@@ -7,9 +7,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use zeron_doc::{MessagePart, MessageRole, MessageStatus, SessionDoc, SessionMessageEntry};
-use zeron_engine::{EngineCore, HarnessRegistry};
-use zeron_proto::HarnessId;
+use hearth_doc::{MessagePart, MessageRole, MessageStatus, SessionDoc, SessionMessageEntry};
+use hearth_engine::{EngineCore, HarnessRegistry};
+use hearth_proto::HarnessId;
 
 const CHAT: &str = "chat-salvage";
 
@@ -47,10 +47,10 @@ async fn blank_journaled_chat_recovers_entries_from_fat_rollback() {
     // the doc itself never gets a single entry, like a post-loss reopen.
     {
         let core = assemble(&dir);
-        let client = zeron_rpc::memory_client(core.rpc_service());
+        let client = hearth_rpc::memory_client(core.rpc_service());
         client
             .call(
-                zeron_rpc::methods::MUTATE,
+                hearth_rpc::methods::MUTATE,
                 serde_json::json!({
                     "op": "createChat",
                     "chatId": CHAT,
@@ -89,7 +89,7 @@ async fn blank_journaled_chat_recovers_entries_from_fat_rollback() {
     .unwrap();
     let fat_bytes = fat.export_snapshot().unwrap();
     {
-        let store = zeron_sync::DocsStore::open(&org_dir).unwrap();
+        let store = hearth_sync::DocsStore::open(&org_dir).unwrap();
         store
             .save_snapshot(&format!("{CHAT}.pre-chat2"), &fat_bytes)
             .unwrap();

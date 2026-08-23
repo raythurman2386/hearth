@@ -1,19 +1,19 @@
 [package]
-name = "zeron-ui"
+name = "hearth-ui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
-zeron-proto.workspace = true
+hearth-proto.workspace = true
 similar.workspace = true
-zeron-doc.workspace = true
-zeron-engine.workspace = true
-zeron-harness.workspace = true
-zeron-rpc.workspace = true
-zeron-update.workspace = true
-zeron-syntax.workspace = true
+hearth-doc.workspace = true
+hearth-engine.workspace = true
+hearth-harness.workspace = true
+hearth-rpc.workspace = true
+hearth-update.workspace = true
+hearth-syntax.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 gpui_tokio.workspace = true

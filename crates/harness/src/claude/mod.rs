@@ -11,7 +11,7 @@
 //!   live against 2.1.228: `can_use_tool` control requests arrive and
 //!   allow/deny responses are honored). The alternative channel — an MCP
 //!   permission tool — needs a server process and was rejected. Tool calls
-//!   auto-allow (zeron sessions run unattended, parity with the ACP
+//!   auto-allow (hearth sessions run unattended, parity with the ACP
 //!   harness's preferred-allow behavior); `AskUserQuestion` round-trips
 //!   through [`RunControls::request_input`].
 //! - DONE is the CLI's own `result` frame, eagerly: background work (a
@@ -48,7 +48,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::mpsc;
 
-use zeron_proto::{
+use hearth_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SlashCommand,
     SteeringMode, UserInputAnswer, UserInputQuestion,
 };
@@ -279,7 +279,7 @@ impl ClaudeHarness {
             shutdown_child(&mut child, self.kill_grace).await;
             return Err(HarnessError::Protocol("claude child has no stdio".into()));
         };
-        const PROBE_ID: &str = "zeron-command-probe";
+        const PROBE_ID: &str = "hearth-command-probe";
         let discovery = async {
             let request = serde_json::json!({
                 "type": "control_request",
@@ -438,7 +438,7 @@ impl Harness for ClaudeHarness {
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    tracing::debug!(target: "zeron_harness::claude", "stderr: {line}");
+                    tracing::debug!(target: "hearth_harness::claude", "stderr: {line}");
                     tail.push(&line);
                 }
             });
@@ -540,16 +540,16 @@ async fn load_image_blocks(paths: &[String]) -> Vec<wire::ImageBlock> {
         let bytes = match tokio::fs::read(path).await {
             Ok(bytes) => bytes,
             Err(err) => {
-                tracing::warn!(target: "zeron_harness::claude", %path, error = %err, "attachment unreadable; path ref only");
+                tracing::warn!(target: "hearth_harness::claude", %path, error = %err, "attachment unreadable; path ref only");
                 continue;
             }
         };
         if bytes.len() as u64 > MAX_INLINE_IMAGE_BYTES {
-            tracing::debug!(target: "zeron_harness::claude", %path, "attachment over inline cap; path ref only");
+            tracing::debug!(target: "hearth_harness::claude", %path, "attachment over inline cap; path ref only");
             continue;
         }
         let Some(media_type) = image_media_type(std::path::Path::new(path), &bytes) else {
-            tracing::debug!(target: "zeron_harness::claude", %path, "attachment not an inline-supported image; path ref only");
+            tracing::debug!(target: "hearth_harness::claude", %path, "attachment not an inline-supported image; path ref only");
             continue;
         };
         blocks.push(wire::ImageBlock {
@@ -572,7 +572,7 @@ async fn stdin_writer(mut stdin: ChildStdin, mut rx: mpsc::UnboundedReceiver<Std
                     stdin.flush().await
                 };
                 if let Err(e) = write.await {
-                    tracing::debug!(target: "zeron_harness::claude", "stdin write failed (tolerated): {e}");
+                    tracing::debug!(target: "hearth_harness::claude", "stdin write failed (tolerated): {e}");
                     return;
                 }
             }
@@ -637,7 +637,7 @@ async fn run_session(session: Session) {
                     let frame = match wire::parse_frame(line) {
                         Ok(frame) => frame,
                         Err(e) => {
-                            tracing::debug!(target: "zeron_harness::claude", "unparseable frame (skipped): {e}");
+                            tracing::debug!(target: "hearth_harness::claude", "unparseable frame (skipped): {e}");
                             continue;
                         }
                     };
@@ -762,7 +762,7 @@ fn handle_control_request(
 ) {
     if req.request.subtype != "can_use_tool" {
         tracing::debug!(
-            target: "zeron_harness::claude",
+            target: "hearth_harness::claude",
             "unhandled control_request subtype: {}", req.request.subtype
         );
         return;

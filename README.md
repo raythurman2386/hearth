@@ -1,16 +1,16 @@
-# Zeron
+# Hearth
 
 Control your coding agents (Claude Code, Codex, Cursor, Grok, Hermes, Pi) locally by default, with optional multi-device sync.
 
-![Zeron driving a Claude Code session with a live branch diff sidebar](apps/landing/public/assets/app-screenshot.jpg)
+![Hearth driving a Claude Code session with a live branch diff sidebar](apps/landing/public/assets/app-screenshot.jpg)
 
 Every device runs a small engine that stores sessions on that device. A new installation starts in local-only mode without an account or a network connection.
 
 ## Install and run locally (Linux)
 
 ```bash
-curl -fsSL https://zeron.sh/install.sh | sh
-zeron status
+curl -fsSL https://hearth.sh/install.sh | sh
+hearth status
 ```
 
 The installer starts the daemon immediately and keeps it running across reboots. No sign-in or sync configuration is required.
@@ -18,9 +18,9 @@ The installer starts the daemon immediately and keeps it running across reboots.
 Day-to-day:
 
 ```bash
-zeron status      # local/synced mode and engine status
-zeron update      # update to the latest release
-zeron daemon start|stop|restart|status
+hearth status      # local/synced mode and engine status
+hearth update      # update to the latest release
+hearth daemon start|stop|restart|status
 ```
 
 ## Optional multi-device sync
@@ -28,9 +28,9 @@ zeron daemon start|stop|restart|status
 Sign in only when you want to open your account's synced workspace. Authentication changes the profile selected by the next engine start, so stop the daemon before changing it:
 
 ```bash
-zeron daemon stop
-zeron login
-zeron daemon start
+hearth daemon stop
+hearth login
+hearth daemon start
 ```
 
 You can then start an agent on one synced device and follow or drive it from another. An always-on machine such as a VPS can keep those agents working after you close your laptop.
@@ -38,14 +38,14 @@ You can then start an agent on one synced device and follow or drive it from ano
 Signing in does not upload, move, or import existing local sessions. Local sessions and their attachments remain under the local profile and reappear when you return to local-only mode:
 
 ```bash
-zeron daemon stop
-zeron logout
-zeron daemon start
+hearth daemon stop
+hearth logout
+hearth daemon start
 ```
 
-`zeron login` and `zeron logout` refuse to modify credentials while an engine owns the data directory. The desktop app follows the same next-restart profile boundary.
+`hearth login` and `hearth logout` refuse to modify credentials while an engine owns the data directory. The desktop app follows the same next-restart profile boundary.
 
-On macOS: use the desktop release, or build `zeron` from source and run `zeron daemon install` to install the launchd service.
+On macOS: use the desktop release, or build `hearth` from source and run `hearth daemon install` to install the launchd service.
 
 ---
 

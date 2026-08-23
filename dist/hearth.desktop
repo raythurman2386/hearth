@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Hearth
+GenericName=Coding Agent Controller
+Comment=Multi-device controller for coding agents
+Exec=hearth
+TryExec=hearth
+Icon=hearth
+Terminal=false
+Categories=Development;Utility;
+Keywords=agent;claude;codex;ai;coding;
+StartupWMClass=hearth

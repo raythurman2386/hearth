@@ -6,7 +6,7 @@
 //! before the adapter ever ran — silently, with an errno-encoded exit code
 //! (254 = ENOENT, the zeronsh/comet#95 crash) that surfaced as an opaque
 //! "harness protocol error". Instead, pinned adapter packages are installed
-//! ONCE into a zeron-owned prefix (`~/.zeron/adapters/<pkg>/<version>`, own
+//! ONCE into a hearth-owned prefix (`~/.hearth/adapters/<pkg>/<version>`, own
 //! npm cache beside it, so a root-owned or read-only `~/.npm` can't break
 //! us), and every subsequent launch spawns `node <entry>` directly — no npm
 //! anywhere near a chat turn.
@@ -56,17 +56,17 @@ impl NpmPin {
     }
 }
 
-const OK_MARKER: &str = ".zeron-install-ok";
+const OK_MARKER: &str = ".hearth-install-ok";
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// `$ZERON_ADAPTERS_DIR`, else `~/.zeron/adapters`.
+/// `$HEARTH_ADAPTERS_DIR`, else `~/.hearth/adapters`.
 fn adapters_root() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("ZERON_ADAPTERS_DIR").filter(|d| !d.is_empty()) {
+    if let Some(dir) = std::env::var_os("HEARTH_ADAPTERS_DIR").filter(|d| !d.is_empty()) {
         return Some(PathBuf::from(dir));
     }
     std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
-        .map(|h| PathBuf::from(h).join(".zeron").join("adapters"))
+        .map(|h| PathBuf::from(h).join(".hearth").join("adapters"))
 }
 
 fn install_dir(pin: &NpmPin) -> Option<PathBuf> {
@@ -227,7 +227,7 @@ pub(crate) async fn ensure_installed(
     })
 }
 
-/// A zeron-owned shim script materialized INSIDE a managed install dir, for
+/// A hearth-owned shim script materialized INSIDE a managed install dir, for
 /// SDK packages with no bin entry (`@cursor/sdk`): the shim resolves the SDK
 /// from the sibling `node_modules`. Returns the shim path when the install is
 /// complete AND the shim contents match this build (a comet upgrade that
@@ -248,7 +248,7 @@ pub(crate) fn installed_shim(pin: &NpmPin, shim_name: &str, contents: &str) -> O
 }
 
 /// Like [`ensure_installed`], for a package consumed as a LIBRARY by a
-/// zeron-owned shim rather than through a bin entry. Installs the pin once,
+/// hearth-owned shim rather than through a bin entry. Installs the pin once,
 /// writes `contents` as `<install-dir>/<shim_name>`, and returns the shim
 /// path (spawn it via [`launch_for_entry`]).
 pub(crate) async fn ensure_installed_shim(
@@ -324,7 +324,7 @@ async fn install_into(
     // A bare manifest keeps npm from walking up into a user project.
     std::fs::write(tmp_dir.join("package.json"), "{\"private\":true}\n")?;
     tracing::info!(
-        target: "zeron_harness::adapter_install",
+        target: "hearth_harness::adapter_install",
         package = %pin.spec(),
         dir = %tmp_dir.display(),
         "installing ACP adapter"

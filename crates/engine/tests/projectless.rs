@@ -11,10 +11,10 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use zeron_doc::{MessageRole, MessageStatus, SessionCommandPayload, SessionMessageEntry};
-use zeron_engine::{EngineCore, HarnessRegistry};
-use zeron_harness::{Harness, HarnessError, RunControls};
-use zeron_proto::{
+use hearth_doc::{MessageRole, MessageStatus, SessionCommandPayload, SessionMessageEntry};
+use hearth_engine::{EngineCore, HarnessRegistry};
+use hearth_harness::{Harness, HarnessError, RunControls};
+use hearth_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SteeringMode,
 };
@@ -126,10 +126,10 @@ async fn projectless_chat_runs_from_home_and_mints_no_space() {
 
     // The composer's exact wire shape for "Don't work in a project": a
     // deviceId, no spaceId, no cwd.
-    let client = zeron_rpc::memory_client(core.rpc_service());
+    let client = hearth_rpc::memory_client(core.rpc_service());
     client
         .call(
-            zeron_rpc::methods::MUTATE,
+            hearth_rpc::methods::MUTATE,
             serde_json::json!({
                 "op": "createChat",
                 "chatId": CHAT,

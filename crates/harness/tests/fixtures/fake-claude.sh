@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fake Claude Code CLI for zeron-harness tests.
+# Fake Claude Code CLI for hearth-harness tests.
 #
 # Reads the first stream-json user line from stdin, picks a scenario from the
 # prompt text, and plays a scripted stream-json transcript on stdout —

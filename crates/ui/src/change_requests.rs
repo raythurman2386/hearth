@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use gpui::{AnyElement, Context, Render, SharedString, Window, div, prelude::*, px};
-use zeron_proto::{ChangeRequestSummary, Chat, CheckoutChangeRequestStatus, Space};
+use hearth_proto::{ChangeRequestSummary, Chat, CheckoutChangeRequestStatus, Space};
 
 use crate::theme::Theme;
 
@@ -38,7 +38,7 @@ pub(crate) struct ChangeRequestBadgeModel {
 
 impl ChangeRequestBadgeModel {
     pub fn from_summary(summary: &ChangeRequestSummary) -> Self {
-        use zeron_proto::ChangeRequestState;
+        use hearth_proto::ChangeRequestState;
 
         let (state_label, tone) = match summary.state {
             ChangeRequestState::Open => ("Open", ChangeRequestBadgeTone::Open),
@@ -319,7 +319,7 @@ fn effective_chat_cwd<'a>(chat: &'a Chat, spaces: &'a [Space]) -> Option<&'a str
 #[cfg(test)]
 mod tests {
     use chrono::{TimeZone as _, Utc};
-    use zeron_proto::ChangeRequestState;
+    use hearth_proto::ChangeRequestState;
 
     use super::*;
 
@@ -367,7 +367,7 @@ mod tests {
                 provider: "github".into(),
                 number: 90,
                 title: "Add pull request badges".into(),
-                url: "https://github.com/acme/zeron/pull/90".into(),
+                url: "https://github.com/acme/hearth/pull/90".into(),
                 state: ChangeRequestState::Open,
                 base_ref: "main".into(),
                 head_ref: "feature/pr".into(),

@@ -1,7 +1,7 @@
 //! Host-side worktree materialization: a Run command carrying a
 //! `WorktreeSpec` creates the isolated worktree on the HOST at drain time
 //! (the durable replacement for the composer's old blocking CreateWorktree
-//! relay RPC), runs there, and stamps the chat row's cwd + `zeron/<name>`
+//! relay RPC), runs there, and stamps the chat row's cwd + `hearth/<name>`
 //! branch. A second spec-carrying Run for the same chat REUSES the checkout
 //! instead of minting another.
 
@@ -14,10 +14,10 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use zeron_doc::{MessageRole, MessageStatus, SessionCommandPayload, SessionMessageEntry};
-use zeron_engine::{EngineCore, HarnessRegistry};
-use zeron_harness::{Harness, HarnessError, RunControls};
-use zeron_proto::{
+use hearth_doc::{MessageRole, MessageStatus, SessionCommandPayload, SessionMessageEntry};
+use hearth_engine::{EngineCore, HarnessRegistry};
+use hearth_harness::{Harness, HarnessError, RunControls};
+use hearth_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
     SteeringMode, WorktreeSpec,
 };
@@ -148,7 +148,7 @@ async fn run_with_worktree_spec_materializes_on_host_and_reuses() {
     // macOS tempdirs live behind the /var → /private/var symlink.
     let tmp_path = tmp.path().canonicalize().unwrap();
     let worktrees_root = tmp_path.join("worktrees");
-    unsafe { std::env::set_var("ZERON_WORKTREES_DIR", &worktrees_root) };
+    unsafe { std::env::set_var("HEARTH_WORKTREES_DIR", &worktrees_root) };
 
     let repo_dir = tmp_path.join("repo");
     std::fs::create_dir_all(&repo_dir).unwrap();
@@ -173,10 +173,10 @@ async fn run_with_worktree_spec_materializes_on_host_and_reuses() {
 
     // Mirror the composer: createChat lands first (cwd-less; the engine
     // resolves the project folder), then the queued Run carries the spec.
-    let client = zeron_rpc::memory_client(core.rpc_service());
+    let client = hearth_rpc::memory_client(core.rpc_service());
     client
         .call(
-            zeron_rpc::methods::MUTATE,
+            hearth_rpc::methods::MUTATE,
             serde_json::json!({
                 "op": "createChat",
                 "chatId": CHAT,
@@ -211,7 +211,7 @@ async fn run_with_worktree_spec_materializes_on_host_and_reuses() {
     );
 
     // The chat row follows: cwd repointed at the worktree, branch stamped
-    // with the actual zeron/<name> (the composer only knew the base).
+    // with the actual hearth/<name> (the composer only knew the base).
     let chat = core
         .workspace
         .chat(CHAT)
@@ -220,7 +220,7 @@ async fn run_with_worktree_spec_materializes_on_host_and_reuses() {
     assert_eq!(chat.cwd.as_deref(), Some(first_cwd.as_str()));
     let branch = chat.branch.expect("branch stamped");
     assert!(
-        branch.starts_with("zeron/"),
+        branch.starts_with("hearth/"),
         "stamped branch is the worktree's own: {branch}"
     );
 

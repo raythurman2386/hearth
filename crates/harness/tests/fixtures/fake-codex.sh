@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fake Codex app-server for zeron-harness tests.
+# Fake Codex app-server for hearth-harness tests.
 #
 # Speaks scripted JSON-RPC 2.0 over stdio: initialize handshake, thread
 # start/resume, then a scenario picked from the turn/start prompt text. Driven
@@ -18,7 +18,7 @@ fail_turn() { # $1 = request id, $2 = message
 read -r line || exit 1 # initialize
 has "$line" '"method":"initialize"' || exit 1
 has "$line" '"experimentalApi":true' || exit 1
-has "$line" '"name":"zeron-native"' || exit 1
+has "$line" '"name":"hearth-native"' || exit 1
 emit "{\"id\":$(rid "$line"),\"result\":{\"userAgent\":\"fake-codex\"}}"
 
 read -r line || exit 1 # initialized notification (no reply)

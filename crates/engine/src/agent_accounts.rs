@@ -1,5 +1,5 @@
 //! AgentAccounts — the Claude Code / Codex / Cursor logins on this device
-//! (feature-inventory §3.7 "Agent accounts"; port of zeron's `agent-accounts.ts`).
+//! (feature-inventory §3.7 "Agent accounts"; port of hearth's `agent-accounts.ts`).
 //!
 //! Each provider stores exactly one live login:
 //!
@@ -12,7 +12,7 @@
 //! - **Cursor** — `~/.cursor/sdk/auth.json`: the Cursor SDK's credential store
 //!   (`StoredSdkCredentials`) holding the named, expiring user API key its
 //!   browser login mints. Deliberately SEPARATE from `cursor-agent login`'s
-//!   whole-account session tokens, which zeron never reads.
+//!   whole-account session tokens, which hearth never reads.
 //!
 //! Claude-swap mechanics:
 //!
@@ -32,7 +32,7 @@
 //!    until its loopback callback lands.
 //!
 //! Usage probes: both providers expose the rate-limit view their own CLIs render
-//! (`/usage` in Claude Code, `/status` in Codex). Unlike zeron (fetch on every
+//! (`/usage` in Claude Code, `/status` in Codex). Unlike hearth (fetch on every
 //! list, 60s cache), native only hits the network when `force_usage` is set —
 //! the default list stays offline-fast and deterministic; the UI passes
 //! `forceUsage` on page mount/refresh. Cached results (60s TTL) are served to
@@ -50,7 +50,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use zeron_proto::{
+use hearth_proto::{
     AgentAccount, AgentAccountWarning, AgentAccountsSnapshot, AgentAuthKind, AgentLoginMode,
     AgentLoginPoll, AgentLoginStart, AgentLoginStatus, AgentUsageWindow, HarnessId,
 };
@@ -156,7 +156,7 @@ struct SlotProfile {
     auth_kind: AgentAuthKind,
 }
 
-/// One saved login (`{slotId}.json`), same field surface as zeron's slot files.
+/// One saved login (`{slotId}.json`), same field surface as hearth's slot files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Slot {
@@ -638,7 +638,7 @@ impl AgentAccounts {
         })
     }
 
-    /// Cursor: the SDK's own PKCE browser flow, driven through the zeron shim
+    /// Cursor: the SDK's own PKCE browser flow, driven through the hearth shim
     /// in login mode. The minted key lands in a throwaway store file (never
     /// the live `~/.cursor/sdk/auth.json`), then snapshots into a slot on
     /// poll — mirroring codex's throwaway `CODEX_HOME`.
@@ -651,7 +651,7 @@ impl AgentAccounts {
             .root_dir()
             .join(format!(".login-{login_id}"));
         std::fs::create_dir_all(&home)?;
-        let mut cmd = zeron_harness::cursor::login_command(&home.join("auth.json"))
+        let mut cmd = hearth_harness::cursor::login_command(&home.join("auth.json"))
             .await
             .map_err(|e| {
                 let _ = std::fs::remove_dir_all(&home);
@@ -948,7 +948,7 @@ impl AgentAccounts {
         }
     }
 
-    /// Lazy TTL sweep (zeron uses a background fiber; native reaps on the next
+    /// Lazy TTL sweep (hearth uses a background fiber; native reaps on the next
     /// accounts call — same bound, no standing task).
     fn sweep_flows(&self) {
         let stale: Vec<String> = lock(&self.inner.flows)

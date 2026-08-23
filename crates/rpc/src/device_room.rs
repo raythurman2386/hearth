@@ -13,7 +13,7 @@
 //!
 //! The RPC path multiplexes NOTHING new: each distinct client `connId` becomes a virtual
 //! string-frame connection feeding the existing [`serve_connection`] seam, so every RPC
-//! handler works through the relay untouched (the port of zeron's `device-room-host.ts`).
+//! handler works through the relay untouched (the port of hearth's `device-room-host.ts`).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -291,7 +291,7 @@ impl HostRelayConfig {
 /// `service` to every client conn through virtual string-frame connections. Immortal
 /// supervisor: quiet while signed out, reconnects with backoff when the socket drops
 /// (including the 4409 "superseded by new host connection" close — the newest host wins,
-/// so the superseded process backs off and retries, mirroring zeron's DeviceRoomHost).
+/// so the superseded process backs off and retries, mirroring hearth's DeviceRoomHost).
 pub struct HostRelay {
     task: tokio::task::JoinHandle<()>,
 }
@@ -303,8 +303,8 @@ impl HostRelay {
         on_nudge: NudgeHandler,
     ) -> Self {
         let task = tokio::spawn(async move {
-            let mut wake = zeron_sync::wake::subscribe();
-            let mut online = zeron_sync::wake::subscribe_online();
+            let mut wake = hearth_sync::wake::subscribe();
+            let mut online = hearth_sync::wake::subscribe_online();
             let mut token_changes = config.token.subscribe();
             // Fast-rejoin bookkeeping: the edge DO periodically ends healthy
             // host sessions (hibernation/deploys). Every second the host is
@@ -447,7 +447,7 @@ async fn host_session(
     service: &Arc<dyn RpcService>,
     on_nudge: &NudgeHandler,
 ) -> Result<(), RpcError> {
-    let ws = zeron_sync::dial::connect_ws(url)
+    let ws = hearth_sync::dial::connect_ws(url)
         .await
         .map_err(|e| RpcError::Transport(format!("device room unreachable: {e}")))?;
     tracing::info!("device-room: host connected");
@@ -590,7 +590,7 @@ pub struct DeviceLink {
 
 impl DeviceLink {
     pub async fn connect(url: &str) -> Result<Self, RpcError> {
-        let ws = zeron_sync::dial::connect_ws(url)
+        let ws = hearth_sync::dial::connect_ws(url)
             .await
             .map_err(|e| RpcError::Transport(format!("device room unreachable: {e}")))?;
         let (mut sink, mut stream) = ws.split();
@@ -744,7 +744,7 @@ pub struct LinkCacheConfig {
     pub edge_url: String,
     pub token: Arc<dyn TokenSource>,
     /// Exponential dial cooldown after failures (base, cap) — a dead peer must not be
-    /// redialed at full cadence; callers fail fast in between (zeron peers.ts behavior).
+    /// redialed at full cadence; callers fail fast in between (hearth peers.ts behavior).
     pub cooldown_base: Duration,
     pub cooldown_max: Duration,
     /// Readiness probe budget: the relay accepts client joins even when the host is
@@ -761,7 +761,7 @@ pub struct LinkCacheConfig {
 impl LinkCacheConfig {
     pub fn new(edge_url: impl Into<String>, token: Arc<dyn TokenSource>) -> Self {
         // Interactive remote control (remote folders, terminals, accounts) rides
-        // this cache: one blip must cost seconds, not minutes. The old zeron
+        // this cache: one blip must cost seconds, not minutes. The old hearth
         // 15s→5min curve punished a single failed dial with a 5-minute refusal;
         // here the first failure backs off 5s and even a dead peer is re-probed
         // within a minute. A generous probe budget keeps a slow-waking laptop
@@ -788,7 +788,7 @@ struct DialState {
     cooldown_until: Option<Instant>,
 }
 
-/// Lazily-dialed, cached peer links keyed by device id — the Rust twin of zeron's
+/// Lazily-dialed, cached peer links keyed by device id — the Rust twin of hearth's
 /// `Peers`. Cache hits never wait behind an in-flight dial; dials to the same device are
 /// serialized per device (a global lock would head-of-line-block healthy peers); links
 /// self-evict when the transport drops; a failed RPC should call [`LinkCache::invalidate`]
@@ -820,8 +820,8 @@ impl LinkCache {
         if tokio::runtime::Handle::try_current().is_ok() {
             let weak = Arc::downgrade(&cache);
             tokio::spawn(async move {
-                let mut wake = zeron_sync::wake::subscribe();
-                let mut online = zeron_sync::wake::subscribe_online();
+                let mut wake = hearth_sync::wake::subscribe();
+                let mut online = hearth_sync::wake::subscribe_online();
                 let mut token_changes = weak
                     .upgrade()
                     .and_then(|cache| cache.config.token.subscribe());

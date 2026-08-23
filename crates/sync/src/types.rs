@@ -1,5 +1,5 @@
 //! Shared client-side sync types: the error surface, the per-dial URL/token
-//! seam, and the stats snapshot behind `SyncStatus` / `zeron sync`.
+//! seam, and the stats snapshot behind `SyncStatus` / `hearth sync`.
 //!
 //! These lived in the legacy s2 room client (`room.rs`) until the chat2
 //! cutover retired it; the registry and chat2 clients keep speaking the same
@@ -44,7 +44,7 @@ impl UrlProvider for StaticUrl {
 }
 
 /// Live sync introspection for one room — the data behind the engine's
-/// `SyncStatus` RPC and `zeron sync`. Every 2026-08 incident was debugged
+/// `SyncStatus` RPC and `hearth sync`. Every 2026-08 incident was debugged
 /// blind because none of this was observable at runtime.
 #[derive(Debug, Clone, Default)]
 pub struct RoomStatsSnapshot {

@@ -1,12 +1,12 @@
 //! Repos — this device's git repositories, branches, worktrees, and the folder
-//! browser (feature-inventory §3.5; port of zeron's `repos.ts` + `folder-lister.ts`).
+//! browser (feature-inventory §3.5; port of hearth's `repos.ts` + `folder-lister.ts`).
 //!
 //! Repos are device-local (paths differ per machine), so the known set is a plain
 //! JSON list (`{data_dir}/repos.json`) — no sync. Existing repos can live anywhere
 //! the user points us; cloned/created ones land in `{data_dir}/repos`. Worktrees are
-//! created under `~/.zeron/worktrees/<repoName>/<worktreeName>` (NOT the data
+//! created under `~/.hearth/worktrees/<repoName>/<worktreeName>` (NOT the data
 //! dir — worktrees are user-facing working checkouts), with an auto-generated name +
-//! matching `zeron/<name>` branch. `ZERON_WORKTREES_DIR` overrides the root.
+//! matching `hearth/<name>` branch. `HEARTH_WORKTREES_DIR` overrides the root.
 //!
 //! All git access is via subprocess (`tokio::process`) — never libgit2.
 
@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-use zeron_proto::{
+use hearth_proto::{
     DriveEntry, FileSearchMatch, FolderEntry, FolderListing, GitHistoryCommit, GitHistoryPage,
     GitHistoryRef, GitHistoryRefKind, Repo, RepoRef, Worktree,
 };
@@ -50,7 +50,7 @@ const ADJECTIVES: &[&str] = &[
     "sharp", "gentle", "vivid", "amber", "cobalt",
 ];
 const NOUNS: &[&str] = &[
-    "otter", "harbor", "falcon", "cedar", "meadow", "zeron", "delta", "ember", "lynx", "maple",
+    "otter", "harbor", "falcon", "cedar", "meadow", "hearth", "delta", "ember", "lynx", "maple",
     "onyx", "quartz", "raven", "summit", "willow", "aspen",
 ];
 
@@ -79,13 +79,13 @@ pub(crate) fn home_dir() -> PathBuf {
 }
 
 /// Where new worktrees live. Deliberately NOT under the backend data dir —
-/// worktrees are user-facing working checkouts. `ZERON_WORKTREES_DIR` overrides
+/// worktrees are user-facing working checkouts. `HEARTH_WORKTREES_DIR` overrides
 /// (test isolation); empty reads as unset.
 fn default_worktrees_root() -> PathBuf {
-    std::env::var_os("ZERON_WORKTREES_DIR")
+    std::env::var_os("HEARTH_WORKTREES_DIR")
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir().join(".zeron").join("worktrees"))
+        .unwrap_or_else(|| home_dir().join(".hearth").join("worktrees"))
 }
 
 struct ReposInner {
@@ -116,7 +116,7 @@ pub struct Repos {
 
 impl Repos {
     /// `data_dir` holds `repos.json` + cloned/created repos; the worktree root
-    /// comes from `$ZERON_WORKTREES_DIR` or `~/.zeron/worktrees`.
+    /// comes from `$HEARTH_WORKTREES_DIR` or `~/.hearth/worktrees`.
     pub fn new(data_dir: &Path, device_id: &str) -> Self {
         Self::with_worktrees_root(data_dir, device_id, default_worktrees_root())
     }
@@ -468,7 +468,7 @@ impl Repos {
     }
 
     /// Public commit history in topological order. Only user-facing branches,
-    /// remotes, and tags seed the walk, so Zeron's internal refs never leak
+    /// remotes, and tags seed the walk, so Hearth's internal refs never leak
     /// into the graph or keep otherwise-unreachable checkpoints visible.
     pub async fn history(
         &self,
@@ -635,7 +635,7 @@ impl Repos {
     // ── worktrees ───────────────────────────────────────────────────────────
 
     /// `git worktree add` an isolated checkout under
-    /// `{worktrees_root}/<repoName>/<generatedName>`, on a fresh `zeron/<name>`
+    /// `{worktrees_root}/<repoName>/<generatedName>`, on a fresh `hearth/<name>`
     /// branch off `branch`.
     pub async fn create_worktree(
         &self,
@@ -667,7 +667,7 @@ impl Repos {
                 ADJECTIVES[(seed % ADJECTIVES.len() as u64) as usize],
                 NOUNS[((seed / 31) % NOUNS.len() as u64) as usize]
             );
-            if !base.join(&candidate).exists() && !existing.contains(&format!("zeron/{candidate}"))
+            if !base.join(&candidate).exists() && !existing.contains(&format!("hearth/{candidate}"))
             {
                 name = Some(candidate);
                 break;
@@ -676,7 +676,7 @@ impl Repos {
         let name =
             name.ok_or_else(|| EngineError::Other("Could not allocate a worktree name".into()))?;
         let path = base.join(&name);
-        let branch_name = format!("zeron/{name}");
+        let branch_name = format!("hearth/{name}");
         self.git(
             &[
                 "worktree",
@@ -713,10 +713,10 @@ impl Repos {
         .is_ok()
     }
 
-    /// Rename a zeron-created worktree branch after its chat's generated title
-    /// (port of zeron's `renameWorktreeBranch`). Guards:
+    /// Rename a hearth-created worktree branch after its chat's generated title
+    /// (port of hearth's `renameWorktreeBranch`). Guards:
     /// - respect an external checkout/rename: only act while the worktree is still
-    ///   on `expected_branch` AND that branch is the original `zeron/<folderName>`;
+    ///   on `expected_branch` AND that branch is the original `hearth/<folderName>`;
     /// - a title-slug collision gets a stable 6-hex suffix (hash of the worktree
     ///   path); a collision on THAT too fails.
     ///
@@ -733,7 +733,7 @@ impl Repos {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        if current != expected_branch || expected_branch != format!("zeron/{folder}") {
+        if current != expected_branch || expected_branch != format!("hearth/{folder}") {
             return Ok(current);
         }
         let preferred = worktree_branch_from_title(title);
@@ -762,7 +762,7 @@ impl Repos {
     }
 
     /// Best-effort worktree removal (if it still exists), then prune stale refs.
-    /// Deletes the worktree's branch ONLY when zeron created it (`zeron/…`) — the
+    /// Deletes the worktree's branch ONLY when hearth created it (`hearth/…`) — the
     /// user may have checked out their own branch inside the worktree.
     pub async fn delete_worktree(
         &self,
@@ -792,7 +792,7 @@ impl Repos {
             }
         }
         let _ = self.git(&["worktree", "prune"], Some(repo_path)).await;
-        if branch.starts_with("zeron/") {
+        if branch.starts_with("hearth/") {
             let _ = self.git(&["branch", "-D", &branch], Some(repo_path)).await;
         }
         Ok(())
@@ -867,7 +867,7 @@ impl Repos {
     /// The walk runs on a DETACHED OS thread (not the tokio blocking pool): a
     /// readdir wedged in the kernel can't be cancelled, and a poisoned blocking
     /// pool — or a runtime shutdown waiting on it — must never be possible. On
-    /// timeout the thread is simply abandoned (the zeron backend's disposable
+    /// timeout the thread is simply abandoned (the hearth backend's disposable
     /// worker, minus the terminate()).
     #[doc(hidden)]
     pub async fn list_folders_with(
@@ -948,7 +948,7 @@ async fn disposable_worker<T: Send + 'static>(
 fn list_folders_blocking(target: &Path) -> Result<FolderListing, EngineError> {
     let read = std::fs::read_dir(target).map_err(|e| match e.kind() {
         std::io::ErrorKind::PermissionDenied => {
-            EngineError::Other("Zeron doesn't have access to this folder on the device.".into())
+            EngineError::Other("Hearth doesn't have access to this folder on the device.".into())
         }
         _ => EngineError::Other(format!("could not read that folder: {e}")),
     })?;
@@ -1393,8 +1393,8 @@ fn rank_file_matches(
         .collect()
 }
 
-/// Turn a generated chat title into the semantic portion of a Zeron branch
-/// (port of zeron's `worktreeBranchFromTitle`). Zeron NFKD-normalizes accented
+/// Turn a generated chat title into the semantic portion of a Hearth branch
+/// (port of hearth's `worktreeBranchFromTitle`). Hearth NFKD-normalizes accented
 /// letters first; native keeps it ASCII-only (generated titles are Title Case
 /// English), so non-ASCII characters collapse into the `-` separator.
 pub fn worktree_branch_from_title(title: &str) -> String {
@@ -1411,7 +1411,7 @@ pub fn worktree_branch_from_title(title: &str) -> String {
     }
     slug.truncate(48);
     let slug = slug.trim_matches('-');
-    format!("zeron/{}", if slug.is_empty() { "update" } else { slug })
+    format!("hearth/{}", if slug.is_empty() { "update" } else { slug })
 }
 
 fn bounded_field(value: &str, max_chars: usize) -> String {

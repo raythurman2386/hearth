@@ -1,4 +1,4 @@
-//! Model catalog + effort mapping for Codex, ported from zeron's
+//! Model catalog + effort mapping for Codex, ported from hearth's
 //! `packages/harness/src/codex.ts`.
 //!
 //! The TS harness discovers models live via the app server's `model/list`
@@ -7,7 +7,7 @@
 //! short-lived `codex app-server` + `model/list` pagination can later be
 //! spliced in (same call t3code's Codex provider makes).
 
-use zeron_proto::{Model, ModelOption, ModelOptionChoice, ReasoningLevel, SandboxLevel};
+use hearth_proto::{Model, ModelOption, ModelOptionChoice, ReasoningLevel, SandboxLevel};
 
 /// The unified reasoning ladder Codex accepts (`minimal` is offered but clamped
 /// on the wire — see [`to_effort`]).
@@ -56,7 +56,7 @@ pub(crate) fn sandbox_policy_type(sandbox: SandboxLevel) -> &'static str {
 }
 
 /// `turn/start`'s full `sandboxPolicy` object. Workspace-write keeps network
-/// access: zeron agents fetch deps and hit APIs unattended, and with the
+/// access: hearth agents fetch deps and hit APIs unattended, and with the
 /// approval policy pinned to "never" a network-less sandbox would fail those
 /// commands with no escalation path.
 pub(crate) fn sandbox_policy_value(sandbox: SandboxLevel) -> serde_json::Value {

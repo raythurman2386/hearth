@@ -2,7 +2,7 @@
 //! (Claude Code, Codex, Cursor) with account rows — email, plan badge, Active, usage
 //! meters (indigo → amber ≥80% → red ≥95%, reset time), Switch / Forget — plus
 //! the add-account dialogs (paste-code and browser-poll flows) and
-//! account-shaped loading skeletons. Zeron retargets devices from the settings
+//! account-shaped loading skeletons. Hearth retargets devices from the settings
 //! sidebar (`targetDeviceId` passthrough kept plumbed, unused single-device).
 //!
 //! The accounts RPC surface is being implemented engine-side in parallel —
@@ -16,11 +16,11 @@ use gpui::{
 };
 use std::time::Duration;
 
-use zeron_proto::{
+use hearth_proto::{
     AgentAccount, AgentAccountsSnapshot, AgentLoginMode, AgentLoginPoll, AgentLoginStart,
     AgentLoginStatus, HarnessId,
 };
-use zeron_rpc::methods;
+use hearth_rpc::methods;
 
 use crate::composer::{ComposerInput, ComposerInputEvent};
 use crate::popover::{self, Loadable};
@@ -96,7 +96,7 @@ pub fn force_usage_for(trigger: LoadTrigger) -> bool {
     }
 }
 
-/// Compact absolute reset moment (zeron settings.agents.tsx `formatReset`):
+/// Compact absolute reset moment (hearth settings.agents.tsx `formatReset`):
 /// a local clock time ("3:45 PM") when it lands within ~22h, a short weekday
 /// ("Mon") within a week, else month + day ("Sep 14") — a weekday is noise
 /// when the window is a Codex free-tier MONTHLY reset weeks out. The caller
@@ -115,7 +115,7 @@ pub fn format_reset(resets_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Opt
 }
 
 /// The provider cards, in display order: (harness, name, CLI command — named
-/// in the empty-state copy, zeron settings.agents.tsx `PROVIDERS`).
+/// in the empty-state copy, hearth settings.agents.tsx `PROVIDERS`).
 pub const PROVIDERS: [(HarnessId, &str, &str); 3] = [
     (HarnessId::ClaudeCode, "Claude Code", "claude"),
     (HarnessId::Codex, "Codex", "codex"),
@@ -161,7 +161,7 @@ enum LoginFlow {
 }
 
 impl LoginFlow {
-    /// Dialog title (zeron: "Add Claude account" / "Add Codex account").
+    /// Dialog title (hearth: "Add Claude account" / "Add Codex account").
     fn title(&self) -> &'static str {
         let harness = match self {
             LoginFlow::Starting { harness }
@@ -179,7 +179,7 @@ impl LoginFlow {
 pub struct AccountsPage {
     state: Entity<AppState>,
     /// Which device's logins are shown; `None` = this device (no passthrough).
-    /// Retargeted by the page-header device switcher (zeron parity: the
+    /// Retargeted by the page-header device switcher (hearth parity: the
     /// accounts RPCs are relay-forwardable, CLI logins are per-device).
     target_device: Option<String>,
     device_menu: popover::Popup<()>,
@@ -264,7 +264,7 @@ impl AccountsPage {
         value
     }
 
-    /// The page-header device switcher (zeron device-switcher.tsx): a quiet
+    /// The page-header device switcher (hearth device-switcher.tsx): a quiet
     /// trigger — platform glyph · name · presence dot · sort glyph — opening a
     /// dropdown of every registered device. Selecting one retargets the page.
     fn render_device_switcher(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
@@ -273,7 +273,7 @@ impl AccountsPage {
             let s = self.state.read(cx);
             (s.devices.clone(), s.local_device_id.clone())
         };
-        // Stable row order (registration time, then id) — zeron's switcher
+        // Stable row order (registration time, then id) — hearth's switcher
         // sorts the same way so rows never reshuffle on heartbeats.
         devices.sort_by(|a, b| {
             a.created_at
@@ -504,7 +504,7 @@ impl AccountsPage {
             this.update(cx, |page, cx| {
                 match result.and_then(|value| {
                     serde_json::from_value::<AgentLoginStart>(value)
-                        .map_err(|e| zeron_rpc::RpcError::Failed(e.to_string()))
+                        .map_err(|e| hearth_rpc::RpcError::Failed(e.to_string()))
                 }) {
                     Ok(start) => {
                         cx.open_url(&start.url);
@@ -685,12 +685,12 @@ impl AccountsPage {
 
     // ---- render pieces ----
 
-    /// One usage window (zeron settings.agents.tsx `UsageMeter`): label ·
+    /// One usage window (hearth settings.agents.tsx `UsageMeter`): label ·
     /// 5px rounded-full bar (indigo → amber ≥80% → red ≥95%) · "NN% used" ·
     /// quiet reset time.
     fn render_usage_meter(
         &self,
-        window: &zeron_proto::AgentUsageWindow,
+        window: &hearth_proto::AgentUsageWindow,
         theme: &Theme,
         now: DateTime<Utc>,
     ) -> AnyElement {
@@ -729,7 +729,7 @@ impl AccountsPage {
                             div()
                                 .h_full()
                                 // A 1.5% floor keeps tiny non-zero usage
-                                // visible (zeron `max(used, 1.5)%`).
+                                // visible (hearth `max(used, 1.5)%`).
                                 .w(gpui::relative(fraction.max(0.015)))
                                 .rounded_full()
                                 .bg(fill),
@@ -758,7 +758,7 @@ impl AccountsPage {
             .into_any_element()
     }
 
-    /// One account row (zeron settings.agents.tsx `AccountRow`): initial
+    /// One account row (hearth settings.agents.tsx `AccountRow`): initial
     /// avatar, email + usage meters left; badges over the Switch/Forget
     /// actions right-anchored.
     fn render_account_row(
@@ -799,7 +799,7 @@ impl AccountsPage {
                 el.child(widgets::badge(theme, plan))
             });
 
-        // Actions only on INACTIVE accounts (zeron `{!account.active && …}`):
+        // Actions only on INACTIVE accounts (hearth `{!account.active && …}`):
         // an icon-only Forget (trash, hover → foreground) then Switch, which
         // reads "Switching…" while the activate round-trips.
         let actions: Option<gpui::Div> = (!account.active).then(|| {
@@ -885,7 +885,7 @@ impl AccountsPage {
                     .child(widgets::row_title(theme, email))
                     .map(|el| {
                         // Meters XOR the quiet fallback line — never both
-                        // (zeron: `usage ? meters : "Usage unavailable"…`).
+                        // (hearth: `usage ? meters : "Usage unavailable"…`).
                         if account.usage_windows.is_empty() {
                             el.child(
                                 div()
@@ -937,7 +937,7 @@ impl AccountsPage {
         let url_link =
             |id: &'static str, label: &'static str, url: &str, cx: &mut Context<Self>| {
                 let open_url = url.to_string();
-                // "Reopen the …" text link (zeron: `text-[12px]
+                // "Reopen the …" text link (hearth: `text-[12px]
                 // text-muted-foreground/60 hover:underline`).
                 div()
                     .id(id)
@@ -1039,7 +1039,7 @@ impl AccountsPage {
                 let body = match harness {
                     HarnessId::Cursor => {
                         "Finish signing in to Cursor in your browser. This mints a \
-                         zeron-named API key you can revoke any time from Cursor's \
+                         hearth-named API key you can revoke any time from Cursor's \
                          dashboard — it is separate from `cursor-agent login`."
                     }
                     _ => {
@@ -1113,7 +1113,7 @@ impl AccountsPage {
         Some(popover::modal("add-account-dialog", viewport, card))
     }
 
-    /// A ghost account row (zeron settings.agents.tsx `SkeletonRow`): avatar,
+    /// A ghost account row (hearth settings.agents.tsx `SkeletonRow`): avatar,
     /// email line, two usage-meter ghosts, a badge — same geometry as the real
     /// row so loaded data lands without a layout jump. `dim` fades row two.
     fn render_skeleton_row(
@@ -1125,7 +1125,7 @@ impl AccountsPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         use crate::motion;
-        let delta = motion::pulse_delta(&motion::ZERON_PULSE, cx.entity_id(), cx);
+        let delta = motion::pulse_delta(&motion::HEARTH_PULSE, cx.entity_id(), cx);
         let ghost = |w: gpui::Length, h: f32, round_full: bool| {
             div()
                 .w(w)
@@ -1224,7 +1224,7 @@ impl Render for AccountsPage {
                 Some(crate::icons::claude_brand()),
             ),
         };
-        // Brand mark inside a 24px centered box (zeron: `grid size-6
+        // Brand mark inside a 24px centered box (hearth: `grid size-6
         // place-items-center [&_svg]:size-4`).
         let provider_mark = |harness: HarnessId, theme: &Theme| {
             let (mark, tint) = provider_icon(harness);
@@ -1241,7 +1241,7 @@ impl Render for AccountsPage {
                 )
         };
 
-        // One section per provider (zeron settings.agents.tsx `ProviderSection`):
+        // One section per provider (hearth settings.agents.tsx `ProviderSection`):
         // brand header + Add account, then the account rows card.
         let sections: Vec<AnyElement> = match &self.snapshot {
             Loadable::Idle | Loadable::Loading => PROVIDERS
@@ -1320,7 +1320,7 @@ impl Render for AccountsPage {
                     .into_iter()
                     .map(|(harness, name, cli)| {
                         let accounts = provider_accounts(&snapshot, harness);
-                        // EVERY warning renders its own strip (zeron maps them).
+                        // EVERY warning renders its own strip (hearth maps them).
                         let warnings: Vec<String> = snapshot
                             .warnings
                             .iter()
@@ -1424,7 +1424,7 @@ impl Render for AccountsPage {
                             .child(div().flex_1())
                             .child(
                                 // `text-[12.5px]` + leading 16px Refresh icon,
-                                // dimmed while a refresh is in flight (zeron
+                                // dimmed while a refresh is in flight (hearth
                                 // `disabled:opacity-50`).
                                 widgets::ghost_action(&theme)
                                     .id("accounts-refresh")
@@ -1446,7 +1446,7 @@ impl Render for AccountsPage {
                     )
                     .child(widgets::page_subtitle(
                         &theme,
-                        "The Claude Code, Codex, and Cursor logins on this device. Zeron \
+                        "The Claude Code, Codex, and Cursor logins on this device. Hearth \
                          detects the live session, keeps each account backed up, and can \
                          swap between them.",
                     ))
@@ -1462,7 +1462,7 @@ impl Render for AccountsPage {
                         )
                     })
                     .children(sections)
-                    // Footer note (zeron: `mt-6 text-[12px] leading-relaxed
+                    // Footer note (hearth: `mt-6 text-[12px] leading-relaxed
                     // text-muted-foreground/60`).
                     .child(
                         div()
@@ -1503,7 +1503,7 @@ mod tests {
     }
 
     #[test]
-    fn usage_thresholds_match_zeron() {
+    fn usage_thresholds_match_hearth() {
         assert_eq!(usage_level(0.0), UsageLevel::Normal);
         assert_eq!(usage_level(0.79), UsageLevel::Normal);
         assert_eq!(usage_level(0.80), UsageLevel::Warn);

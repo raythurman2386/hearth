@@ -9,7 +9,7 @@ use super::*;
 /// Whether a chat belongs in the sidebar's Sessions list under `filter`
 /// (`None` = "All spaces"). Shared with [`Shell::render_active_rows`] so the
 /// cycling order can never drift from the list the user is looking at.
-pub(super) fn in_space_filter(chat: &zeron_proto::Chat, filter: Option<&str>) -> bool {
+pub(super) fn in_space_filter(chat: &hearth_proto::Chat, filter: Option<&str>) -> bool {
     filter.is_none_or(|space_id| chat.space_id.as_deref() == Some(space_id))
 }
 
@@ -140,7 +140,7 @@ impl Shell {
         let (title, target, harness, on_canvas): (
             SharedString,
             Option<SharedString>,
-            Option<zeron_proto::HarnessId>,
+            Option<hearth_proto::HarnessId>,
             bool,
         ) = {
             let state = self.state.read(cx);
@@ -365,8 +365,8 @@ mod cycle_tests {
         ids.iter().map(|id| id.to_string()).collect()
     }
 
-    fn chat(id: &str, space_id: Option<&str>) -> zeron_proto::Chat {
-        zeron_proto::Chat {
+    fn chat(id: &str, space_id: Option<&str>) -> hearth_proto::Chat {
+        hearth_proto::Chat {
             id: id.into(),
             device_id: "dev".into(),
             title: None,

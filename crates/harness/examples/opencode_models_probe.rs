@@ -4,9 +4,9 @@
 //! OPENCODE_EXECUTABLE); no provider auth required (the anonymous Zen tier
 //! always connects).
 //!
-//!     cargo run -p zeron-harness --example opencode_models_probe
+//!     cargo run -p hearth-harness --example opencode_models_probe
 
-use zeron_harness::{Harness, OpencodeHarness};
+use hearth_harness::{Harness, OpencodeHarness};
 
 #[tokio::main]
 async fn main() {

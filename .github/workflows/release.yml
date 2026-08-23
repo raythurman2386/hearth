@@ -131,7 +131,7 @@ jobs:
         run: |
           ver="${GITHUB_REF_NAME#v}"
           ls dist/
-          ls dist/ | grep -q "zeron-$ver-" \
+          ls dist/ | grep -q "hearth-$ver-" \
             || { echo "tag v$ver does not match built artifact versions — bump Cargo.toml [workspace.package] version"; exit 1; }
           echo "VERSION=$ver" >> "$GITHUB_ENV"
       - uses: softprops/action-gh-release@v2
