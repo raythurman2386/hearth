@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
-use zeron_harness::{Harness, HarnessError, mock::MockHarness};
+use zeron_harness::{mock::MockHarness, Harness, HarnessError};
 use zeron_proto::{AgentEvent, DoneStatus, HarnessId, ReasoningLevel, SteeringMode};
 
 /// What `ListHarnesses` reports per harness.
@@ -473,6 +473,22 @@ pub fn default_registry() -> HarnessRegistry {
         Box::new(|| zeron_harness::AcpHarness::hermes().installed()),
         Box::new(|| Ok(Arc::new(zeron_harness::AcpHarness::hermes()) as Arc<dyn Harness>)),
     );
+    // Raven over ACP (`raven --acp`), same lazy pattern: the static
+    // descriptor mirrors AcpHarness::raven() exactly. Turn-boundary steering,
+    // no effort ladder (Raven's reasoning is model/provider-internal).
+    registry.register_lazy(
+        HarnessDescriptor {
+            id: HarnessId::Raven,
+            name: "Raven".into(),
+            supports_steering: true,
+            steering_mode: SteeringMode::TurnBoundary,
+            reasoning_levels: Vec::new(),
+            installed: true,
+            enabled: None,
+        },
+        Box::new(|| zeron_harness::AcpHarness::raven().installed()),
+        Box::new(|| Ok(Arc::new(zeron_harness::AcpHarness::raven()) as Arc<dyn Harness>)),
+    );
     // pi over ACP (community `pi-acp` adapter), same lazy pattern: the static
     // descriptor mirrors AcpHarness::pi() exactly — turn-boundary steering,
     // pi's thinking ladder minus its "off" tier.
@@ -576,6 +592,7 @@ mod tests {
                 HarnessId::Cursor,
                 HarnessId::Grok,
                 HarnessId::Hermes,
+                HarnessId::Raven,
                 HarnessId::Pi,
                 HarnessId::Opencode
             ]
@@ -611,6 +628,12 @@ mod tests {
         assert_eq!(hermes.display_name(), "Hermes");
         assert_eq!(hermes.steering_mode(), SteeringMode::TurnBoundary);
         assert!(hermes.reasoning_levels().is_empty());
+        // Raven resolves through the shared ACP harness, mirroring its spec.
+        let raven = registry.resolve(HarnessId::Raven).unwrap();
+        assert_eq!(raven.id(), HarnessId::Raven);
+        assert_eq!(raven.display_name(), "Raven");
+        assert_eq!(raven.steering_mode(), SteeringMode::TurnBoundary);
+        assert!(raven.reasoning_levels().is_empty());
         let opencode = registry.resolve(HarnessId::Opencode).unwrap();
         assert_eq!(opencode.id(), HarnessId::Opencode);
         assert_eq!(opencode.display_name(), "OpenCode");

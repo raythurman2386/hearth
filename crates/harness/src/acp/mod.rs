@@ -323,6 +323,58 @@ fn hermes_spec() -> AcpAgentSpec {
     }
 }
 
+fn raven_install_paths() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        dirs.push(home.join(".cargo").join("bin").join("raven"));
+        dirs.push(home.join(".local").join("bin").join("raven"));
+    }
+    dirs.push(PathBuf::from("/opt/homebrew/bin/raven"));
+    dirs.push(PathBuf::from("/usr/local/bin/raven"));
+    dirs
+}
+
+fn raven_spec() -> AcpAgentSpec {
+    AcpAgentSpec {
+        id: HarnessId::Raven,
+        display_name: "Raven",
+        executable: "raven",
+        env_override: "RAVEN_EXECUTABLE",
+        // `raven --acp` serves ACP v1 over stdio, same as `hermes acp`.
+        // No npm fallback exists — Raven is a Cargo binary.
+        args: &["--acp"],
+        npm_package: None,
+        extra_paths: raven_install_paths,
+        cli_executable: "raven",
+        cli_extra_paths: raven_install_paths,
+        install_hint: "raven (searched PATH, the login shell's PATH, ~/.cargo/bin, \
+             ~/.local/bin, /opt/homebrew/bin, and /usr/local/bin; install with \
+             `cargo install --path .` from your raven checkout, or set \
+             RAVEN_EXECUTABLE to override)",
+        // Raven's ACP server advertises its live model list (provider-qualified
+        // ids) as the `model` config option at session/new; the picker live-
+        // probes that, so the static catalog here is only a cold-open fallback.
+        models: || {
+            vec![Model {
+                id: "default".into(),
+                label: "Raven default".into(),
+                description: Some("Uses the model configured in Raven (OLLAMA_API_KEY / RAVEN_API_KEY)".into()),
+                reasoning_levels: Vec::new(),
+                options: Vec::new(),
+            }]
+        },
+        // No `_session/steering` extension: steers deliver at turn boundaries.
+        steering_mode: SteeringMode::TurnBoundary,
+        reasoning_levels: &[],
+        prompt_transform: identity_transform,
+        effort_values: default_effort_values,
+        ladder_extras: &[],
+        prompt_complete_extension: false,
+        prompt_stall: None,
+        stall_hint: "The agent process is likely wedged.",
+    }
+}
+
 fn pi_spec() -> AcpAgentSpec {
     AcpAgentSpec {
         id: HarnessId::Pi,
@@ -484,6 +536,11 @@ impl AcpHarness {
     /// Hermes Agent (`hermes acp`) — Nous Research's native ACP server.
     pub fn hermes() -> Self {
         Self::with_spec(hermes_spec())
+    }
+
+    /// Raven (`raven --acp`) — a local-first ACP agent (`~/Development/raven`).
+    pub fn raven() -> Self {
+        Self::with_spec(raven_spec())
     }
 
     /// The pi coding agent over ACP — the community `pi-acp` adapter wrapping

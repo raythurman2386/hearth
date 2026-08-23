@@ -1216,6 +1216,7 @@ impl Render for AccountsPage {
             HarnessId::Cursor => (crate::icons::CURSOR_MARK, None),
             HarnessId::Grok => (crate::icons::GROK_MARK, None),
             HarnessId::Hermes => (crate::icons::HERMES_MARK, None),
+            HarnessId::Raven => (crate::icons::RAVEN_MARK, None),
             HarnessId::Pi => (crate::icons::PI_MARK, None),
             HarnessId::Opencode => (crate::icons::OPENCODE_MARK, None),
             _ => (
