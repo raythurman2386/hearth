@@ -1,54 +1,58 @@
 # Hearth
 
-Control your coding agents (Claude Code, Codex, Cursor, Grok, Hermes, Pi) locally by default, with optional multi-device sync.
+A **local-first** control surface for your coding agents (Raven, Claude Code, Codex, Cursor, Grok, Hermes, Pi) on Linux and Windows.
 
-![Hearth driving a Claude Code session with a live branch diff sidebar](apps/landing/public/assets/app-screenshot.jpg)
+Hearth is a fork of [**Zeron**](https://github.com/zeronsh/comet) — itself a ground-up native rewrite (Rust + [gpui](https://github.com/zed-industries/zed), the same UI framework Zed uses) of the `zeron` multi-device agent controller. This fork is intentionally trimmed to the part that matters for a single machine: a fast, private, high-performance harness runner you drive locally. No hosted account, no cloud sync, no telemetry.
 
-Every device runs a small engine that stores sessions on that device. A new installation starts in local-only mode without an account or a network connection.
+## What it is
 
-## Install and run locally (Linux)
+- **Local-first by default** — every run is local. No sign-in, no network, no account.
+- **One binary** (`hearth`) — run it headed (a full gpui UI) or headless (an engine daemon a UI can attach to).
+- **Harness-agnostic** — drives any ACP v1 agent over stdio. Raven is wired in as a first-class harness; Claude Code, Codex, Cursor, Grok, Hermes, Pi, and opencode all speak the same protocol.
+- **Ravenwood themed** — the UI carries the [Ravenwood](https://github.com/raythurman2386/ravenwood-vscode) emerald-forest color scheme, warm beige on deep olive.
+- **Workspace-aware** — git worktrees, diff pane, session transcripts, per-session steering, and a real terminal view.
 
-```bash
-curl -fsSL https://hearth.sh/install.sh | sh
-hearth status
-```
+## Install / run
 
-The installer starts the daemon immediately and keeps it running across reboots. No sign-in or sync configuration is required.
-
-Day-to-day:
-
-```bash
-hearth status      # local/synced mode and engine status
-hearth update      # update to the latest release
-hearth daemon start|stop|restart|status
-```
-
-## Optional multi-device sync
-
-Sign in only when you want to open your account's synced workspace. Authentication changes the profile selected by the next engine start, so stop the daemon before changing it:
+Build from source (requires Rust stable + a model endpoint for your agents, e.g. local Ollama):
 
 ```bash
-hearth daemon stop
-hearth login
-hearth daemon start
+cargo build --release
+# headed UI
+cargo run -p hearth
+# or headless engine daemon
+cargo run -p hearth -- headless
 ```
 
-You can then start an agent on one synced device and follow or drive it from another. An always-on machine such as a VPS can keep those agents working after you close your laptop.
+The binary lands in `target/release/hearth` (or `target/debug/hearth` in dev).
 
-Signing in does not upload, move, or import existing local sessions. Local sessions and their attachments remain under the local profile and reappear when you return to local-only mode:
+## Using Raven inside Hearth
+
+Raven speaks ACP over stdio (`raven --acp`), so Hearth drives it natively:
 
 ```bash
-hearth daemon stop
-hearth logout
-hearth daemon start
+hearth                    # open the UI, pick "Raven" as the harness
+hearth --mode agent -p "Explain this repo"   # one-shot
 ```
 
-`hearth login` and `hearth logout` refuse to modify credentials while an engine owns the data directory. The desktop app follows the same next-restart profile boundary.
+The harness picker live-probes Raven's configured models (via Ollama) so you can switch provider/model per session.
 
-On macOS: use the desktop release, or build `hearth` from source and run `hearth daemon install` to install the launchd service.
+## Sync
+
+Sync is **off** by default in this fork. The upstream multi-device sync (Loro CRDT rooms, WorkOS auth, edge workers) is still wired into the codebase if you ever want to self-host it, but a bare `hearth` run never dials out. To opt in you'd set `HEARTH_WORKOS_CLIENT_ID` / `HEARTH_EDGE_TOKEN` — see the engine config in `apps/hearth/src/main.rs`.
 
 ---
 
-Developing or curious how it works? [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/zeronsh/comet) or check out [ARCHITECTURE.md](ARCHITECTURE.md).
+## Credit
+
+This project is a fork of **Zeron** by the **zeronsh** maintainers ([zeronsh/comet](https://github.com/zeronsh/comet)). The architecture — the gpui UI, the Loro CRDT sync layer, the ACP harness design, the sessions engine, the diff and terminal panes — is theirs. This fork:
+
+- renames the product to **Hearth**,
+- adds **Raven** as a first-class ACP harness,
+- ports the **Ravenwood** theme,
+- defaults to **local-only** operation,
+- drops the mobile/web apps and cloud CI.
+
+Big thanks to the upstream `zeronsh` authors for the original work. See `ARCHITECTURE.md` and `docs/` for the full design.
 
 Licensed under the [MIT License](LICENSE).

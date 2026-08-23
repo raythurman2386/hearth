@@ -61,11 +61,9 @@ enum DaemonCommand {
 /// `HEARTH_EDGE_URL` overrides (local dev / self-hosting).
 const DEFAULT_EDGE_URL: &str = "https://edge.hearth.sh";
 
-/// Production WorkOS AuthKit client id — public knowledge (it appears in every
-/// authorize URL), so baking it in is safe. Overridden by `HEARTH_WORKOS_CLIENT_ID`;
-/// set it to the empty string — or set a dev bearer via `HEARTH_EDGE_TOKEN` — to
-/// force dev-mode auth instead.
-const DEFAULT_WORKOS_CLIENT_ID: &str = "client_01KWD0EAKZKD50YCQJNYSRE4BY";
+/// Production WorkOS AuthKit client id — removed from this local-first fork:
+/// sync is opt-in via env, not baked in. (Keep the constant out so a bare run
+/// stays local-only.)
 
 fn edge_url_from_env() -> String {
     std::env::var("HEARTH_EDGE_URL")
@@ -76,14 +74,20 @@ fn edge_url_from_env() -> String {
 
 /// WorkOS client id resolution: explicit env wins (empty string = dev mode);
 /// otherwise a `HEARTH_EDGE_TOKEN` dev bearer keeps dev mode (smoke tests,
-/// local wrangler); otherwise the baked production client id makes optional
-/// sync available while a bare start remains local-only.
+/// local wrangler); otherwise — the DEFAULT — dev mode with no sync.
+///
+/// This fork is local-first by default: no baked production client id, so a
+/// bare `hearth` run resolves `WorkScope::Development` with no bearer and the
+/// edge is never dialed. Sync is opt-in: set `HEARTH_WORKOS_CLIENT_ID` (real
+/// auth) or `HEARTH_EDGE_TOKEN` (dev bearer) to reach the edge.
 fn workos_client_id_from_env(edge_token: &Option<String>) -> Option<String> {
     match std::env::var("HEARTH_WORKOS_CLIENT_ID") {
         Ok(v) if v.trim().is_empty() => None,
         Ok(v) => Some(v),
+        // No explicit client id: if a dev bearer is present we're in dev mode
+        // (sync with a token); otherwise stay local-only.
         Err(_) if edge_token.is_some() => None,
-        Err(_) => Some(DEFAULT_WORKOS_CLIENT_ID.into()),
+        Err(_) => None,
     }
 }
 
