@@ -777,7 +777,19 @@ struct Capture {
 /// the cap is hit, so an arbitrarily large repository diff never buffers fully.
 async fn capture_git(cwd: &Path, args: &[&str], max_bytes: usize) -> Result<Capture, EngineError> {
     let mut cmd = tokio::process::Command::new("git");
-    cmd.arg("-C").arg(cwd).args(args);
+    cmd.arg("-C")
+        .arg(cwd)
+        // Diff capture must be deterministic regardless of the user's global
+        // config: `diff.mnemonicprefix`/`diff.noprefix` would swap `a/`/`b/`
+        // for `c/`/`w/`/bare, breaking the patch parser and the untracked-hunk
+        // synthesis that already writes `a/`/`b/`. Forcing both off (they are
+        // independent flags) pins the canonical prefix for every git subprocess
+        // this helper drives.
+        .arg("-c")
+        .arg("diff.mnemonicprefix=false")
+        .arg("-c")
+        .arg("diff.noprefix=false")
+        .args(args);
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());

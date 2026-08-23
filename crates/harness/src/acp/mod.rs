@@ -2093,7 +2093,8 @@ async fn run_session(session: Session) {
     // settled ids are remembered so a STALE `prompt_complete` (a late replay
     // of an already-settled prompt) can never settle a newer turn.
     let mut prompt_seq: u64 = 0;
-    let mut current_prompt_id: Option<String> = None;
+    // Assigned before first use by the initial `turn` construction below.
+    let mut current_prompt_id: Option<String>;
     let mut completed_prompts: VecDeque<String> = VecDeque::new();
     // `HEARTH_ACP_PROMPT_STALL_MS` overrides the spec's bound; 0 disables.
     let prompt_stall: Option<Duration> = match std::env::var("HEARTH_ACP_PROMPT_STALL_MS")
@@ -2170,14 +2171,6 @@ async fn run_session(session: Session) {
     };
     let mut last_update_at = tokio::time::Instant::now();
     let mut turn_content_seen = false;
-    // A steering injection makes the cost hint unsafe for the REST of the
-    // turn: the adapter emits a cost-bearing usage_update for the injected
-    // message itself, mid-turn, indistinguishable in shape from the
-    // terminal one (verified against 0.66.0 — premature Done exactly one
-    // grace after injection). Steered turns settle off their real response
-    // (healthy in every trace); the engine's quiesce watchdog backstops
-    // them (the quiet settle used to, before the Claude exemption above).
-    let mut steered_this_turn = false;
     let mut open_tools: std::collections::HashSet<String> = std::collections::HashSet::new();
     let open_questions = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     // PREVENTION, ahead of all the recovery above: never send a
@@ -2350,7 +2343,6 @@ async fn run_session(session: Session) {
                     }
                     done_current = false;
                     turn_content_seen = false;
-                    steered_this_turn = false;
                     open_tools.clear();
                     last_update_at = tokio::time::Instant::now();
                     prompt_seq += 1;
@@ -2534,7 +2526,6 @@ async fn run_session(session: Session) {
                     // and no Done ever coming — the stranded-Working /
                     // eternal-timer bug. Post-turn: nothing left to do.
                     if turn.is_some() {
-                        steered_this_turn = true;
                         // The injection proves the turn is LIVE: any settle
                         // deadline armed off a cost frame that raced this
                         // response is invalid evidence.
@@ -2636,7 +2627,6 @@ async fn run_session(session: Session) {
                     }
                     done_current = false;
                     turn_content_seen = false;
-                    steered_this_turn = false;
                     open_tools.clear();
                     last_update_at = tokio::time::Instant::now();
                     prompt_seq += 1;
@@ -2687,7 +2677,6 @@ async fn run_session(session: Session) {
                     }
                     done_current = false;
                     turn_content_seen = false;
-                    steered_this_turn = false;
                     open_tools.clear();
                     last_update_at = tokio::time::Instant::now();
                     prompt_seq += 1;
@@ -2791,7 +2780,6 @@ async fn run_session(session: Session) {
                     }
                     done_current = false;
                     turn_content_seen = false;
-                    steered_this_turn = false;
                     open_tools.clear();
                     last_update_at = tokio::time::Instant::now();
                     prompt_seq += 1;
@@ -2864,7 +2852,6 @@ async fn run_session(session: Session) {
                         }
                         done_current = false;
                         turn_content_seen = false;
-                        steered_this_turn = false;
                         open_tools.clear();
                         last_update_at = tokio::time::Instant::now();
                         prompt_seq += 1;
@@ -2933,7 +2920,6 @@ async fn run_session(session: Session) {
             _ = tokio::time::sleep_until(
                 prompt_stall_deadline.unwrap_or_else(tokio::time::Instant::now),
             ), if prompt_stall_deadline.is_some() && turn.is_some() && !interrupted => {
-                prompt_stall_deadline = None;
                 let _ = send(
                     &event_tx,
                     AgentEvent::Error {
