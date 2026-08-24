@@ -10,7 +10,7 @@ assignees: ''
 
 - **OS:** (e.g. Ubuntu 24.04, macOS 14, Windows 11)
 - **Rust toolchain:** (e.g. 1.97)
-- **hearth version:** (e.g. 0.2.27, or commit hash)
+- **hearth version:** (e.g. 0.1.0, or commit hash)
 - **Install method:** (cargo install, install.sh, built from source)
 
 ## Description
