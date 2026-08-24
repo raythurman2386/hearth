@@ -74,20 +74,24 @@ impl EngineChatSink {
 }
 
 impl ChatDocSink for EngineChatSink {
-    fn apply_row(&self, bytes: &[u8], cursor: u64) {
+    fn apply_row(&self, bytes: &[u8], cursor: u64) -> bool {
         let Some(doc) = self.doc.upgrade() else {
-            return;
+            return true;
         };
-        match doc.doc().import(bytes) {
+        let absorbed = match doc.doc().import(bytes) {
             Ok(status) => {
                 if status.pending.is_some() {
                     // Missing causal deps: loro parked these ops invisibly.
-                    // The client's cursor contiguity rule keeps `cursor`
-                    // honest (it never jumps a gap), so persisting is safe —
-                    // this warn is the tripwire that the 2026-08-19
-                    // empty-doc/advanced-cursor wedge shape was seen live.
+                    // The client MUST hold the cursor here (return false) so
+                    // the gap-repair backfills the missing deps; advancing
+                    // the cursor over the parked row is the wedge — the doc
+                    // reads empty below the cursor forever (2026-08-24 live
+                    // hub: 322 rows parked 168→490, zero gap repairs).
                     tracing::warn!(chat = %self.chat_id, cursor,
-                        "chat2 sink: row parked on missing deps (gap repair should follow)");
+                        "chat2 sink: row parked on missing deps; holding cursor for gap repair");
+                    false
+                } else {
+                    true
                 }
             }
             Err(err) => {
@@ -96,9 +100,23 @@ impl ChatDocSink for EngineChatSink {
                 // advances: replaying a poison row forever is the wedge class.
                 tracing::warn!(chat = %self.chat_id, error = %err,
                     "chat2 sink: row import failed; skipping row");
+                true
             }
-        }
-        self.persist_with_cursor(cursor);
+        };
+        // The C2 rule persists the cursor IN THE SAME transaction as the doc
+        // bytes, so content and cursor cannot diverge. A parked row is NOT in
+        // the exported snapshot (it sits in loro's pending buffer, invisible),
+        // so the cursor must NOT claim it: persist with the last
+        // materialized seq (`cursor - 1`). The client re-holds its cursor the
+        // same way, so the gap is visible and re-backfillable instead of
+        // frozen-and-invisible.
+        let persist_cursor = if absorbed {
+            cursor
+        } else {
+            cursor.saturating_sub(1)
+        };
+        self.persist_with_cursor(persist_cursor);
+        absorbed
     }
 
     fn apply_checkpoint(&self, bytes: &[u8], cursor: u64) -> Result<(), String> {

@@ -63,8 +63,9 @@ impl Default for RecordingSink {
 }
 
 impl ChatDocSink for RecordingSink {
-    fn apply_row(&self, bytes: &[u8], cursor: u64) {
+    fn apply_row(&self, bytes: &[u8], cursor: u64) -> bool {
         self.rows.lock().unwrap().push((bytes.to_vec(), cursor));
+        true
     }
     fn apply_checkpoint(&self, _bytes: &[u8], _cursor: u64) -> Result<(), String> {
         Ok(())

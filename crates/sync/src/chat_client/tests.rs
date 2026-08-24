@@ -50,15 +50,23 @@ struct RecordingSink {
     checkpoints: Mutex<Vec<(Vec<u8>, u64)>>,
     cursor_advances: Mutex<Vec<u64>>,
     frontier_contained: std::sync::atomic::AtomicBool,
+    /// When a payload is marked here, the FIRST apply of those bytes reports
+    /// PARKED (missing deps); a later re-delivery (repair backfill) absorbs
+    /// them — the 2026-08-24 empty-doc/advanced-cursor wedge, where the
+    /// cursor advanced over rows the doc never materialized.
+    park_payloads: Mutex<std::collections::HashSet<Vec<u8>>>,
     /// Global apply order across rows and checkpoints — the overlap test
     /// pins "checkpoint imports before any row that buffered during it".
     ops: Mutex<Vec<String>>,
 }
 
 impl ChatDocSink for RecordingSink {
-    fn apply_row(&self, bytes: &[u8], cursor: u64) {
+    fn apply_row(&self, bytes: &[u8], cursor: u64) -> bool {
         lock(&self.rows).push((bytes.to_vec(), cursor));
         lock(&self.ops).push(format!("row@{cursor}"));
+        // Park only the FIRST apply of a marked payload; a repair re-delivery
+        // of the same bytes (now with deps present) is absorbed.
+        !lock(&self.park_payloads).remove(bytes)
     }
     fn apply_checkpoint(&self, bytes: &[u8], cursor: u64) -> Result<(), String> {
         lock(&self.checkpoints).push((bytes.to_vec(), cursor));
@@ -1301,6 +1309,190 @@ async fn live_row_gap_holds_cursor_and_repairs() {
             (vec![0x03], 3),
         ],
         "cursor held through the gap and walked by the repair"
+    );
+    drop(end);
+    client.shutdown().await;
+}
+
+/// A CONTIGUOUS row that parks on missing deps must not advance the cursor:
+/// the old advance stamped the cursor over a row the doc never materialized,
+/// so the transcript read empty below it forever (2026-08-24 live hub: 322
+/// parked rows walked the cursor 168→490 with no repair). The cursor must
+/// hold at the last absorbed row and a backfill repair must re-deliver it.
+#[tokio::test(start_paused = true)]
+async fn parked_row_holds_cursor_and_requests_repair() {
+    let (pipe, mut end) = pipe_pair();
+    let sink = Arc::new(RecordingSink {
+        park_payloads: std::sync::Mutex::new(std::collections::HashSet::from([vec![0x04u8]])),
+        ..Default::default()
+    });
+    let (fetch, _) = fetcher(b"");
+
+    let server = tokio::spawn(async move {
+        // Join backfills rows 1..3 cleanly (frontier contained, no checkpoint).
+        let after = serve_join(
+            &mut end,
+            serde_json::json!({"headSeq": 3, "seqFloor": 0, "checkpointSeq": 0,
+                "checkpointSize": 0, "rowCount": 3, "rowBytes": 96}),
+            &[],
+            vec![
+                (1, "dev-b", vec![0x01]),
+                (2, "dev-b", vec![0x02]),
+                (3, "dev-b", vec![0x03]),
+            ],
+            false,
+        )
+        .await;
+        assert_eq!(after, 0);
+        // A LIVE row (seq 4) arrives but its deps are missing — the sink
+        // parks it. The client must hold the cursor at 3 and send a backfill
+        // repair from there, NOT skip to 4.
+        send(
+            &end,
+            frame_type::ROW,
+            serde_json::json!({"seq": 4, "device": "dev-b", "batchId": "b4"}),
+            &[0x04],
+        )
+        .await;
+        let req = expect_kind(&mut end, frame_type::ROWS_REQ).await;
+        assert_eq!(
+            req.header["after"].as_u64().unwrap(),
+            3,
+            "repair must start at the held cursor, not the parked row"
+        );
+        // The repair re-delivers seq 4 (now with deps present → absorbed).
+        send(
+            &end,
+            frame_type::ROW,
+            serde_json::json!({"seq": 4, "device": "dev-b", "batchId": "b4"}),
+            &[0x04],
+        )
+        .await;
+        send(
+            &end,
+            frame_type::ROWS_DONE,
+            serde_json::json!({"headSeq": 4}),
+            &[],
+        )
+        .await;
+        end
+    });
+
+    let client = ChatClient::connect_with_tuned(
+        connector(vec![pipe]),
+        sink.clone(),
+        fetch,
+        "dev-a",
+        0,
+        ChatTuning::default(),
+    )
+    .await
+    .expect("join succeeds");
+    let end = server.await.unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while client.stats().cursor != 4 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "repair never converged the cursor: {:?}",
+            client.stats()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // The parked row's FIRST apply was attempted (sink reported parked, so
+    // the engine persists cursor-1 and the client holds); the repair then
+    // re-delivered it and absorbed it at the honest cursor 4. The decisive
+    // check is the repair request above (`after=3`, not 4) and the final
+    // converged cursor — both held the gap instead of stamping past it.
+    assert_eq!(lock(&sink.rows).len(), 5, "both the park and the repair apply");
+    assert_eq!(
+        *lock(&sink.rows),
+        vec![
+            (vec![0x01], 1),
+            (vec![0x02], 2),
+            (vec![0x03], 3),
+            (vec![0x04], 4), // parked attempt (engine persists cursor-1)
+            (vec![0x04], 4), // repair re-delivery, absorbed
+        ],
+    );
+    drop(end);
+    client.shutdown().await;
+}
+
+/// A GAP row (seq non-contiguous) that ALSO parks on missing deps must leave
+/// the already-held cursor untouched — clamping to `effective - 1` (the 
+/// row's predecessor) would decrement a cursor the gap already held, stepping
+/// backwards over rows the doc DID materialize. Both the pre-existing
+/// `live_row_gap_holds_cursor_and_repairs` and the parked-row rule must
+/// compose: hold where it was, still request a repair.
+#[tokio::test(start_paused = true)]
+async fn gap_row_that_parks_keeps_the_held_cursor() {
+    let (pipe, mut end) = pipe_pair();
+    let sink = Arc::new(RecordingSink {
+        park_payloads: std::sync::Mutex::new(std::collections::HashSet::from([vec![0x03u8]])),
+        ..Default::default()
+    });
+    let (fetch, _) = fetcher(b"");
+
+    let server = tokio::spawn(async move {
+        // Join backfills rows 1..2 cleanly, so the cursor is 2.
+        let after = serve_join(
+            &mut end,
+            serde_json::json!({"headSeq": 2, "seqFloor": 0, "checkpointSeq": 0,
+                "checkpointSize": 0, "rowCount": 2, "rowBytes": 64}),
+            &[],
+            vec![
+                (1, "dev-b", vec![0x01]),
+                (2, "dev-b", vec![0x02]),
+            ],
+            false,
+        )
+        .await;
+        assert_eq!(after, 0);
+        // A GAP row (seq 4) that ALSO parks. The cursor is already held at 2
+        // by the gap — it must stay 2, never 1 or 3.
+        send(
+            &end,
+            frame_type::ROW,
+            serde_json::json!({"seq": 4, "device": "dev-b", "batchId": "b4"}),
+            &[0x03],
+        )
+        .await;
+        let req = expect_kind(&mut end, frame_type::ROWS_REQ).await;
+        assert_eq!(
+            req.header["after"].as_u64().unwrap(),
+            2,
+            "repair starts at the held cursor (2), never stepped back"
+        );
+        end
+    });
+
+    let client = ChatClient::connect_with_tuned(
+        connector(vec![pipe]),
+        sink.clone(),
+        fetch,
+        "dev-a",
+        0,
+        ChatTuning::default(),
+    )
+    .await
+    .expect("join succeeds");
+    let end = server.await.unwrap();
+
+    // Let the repair request land; then assert the cursor stayed exactly 2
+    // (the gap held it; the park must not have decremented it).
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        client.stats().cursor,
+        2,
+        "gap+parked row must keep the held cursor, got {:?}",
+        client.stats()
+    );
+    // The parked attempt applied with the held cursor (2).
+    assert_eq!(
+        *lock(&sink.rows),
+        vec![(vec![0x01], 1), (vec![0x02], 2), (vec![0x03], 2)],
+        "the parked gap row records the held cursor, not a decrement"
     );
     drop(end);
     client.shutdown().await;

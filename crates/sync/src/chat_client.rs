@@ -110,8 +110,14 @@ pub enum ChatEvent {
 /// every method persists doc content AND the room cursor in one transaction
 /// (`DocsStore::save_snapshot_with_cursor`) so they can never diverge.
 pub trait ChatDocSink: Send + Sync + 'static {
-    /// Import one remote update row; `cursor` is the row's seq.
-    fn apply_row(&self, bytes: &[u8], cursor: u64);
+    /// Import one remote update row; `cursor` is the row's seq. Returns
+    /// `true` when the row was absorbed into the doc (or is a harmless
+    /// no-op), `false` when it was PARKED on missing causal deps — the
+    /// caller must then NOT advance the cursor past it and must schedule a
+    /// backfill repair so the missing deps arrive and the row materializes.
+    /// Advancing the cursor over a parked row makes the gap permanent: the
+    /// doc reads empty below the cursor and the transcript never updates.
+    fn apply_row(&self, bytes: &[u8], cursor: u64) -> bool;
     /// Replace/merge from a checkpoint blob; `cursor` is its checkpointSeq.
     fn apply_checkpoint(&self, bytes: &[u8], cursor: u64) -> Result<(), String>;
     /// Client-side precision (replaces the server VV diff): is the server
@@ -1350,6 +1356,7 @@ impl Actor {
                         // contiguous — but hold the rule anyway: a jump
                         // (trimmed log, server surprise) must not stamp the
                         // cursor over rows the doc never saw.
+                        let before = lock(&shared).cursor;
                         let effective = {
                             let mut sh = lock(&shared);
                             if row.seq <= sh.cursor + 1 {
@@ -1363,8 +1370,23 @@ impl Actor {
                             }
                             sh.cursor
                         };
-                        sink.apply_row(&frame.payload, effective);
-                        applied = true;
+                        // Same parked-row discipline as the live socket: a
+                        // row that fails to materialize must not advance the
+                        // cursor. The next pull cycle (which re-runs from the
+                        // held cursor) re-fetches it alongside the deps it
+                        // needs, so the gap is self-healing instead of frozen.
+                        // Clamp to the pre-row cursor (not `effective - 1`) so
+                        // a gap row's held cursor is never decremented.
+                        if sink.apply_row(&frame.payload, effective) {
+                            applied = true;
+                        } else {
+                            lock(&shared).cursor = lock(&shared).cursor.min(before);
+                            tracing::warn!(
+                                seq = effective,
+                                cursor = lock(&shared).cursor,
+                                "chat2: pull row parked on missing deps; holding cursor"
+                            );
+                        }
                     }
                     frame_type::ROWS_DONE => {}
                     _ => {}
@@ -1450,6 +1472,7 @@ impl Actor {
                 // gap means rows we never received (live broadcast mid-join)
                 // — apply the bytes (loro parks dependents harmlessly), keep
                 // the honest cursor, and ask for a backfill repair.
+                let before = lock(&self.shared).cursor;
                 let effective = {
                     let mut shared = lock(&self.shared);
                     if row.seq > shared.cursor + 1 {
@@ -1464,7 +1487,25 @@ impl Actor {
                     }
                     shared.cursor
                 };
-                self.sink.apply_row(&frame.payload, effective);
+                // A row that parks on missing deps must NOT advance the
+                // cursor: the sink reports it, we restore the cursor to its
+                // value before this row and request a backfill so the missing
+                // deps arrive and the row materializes. Advancing past it
+                // would make the gap permanent — the empty-doc / advanced-
+                // cursor wedge the live 2026-08-24 hub hit (322 parked rows,
+                // cursor walked 168→490, transcript frozen). Clamping to the
+                // pre-row cursor (not `effective - 1`) keeps a gap row's held
+                // cursor intact too.
+                if !self.sink.apply_row(&frame.payload, effective) {
+                    let mut shared = lock(&self.shared);
+                    shared.cursor = shared.cursor.min(before);
+                    shared.gap_repair = true;
+                    tracing::warn!(
+                        seq = effective,
+                        cursor = shared.cursor,
+                        "chat2: row parked on missing deps; holding cursor and requesting backfill"
+                    );
+                }
                 let _ = self.events.send(ChatEvent::Applied);
             }
             frame_type::ACK => {
