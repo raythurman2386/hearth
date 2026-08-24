@@ -46,7 +46,7 @@ use tokio::sync::mpsc;
 
 use hearth_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ModelOption, ModelOptionChoice, ReasoningLevel,
-    RunRequest, SlashCommand, SteeringMode, UserInputAnswer, UserInputQuestion,
+    RunRequest, SessionMode, SlashCommand, SteeringMode, UserInputAnswer, UserInputQuestion,
 };
 
 use crate::jsonrpc::{Incoming, RpcClient};
@@ -1420,6 +1420,7 @@ fn config_option_sets(
     model: Option<&str>,
     efforts: &[&'static str],
     model_options: &serde_json::Map<String, Value>,
+    mode: Option<SessionMode>,
 ) -> Vec<(String, Value)> {
     let Some(options) = session_response
         .get("configOptions")
@@ -1452,31 +1453,45 @@ fn config_option_sets(
             ("select", Some("model")) => model
                 .and_then(|m| pick_model_value(m, &available, context_1m))
                 .map(Value::String),
-            // Unattended parity with the retired custom adapters (claude
-            // bypassPermissions / codex approvalPolicy never): pick the
-            // no-prompts mode when the agent offers one. claude-agent-acp
-            // calls it `bypassPermissions`, codex-acp `agent-full-access`
-            // (approvalPolicy "never" + danger-full-access sandbox).
-            // Cursor instead exposes agent/plan/ask — those arrive as a
-            // Traits "Mode" option and win when the run selected one.
-            ("select", Some("mode")) => model_options
-                .get("mode")
-                .and_then(Value::as_str)
-                .filter(|c| available.contains(c))
-                .map(|c| Value::String(c.to_owned()))
-                .or_else(|| {
-                    [
-                        "bypassPermissions",
-                        "bypass_permissions",
-                        "yolo",
-                        "agent-full-access",
-                        "danger-full-access",
-                        "full-access",
-                    ]
-                    .into_iter()
-                    .find(|v| available.contains(v))
-                    .map(|v| Value::String(v.to_owned()))
-                }),
+            // Two different "mode" selects share this category:
+            //
+            // - Raven (and similar) advertise plan/agent/chat as the
+            //   session interaction mode. Honor `request.mode` so the
+            //   composer chip actually switches the live toolset.
+            // - Claude/Codex advertise permission/sandbox modes
+            //   (bypassPermissions, agent-full-access). Those stay on
+            //   the unattended no-prompts pick unless a trait overrode
+            //   them. Mixing the two lists would map Hearth's "Agent"
+            //   chip onto Codex's `agent` instead of `agent-full-access`.
+            ("select", Some("mode")) => {
+                let session_modes = available
+                    .iter()
+                    .any(|v| matches!(*v, "plan" | "chat"));
+                if session_modes {
+                    mode.map(|m| m.as_str())
+                        .filter(|c| available.contains(c))
+                        .map(|c| Value::String(c.to_owned()))
+                } else {
+                    model_options
+                        .get("mode")
+                        .and_then(Value::as_str)
+                        .filter(|c| available.contains(c))
+                        .map(|c| Value::String(c.to_owned()))
+                        .or_else(|| {
+                            [
+                                "bypassPermissions",
+                                "bypass_permissions",
+                                "yolo",
+                                "agent-full-access",
+                                "danger-full-access",
+                                "full-access",
+                            ]
+                            .into_iter()
+                            .find(|v| available.contains(v))
+                            .map(|v| Value::String(v.to_owned()))
+                        })
+                }
+            }
             ("select", Some("thought_level")) => efforts
                 .iter()
                 .find(|c| available.contains(*c))
@@ -1978,6 +1993,7 @@ async fn run_session(session: Session) {
             requested_model,
             &efforts,
             &request.model_options,
+            request.mode,
         ) {
             let mut params = serde_json::Map::new();
             params.insert("sessionId".into(), session_id.clone().into());
@@ -3070,7 +3086,7 @@ mod tests {
         // Model switch + effort preference list; fastMode untouched without a
         // model-option selection.
         assert_eq!(
-            config_option_sets(&response, Some("claude-opus-5"), &["medium"], &no_opts),
+            config_option_sets(&response, Some("claude-opus-5"), &["medium"], &no_opts, None),
             vec![
                 ("model".to_owned(), json!({ "value": "claude-opus-5" })),
                 ("effort".to_owned(), json!({ "value": "medium" })),
@@ -3078,7 +3094,7 @@ mod tests {
         );
         // Effort preference order: first ADVERTISED candidate wins.
         assert_eq!(
-            config_option_sets(&response, None, &["xhigh", "max"], &no_opts),
+            config_option_sets(&response, None, &["xhigh", "max"], &no_opts, None),
             vec![("effort".to_owned(), json!({ "value": "max" }))]
         );
         // contextWindow=1m composes the [1m] model id; fastMode=on matches the
@@ -3087,7 +3103,7 @@ mod tests {
         opts.insert("contextWindow".into(), json!("1m"));
         opts.insert("fastMode".into(), json!("on"));
         assert_eq!(
-            config_option_sets(&response, Some("claude-opus-5"), &["high"], &opts),
+            config_option_sets(&response, Some("claude-opus-5"), &["high"], &opts, None),
             vec![
                 ("model".to_owned(), json!({ "value": "claude-opus-5[1m]" })),
                 (
@@ -3098,16 +3114,16 @@ mod tests {
         );
         // Already-current values and unadvertised models set nothing.
         assert_eq!(
-            config_option_sets(&response, Some("claude-sonnet-5"), &["high"], &no_opts),
+            config_option_sets(&response, Some("claude-sonnet-5"), &["high"], &no_opts, None),
             Vec::new()
         );
         assert_eq!(
-            config_option_sets(&response, Some("gpt-5.6-sol"), &[], &no_opts),
+            config_option_sets(&response, Some("gpt-5.6-sol"), &[], &no_opts, None),
             Vec::new()
         );
         // No configOptions advertised → nothing to set.
         assert_eq!(
-            config_option_sets(&json!({"sessionId": "s"}), Some("x"), &["high"], &no_opts),
+            config_option_sets(&json!({"sessionId": "s"}), Some("x"), &["high"], &no_opts, None),
             Vec::new()
         );
     }
@@ -3428,8 +3444,47 @@ mod tests {
         });
         let no_opts = serde_json::Map::new();
         assert_eq!(
-            config_option_sets(&codex, None, &[], &no_opts),
+            config_option_sets(&codex, None, &[], &no_opts, None),
             vec![("mode".to_owned(), json!({ "value": "agent-full-access" }))]
+        );
+        // A Hearth plan/agent/chat pick must not override Codex's permission
+        // mode with the overlapping "agent" value.
+        assert_eq!(
+            config_option_sets(&codex, None, &[], &no_opts, Some(SessionMode::Agent)),
+            vec![("mode".to_owned(), json!({ "value": "agent-full-access" }))]
+        );
+    }
+
+    #[test]
+    fn raven_mode_config_option_uses_the_requested_session_mode() {
+        let raven = json!({
+            "sessionId": "s-1",
+            "configOptions": [{
+                "id": "mode",
+                "category": "mode",
+                "type": "select",
+                "currentValue": "plan",
+                "options": [
+                    { "value": "plan" },
+                    { "value": "agent" },
+                    { "value": "chat" },
+                ],
+            }],
+        });
+        let no_opts = serde_json::Map::new();
+        assert_eq!(
+            config_option_sets(&raven, None, &[], &no_opts, Some(SessionMode::Agent)),
+            vec![("mode".to_owned(), json!({ "value": "agent" }))]
+        );
+        // No explicit pick: leave the agent's advertised default (plan).
+        assert_eq!(
+            config_option_sets(&raven, None, &[], &no_opts, None),
+            Vec::new()
+        );
+        // Already-current: nothing to set.
+        assert_eq!(
+            config_option_sets(&raven, None, &[], &no_opts, Some(SessionMode::Plan)),
+            Vec::new()
         );
     }
 
