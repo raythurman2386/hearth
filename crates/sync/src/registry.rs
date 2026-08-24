@@ -203,7 +203,7 @@ async fn pump(
         tokio::select! {
             frame = out_rx.recv() => match frame {
                 Some(text) => {
-                    if sink.send(WsMessage::Text(text)).await.is_err() {
+                    if sink.send(WsMessage::Text(text.into())).await.is_err() {
                         break;
                     }
                 }
