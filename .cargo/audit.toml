@@ -8,8 +8,18 @@
 # protocol XML. Neither ships in the runtime binary, and neither is reachable
 # from runtime code. They cannot be bumped without bumping the gpui rev
 # (which pins them). Revisit when the gpui fork is upgraded.
+#
+# The 3 unsound advisories below are all transitive deps of the pinned gpui
+# fork (wingleeio/zed) or loro, neither of which can be bumped without a
+# coordinated upgrade (the fork carries hearth-specific UI commits; loro is
+# pinned to match the TS edge's byte-identical frames). They are reported as
+# warnings, not errors, so the audit job passes; they are ignored here to keep
+# the report actionable. Revisit when the gpui fork or loro is upgraded.
 [advisories]
 ignore = [
     "RUSTSEC-2026-0194", # quick-xml quadratic duplicate-attr check (build-time only)
     "RUSTSEC-2026-0195", # quick-xml unbounded NsReader allocation (build-time only)
+    "RUSTSEC-2026-0221", # event-listener !Send tag crossing (transitive via gpui fork)
+    "RUSTSEC-2023-0126", # im OrdSet aliasing violation (transitive via loro)
+    "RUSTSEC-2026-0255", # sized-chunks panic-safety use-after-free (transitive via loro)
 ]
