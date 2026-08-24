@@ -92,7 +92,7 @@ async fn fake_device_room() -> (String, tokio::task::JoinHandle<()>) {
                 }
                 let writer = tokio::spawn(async move {
                     while let Some(bytes) = rx.recv().await {
-                        if sink.send(WsMessage::Binary(bytes)).await.is_err() {
+                        if sink.send(WsMessage::Binary(bytes.into())).await.is_err() {
                             break;
                         }
                     }

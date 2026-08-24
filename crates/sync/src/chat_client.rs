@@ -234,7 +234,7 @@ async fn pump(
         tokio::select! {
             frame = out_rx.recv() => match frame {
                 Some(bytes) => {
-                    if sink.send(WsMessage::Binary(bytes)).await.is_err() {
+                    if sink.send(WsMessage::Binary(bytes.into())).await.is_err() {
                         break;
                     }
                 }

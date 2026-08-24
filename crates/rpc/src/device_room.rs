@@ -464,7 +464,7 @@ async fn host_session(
         tokio::select! {
             frame = out_rx.recv() => match frame {
                 Some(bytes) => {
-                    if sink.send(WsMessage::Binary(bytes)).await.is_err() {
+                    if sink.send(WsMessage::Binary(bytes.into())).await.is_err() {
                         break;
                     }
                 }
@@ -614,7 +614,7 @@ impl DeviceLink {
             // the host leg is alive (the dial's readiness probe proves it
             // too; this seeds the ongoing cadence).
             if !echo_frame.is_empty() {
-                let _ = sink.send(WsMessage::Binary(echo_frame.clone())).await;
+                let _ = sink.send(WsMessage::Binary(echo_frame.clone().into())).await;
             }
             let reason = loop {
                 tokio::select! {
@@ -628,7 +628,7 @@ impl DeviceLink {
                                     continue;
                                 }
                             };
-                            if sink.send(WsMessage::Binary(encoded)).await.is_err() {
+                            if sink.send(WsMessage::Binary(encoded.into())).await.is_err() {
                                 break "connection lost".to_string();
                             }
                         }
@@ -678,7 +678,7 @@ impl DeviceLink {
                             break "connection lost".to_string();
                         }
                         if !echo_frame.is_empty()
-                            && sink.send(WsMessage::Binary(echo_frame.clone())).await.is_err()
+                            && sink.send(WsMessage::Binary(echo_frame.clone().into())).await.is_err()
                         {
                             break "connection lost".to_string();
                         }
