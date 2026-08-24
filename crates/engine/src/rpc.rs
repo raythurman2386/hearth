@@ -1181,6 +1181,17 @@ impl RpcService for EngineRpc {
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&serde_json::json!({}))
             }
+            methods::OPEN_CHAT => {
+                // Tailscale cold-host wake: peer asks this engine to open a
+                // chat it hosts so pending commands drain. Same effect as the
+                // legacy DeviceRoom nudge handler on HostRelay.
+                let p: ChatParams = parse_params(params)?;
+                self.doc_host
+                    .open(&p.chat_id)
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                tracing::info!(chat = %p.chat_id, "OpenChat: chat doc opened");
+                RpcReply::value(&serde_json::json!({}))
+            }
             methods::RELAY_COMMAND => {
                 let p: RelayCommandParams = parse_params(params)?;
                 let outcome = self

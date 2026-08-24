@@ -267,6 +267,32 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 /// The queued-attachment transfers a command's `pending://` refs imply —
 /// shared by the retry escort and the retry re-issue.
+/// Peer `/rpc` cold-host wake: ask `target` to open `chat_id` (drain follows).
+async fn peer_open_chat(
+    links: &std::sync::Arc<hearth_rpc::LinkCache>,
+    target: &str,
+    chat_id: &str,
+) -> Result<(), String> {
+    let client = links
+        .client(target)
+        .await
+        .map_err(|e| format!("peer link: {e}"))?;
+    let params = serde_json::json!({ "chatId": chat_id });
+    let call = client.call(hearth_rpc::methods::OPEN_CHAT, params);
+    match tokio::time::timeout(RELAY_CALL_TIMEOUT, call).await {
+        Err(_) => {
+            links.invalidate(target);
+            Err("OpenChat timed out; peer link suspect".into())
+        }
+        Ok(Err(hearth_rpc::RpcError::Failed(err))) => Err(format!("host refused: {err}")),
+        Ok(Err(err)) => {
+            links.invalidate(target);
+            Err(format!("OpenChat failed: {err}"))
+        }
+        Ok(Ok(_)) => Ok(()),
+    }
+}
+
 fn command_transfers(entry: &SessionCommandEntry) -> Vec<crate::uploads::AttachmentTransfer> {
     let refs: Vec<String> = match &entry.payload {
         SessionCommandPayload::Run { request, .. } => request
@@ -2148,12 +2174,15 @@ impl DocHost {
         Ok(id)
     }
 
-    /// POST `{edge}/device/{host}/nudge {chatId}` when the chat's workspace row names
-    /// another device as host. Best-effort: offline/edge-less engines skip silently.
+    /// Wake a remote host so it opens this chat and drains pending commands.
+    ///
+    /// Tailscale path (preferred): peer RPC [`hearth_rpc::methods::OPEN_CHAT`]
+    /// over `LinkCache` — DeviceRoom was removed; the hub has no
+    /// `/device/{id}/nudge` route.
+    ///
+    /// Legacy path: `POST {edge}/device/{host}/nudge` when HostRelay is still
+    /// wired to a classic edge (non-tailnet). Best-effort either way.
     fn nudge_remote_host(&self, chat_id: &str) {
-        let Some(edge) = self.inner.config.edge.clone() else {
-            return;
-        };
         let Some(workspace) = self.workspace() else {
             return;
         };
@@ -2170,13 +2199,38 @@ impl DocHost {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
-        let url = format!(
-            "{}/device/{}/nudge",
-            edge.url.trim_end_matches('/'),
-            host_device
-        );
         let chat = chat_id.to_string();
+        let links = self.inner.links.get().cloned();
+        let edge = self.inner.config.edge.clone();
         self.spawn_worker_on(&runtime, async move {
+            if let Some(links) = links.as_ref() {
+                match peer_open_chat(links, &host_device, &chat).await {
+                    Ok(()) => {
+                        tracing::info!(
+                            chat = %chat,
+                            device = %host_device,
+                            "host nudged via peer OpenChat"
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            chat = %chat,
+                            device = %host_device,
+                            error = %err,
+                            "peer OpenChat failed; trying HTTP device nudge if edge is set"
+                        );
+                    }
+                }
+            }
+            let Some(edge) = edge else {
+                return;
+            };
+            let url = format!(
+                "{}/device/{}/nudge",
+                edge.url.trim_end_matches('/'),
+                host_device
+            );
             // Fresh bearer per request — never the boot-time snapshot.
             let Some(bearer) = edge.bearer().await else {
                 tracing::warn!(chat = %chat, "nudge skipped: signed out");
@@ -2251,14 +2305,18 @@ impl DocHost {
             let grace_end = tokio::time::Instant::now() + ROWS_GRACE;
             while tokio::time::Instant::now() < grace_end {
                 if host.rows_flushed(&chat) {
-                    return; // rows on the edge — the normal path has it
+                    // Rows on the hub are not host adoption — re-kick wake so
+                    // a Tailscale host opens the chat (HTTP /device nudge 404s).
+                    host.nudge_remote_host(&chat);
+                    return;
                 }
                 tokio::time::sleep(ROWS_POLL).await;
             }
             let mut backoff = RELAY_BACKOFF_BASE;
             loop {
                 if host.rows_flushed(&chat) {
-                    return; // the normal path won while we were retrying
+                    host.nudge_remote_host(&chat);
+                    return;
                 }
                 match host.relay_command(&target, &chat, &entry).await {
                     Ok(outcome) => {

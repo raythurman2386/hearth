@@ -47,6 +47,11 @@ pub mod methods {
     /// executing, so the doc row arriving later dedupes to a no-op —
     /// exactly-once by construction. Params `{chatId, entry}`.
     pub const RELAY_COMMAND: &str = "RelayCommand";
+    /// Cold-host wake over direct peer `/rpc` (Tailscale replacement for the
+    /// old `{edge}/device/{host}/nudge` HTTP + DeviceRoom path). The host
+    /// warm-opens the chat doc; change-driven drain executes any pending
+    /// commands. Idempotent. Params `{chatId}`. Peer-callable.
+    pub const OPEN_CHAT: &str = "OpenChat";
     /// User-driven delivery retry for a chat with unadopted queued sends:
     /// fresh chat2 socket, host nudge, drain pass, and a new delivery escort
     /// per pending command. Params `{chatId}`; IPC-only.
