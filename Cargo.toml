@@ -100,7 +100,7 @@ clap = { version = "4", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 notify = "7"
-portable-pty = "0.8"
+portable-pty = "0.9"
 alacritty_terminal = "0.26"
 pulldown-cmark = "0.12"
 unicode-segmentation = "1"
