@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
-use hearth_harness::{mock::MockHarness, Harness, HarnessError};
+use hearth_harness::{Harness, HarnessError, mock::MockHarness};
 use hearth_proto::{AgentEvent, DoneStatus, HarnessId, ReasoningLevel, SteeringMode};
 
 /// What `ListHarnesses` reports per harness.
@@ -371,6 +371,24 @@ pub fn default_registry() -> HarnessRegistry {
             },
         ],
     }));
+    // Raven over ACP (`raven --acp`), same lazy pattern: the static
+    // descriptor mirrors AcpHarness::raven() exactly. Turn-boundary steering,
+    // no effort ladder (Raven's reasoning is model/provider-internal).
+    // Registered FIRST among the real harnesses so the composer's new-chat
+    // "first offered" fallback (and the picker rail) default to Raven.
+    registry.register_lazy(
+        HarnessDescriptor {
+            id: HarnessId::Raven,
+            name: "Raven".into(),
+            supports_steering: true,
+            steering_mode: SteeringMode::TurnBoundary,
+            reasoning_levels: Vec::new(),
+            installed: true,
+            enabled: None,
+        },
+        Box::new(|| hearth_harness::AcpHarness::raven().installed()),
+        Box::new(|| Ok(Arc::new(hearth_harness::AcpHarness::raven()) as Arc<dyn Harness>)),
+    );
     registry.register_lazy(
         HarnessDescriptor {
             id: HarnessId::ClaudeCode,
@@ -473,22 +491,6 @@ pub fn default_registry() -> HarnessRegistry {
         Box::new(|| hearth_harness::AcpHarness::hermes().installed()),
         Box::new(|| Ok(Arc::new(hearth_harness::AcpHarness::hermes()) as Arc<dyn Harness>)),
     );
-    // Raven over ACP (`raven --acp`), same lazy pattern: the static
-    // descriptor mirrors AcpHarness::raven() exactly. Turn-boundary steering,
-    // no effort ladder (Raven's reasoning is model/provider-internal).
-    registry.register_lazy(
-        HarnessDescriptor {
-            id: HarnessId::Raven,
-            name: "Raven".into(),
-            supports_steering: true,
-            steering_mode: SteeringMode::TurnBoundary,
-            reasoning_levels: Vec::new(),
-            installed: true,
-            enabled: None,
-        },
-        Box::new(|| hearth_harness::AcpHarness::raven().installed()),
-        Box::new(|| Ok(Arc::new(hearth_harness::AcpHarness::raven()) as Arc<dyn Harness>)),
-    );
     // pi over ACP (community `pi-acp` adapter), same lazy pattern: the static
     // descriptor mirrors AcpHarness::pi() exactly — turn-boundary steering,
     // pi's thinking ladder minus its "off" tier.
@@ -587,12 +589,12 @@ mod tests {
             ids,
             vec![
                 HarnessId::Mock,
+                HarnessId::Raven,
                 HarnessId::ClaudeCode,
                 HarnessId::Codex,
                 HarnessId::Cursor,
                 HarnessId::Grok,
                 HarnessId::Hermes,
-                HarnessId::Raven,
                 HarnessId::Pi,
                 HarnessId::Opencode
             ]

@@ -61,10 +61,9 @@ enum DaemonCommand {
 /// `HEARTH_EDGE_URL` overrides (local dev / self-hosting).
 const DEFAULT_EDGE_URL: &str = "https://edge.hearth.sh";
 
-/// Production WorkOS AuthKit client id — removed from this local-first fork:
-/// sync is opt-in via env, not baked in. (Keep the constant out so a bare run
-/// stays local-only.)
-
+// Production WorkOS AuthKit client id — removed from this local-first fork:
+// sync is opt-in via env, not baked in. (Keep the constant out so a bare run
+// stays local-only.)
 fn edge_url_from_env() -> String {
     std::env::var("HEARTH_EDGE_URL")
         .ok()
@@ -198,7 +197,7 @@ fn main() -> anyhow::Result<()> {
                 workos_client_id: workos_client_id_from_env(&edge_token),
                 edge_token,
                 org_id: std::env::var("HEARTH_ORG_ID").ok(),
-                default_harness: hearth_ui::HarnessId::ClaudeCode,
+                default_harness: harness_from_env(),
             });
             Ok(())
         }
@@ -240,6 +239,7 @@ fn harness_from_env() -> hearth_engine::HarnessId {
         Ok("cursor") => hearth_engine::HarnessId::Cursor,
         Ok("grok") => hearth_engine::HarnessId::Grok,
         Ok("hermes") => hearth_engine::HarnessId::Hermes,
+        Ok("raven") => hearth_engine::HarnessId::Raven,
         Ok("pi") => hearth_engine::HarnessId::Pi,
         _ => hearth_engine::HarnessId::ClaudeCode,
     }
@@ -266,7 +266,9 @@ async fn sync_cli(ipc_port: u16) -> anyhow::Result<()> {
     let client = hearth_rpc::connect_ws(&format!("ws://127.0.0.1:{ipc_port}"))
         .await
         .map_err(|e| {
-            anyhow::anyhow!("no engine listening on 127.0.0.1:{ipc_port} ({e}) — is hearth running?")
+            anyhow::anyhow!(
+                "no engine listening on 127.0.0.1:{ipc_port} ({e}) — is hearth running?"
+            )
         })?;
     let status = client
         .call(hearth_rpc::methods::SYNC_STATUS, serde_json::json!({}))
