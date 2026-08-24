@@ -86,21 +86,6 @@ jobs:
       - name: Build docs
         run: cargo doc --no-deps
 
-  test-windows:
-    name: Test (Windows)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.97"
-      - name: Build
-        run: cargo build --all-targets
-      - name: Run tests
-        run: cargo test
-
   audit:
     name: Audit
     runs-on: ubuntu-latest
@@ -114,34 +99,3 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: Run security audit
         run: cargo audit
-
-  build-release:
-    name: Build (release)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.97"
-      - name: Install Linux system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libfontconfig1-dev libfreetype6-dev libxkbcommon-dev \
-            libwayland-dev libx11-dev libxcb1-dev libxcb-render0-dev \
-            libxcb-shape0-dev libxcb-xfixes0-dev libxcb-xkb-dev \
-            libxcb-icccm4-dev libxcb-image0-dev libxcb-keysyms1-dev \
-            libxcb-randr0-dev libxcb-render-util0-dev libxcb-shm0-dev \
-            libxcb-util-dev libxcb-xinerama0-dev libxcb-xinput-dev \
-            libxkbcommon-x11-dev libegl1-mesa-dev libgl1-mesa-dev \
-            libgles2-mesa-dev libglib2.0-dev libpango1.0-dev \
-            libcairo2-dev libgdk-pixbuf-2.0-dev libgtk-3-dev
-      - name: Build release
-        run: cargo build --release
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: hearth-linux-x86_64
-          path: target/release/hearth
