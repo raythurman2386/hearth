@@ -218,6 +218,32 @@ impl BinConnector for WsBinConnector {
     }
 }
 
+/// Tailnet connector — dials a peer's tailnet address directly (no edge/DO,
+/// no `?token=`). The room protocol is unchanged; only the transport differs.
+struct TailnetBinConnector {
+    hostname: String,
+    port: u16,
+    path: String,
+}
+
+impl BinConnector for TailnetBinConnector {
+    fn connect(&self) -> BoxFuture<'static, Result<BinPipe, SyncError>> {
+        let hostname = self.hostname.clone();
+        let path = self.path.clone();
+        let port = self.port;
+        Box::pin(async move {
+            let ws = crate::tailnet::connect_peer(&hostname, port, &path).await?;
+            let (out_tx, out_rx) = mpsc::channel(64);
+            let (in_tx, in_rx) = mpsc::channel(64);
+            tokio::spawn(pump(ws, out_rx, in_tx));
+            Ok(BinPipe {
+                tx: out_tx,
+                rx: in_rx,
+            })
+        })
+    }
+}
+
 /// Shuttle binary frames between the WebSocket and the actor's channels; the
 /// text `"ping"` keepalive rides the same socket (runtime-answered pair).
 async fn pump(
@@ -390,6 +416,34 @@ impl ChatClient {
         initial_cursor: u64,
     ) -> Result<Self, SyncError> {
         let connector = Arc::new(WsBinConnector { url: provider });
+        Self::connect_with_tuned(
+            connector,
+            sink,
+            fetcher,
+            device_id,
+            initial_cursor,
+            ChatTuning::default(),
+        )
+        .await
+    }
+
+    /// Connect over the tailnet: dial `hostname:port` directly (no edge/DO, no
+    /// `?token=`). `path` is the room path (e.g. `/chat2/{chatId}/ws`). The
+    /// room protocol is unchanged; only the transport differs.
+    pub async fn connect_via_tailnet(
+        hostname: &str,
+        port: u16,
+        path: &str,
+        sink: Arc<dyn ChatDocSink>,
+        fetcher: Arc<dyn CheckpointFetcher>,
+        device_id: &str,
+        initial_cursor: u64,
+    ) -> Result<Self, SyncError> {
+        let connector = Arc::new(TailnetBinConnector {
+            hostname: hostname.to_string(),
+            port,
+            path: path.to_string(),
+        });
         Self::connect_with_tuned(
             connector,
             sink,

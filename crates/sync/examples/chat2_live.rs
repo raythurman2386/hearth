@@ -1,8 +1,5 @@
-//! Live cross-language integration check: drive the REAL `ChatClient` (real
-//! tungstenite transport, real backoff/liveness actor) against a deployed
-//! chat2 room, with a real Loro doc behind the sink. A JS peer (see
-//! edge/scripts/chat2-crosscheck.mjs) seeds the room so both catch-up legs run:
-//! checkpoint-then-rows on a fresh doc, then live push/ack.
+//! Live integration check: drive the REAL `ChatClient` against a hub chat2
+//! room, with a real Loro doc behind the sink.
 //!
 //! Usage:
 //!   cargo run -p hearth-sync --example chat2_live -- <baseUrl> <chatId> <token> <device>

@@ -2,7 +2,7 @@
 //! a systemd **user** unit on Linux (the VPS deployment target), a launchd
 //! LaunchAgent on macOS. The unit runs the current executable with the
 //! `HEARTH_*` environment captured at install time, so
-//! `HEARTH_EDGE_URL=… hearth daemon install` bakes that override in.
+//! `HEARTH_TAILNET_HOST=… hearth daemon install` bakes that override in.
 //!
 //! Auth is decoupled: without a saved session the service remains up on the
 //! local-only profile. `hearth login` and a service restart opt into sync.
@@ -13,23 +13,21 @@ use std::process::Command;
 use anyhow::{Context, bail};
 
 const LAUNCHD_LABEL: &str = "sh.hearth.app";
-/// Same unit name the curl|sh installer (`edge/src/install.sh`) writes, so
+/// Same unit name the curl|sh installer (`scripts/install.sh`) writes, so
 /// `hearth daemon …` manages that installation rather than a competing copy.
 const SYSTEMD_UNIT: &str = "hearth.service";
 
 /// Environment captured into the unit file. `PATH` is always included (the
-/// engine spawns harness CLIs like `claude`, which service managers' minimal
+/// engine spawns harness CLIs like `raven` and `codex`, which service managers' minimal
 /// default PATH won't find); the `HEARTH_*`/logging vars only when set.
 const CAPTURED_ENV: &[&str] = &[
     "PATH",
     "HEARTH_DATA_DIR",
-    "HEARTH_EDGE_URL",
-    "HEARTH_EDGE_TOKEN",
     "HEARTH_ORG_ID",
-    "HEARTH_WORKOS_CLIENT_ID",
-    "HEARTH_WORKOS_API_BASE",
+    "HEARTH_TAILNET_HOST",
+    "HEARTH_TAILNET_PORT",
+    "HEARTH_TAILNET_HUB",
     "HEARTH_IPC_PORT",
-    "HEARTH_CALLBACK_PORT",
     "HEARTH_HARNESS",
     "HEARTH_DEVICE_NAME",
     "RUST_LOG",
@@ -383,13 +381,13 @@ mod tests {
             Path::new("/usr/local/bin/hearth"),
             &[
                 ("PATH".into(), "/usr/bin:/bin".into()),
-                ("HEARTH_EDGE_URL".into(), "https://edge.example".into()),
+                ("HEARTH_TAILNET_HOST".into(), "minis.example.ts.net".into()),
                 ("RUST_LOG".into(), "info,hearth=\"debug\"".into()),
             ],
         );
         assert!(unit.contains("ExecStart=/usr/local/bin/hearth headless\n"));
         assert!(unit.contains("Environment=\"PATH=/usr/bin:/bin\"\n"));
-        assert!(unit.contains("Environment=\"HEARTH_EDGE_URL=https://edge.example\"\n"));
+        assert!(unit.contains("Environment=\"HEARTH_TAILNET_HOST=minis.example.ts.net\"\n"));
         // Inner quotes escaped so systemd re-parses the value verbatim.
         assert!(unit.contains("Environment=\"RUST_LOG=info,hearth=\\\"debug\\\"\"\n"));
         assert!(unit.contains("StartLimitIntervalSec=60\n"));
@@ -403,7 +401,7 @@ mod tests {
 
     #[test]
     fn curl_installer_always_starts_the_local_capable_service() {
-        let installer = include_str!("../../../edge/src/install.sh");
+        let installer = include_str!("../../../scripts/install.sh");
         assert!(!installer.contains("session.json"));
         assert!(installer.contains("StartLimitIntervalSec=60\n"));
         assert!(installer.contains("StartLimitBurst=5\n"));
@@ -436,7 +434,7 @@ mod tests {
     fn launchd_plist_shape() {
         let plist = render_launchd_plist(
             Path::new("/Users/x/hearth & co/hearth"),
-            &[("HEARTH_EDGE_URL".into(), "https://e?a=1&b=2".into())],
+            &[("HEARTH_TAILNET_HOST".into(), "https://e?a=1&b=2".into())],
             Path::new("/Users/x/.hearth/daemon.log"),
         );
         assert!(plist.contains("<key>Label</key><string>sh.hearth.app</string>"));

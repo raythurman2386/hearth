@@ -5,12 +5,13 @@
 #
 # Installs the self-contained native binary (no runtime deps) to
 # ~/.hearth/app, puts `hearth` on PATH, and runs it as a local-only
-# systemd user service that survives reboots. Signing in is optional and
-# enables sync after a restart. Re-running
-# upgrades in place; ~/.hearth state is preserved.
+# systemd user service that survives reboots. Tailscale sync is optional
+# (see docs/configuration.md). Re-running upgrades in place; ~/.hearth
+# state is preserved.
 #
-# The binary ships with production endpoints baked in: no HEARTH_EDGE_URL or
-# client-id configuration needed. Overrides (if any) go in ~/.hearth/env.
+# Overrides (if any) go in ~/.hearth/env — typically:
+#   HEARTH_TAILNET_HOST=minis.YOUR-TAILNET.ts.net
+#   HEARTH_TAILNET_HUB=1
 set -eu
 
 BASE="${HEARTH_BASE_URL:-https://hearth.sh}"
@@ -63,8 +64,8 @@ mkdir -p "$HOME/.local/bin"
 ln -sf "$app_root/current/hearth" "$HOME/.local/bin/hearth"
 
 # --- service -----------------------------------------------------------------
-# The daemon is useful before auth: without a saved session it serves the local
-# profile. Login only changes which profile the next daemon start selects.
+# The daemon is useful before sync: without HEARTH_TAILNET_HOST it serves the
+# local profile. Put tailnet env in ~/.hearth/env and restart to opt in.
 
 service=manual
 if command -v systemctl >/dev/null 2>&1 && [ -n "${XDG_RUNTIME_DIR:-}" ]; then
@@ -98,8 +99,12 @@ else
 fi
 
 # --- agent CLIs ---------------------------------------------------------------
-command -v claude >/dev/null 2>&1 || \
-  echo "note: Claude Code CLI not found — install it with: curl -fsSL https://claude.ai/install.sh | bash"
+command -v raven >/dev/null 2>&1 || \
+  echo "note: Raven CLI not found — install it and put \`raven\` on PATH"
+command -v codex >/dev/null 2>&1 || \
+  echo "note: Codex CLI not found — install it and put \`codex\` on PATH"
+command -v grok >/dev/null 2>&1 || \
+  echo "note: Grok CLI not found — install it if you want xAI / Ollama via grok"
 
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) path_hint="" ;;
@@ -107,20 +112,20 @@ case ":$PATH:" in
 esac
 
 echo ""
-echo "✓ hearth $ver installed$path_hint"
+echo "hearth $ver installed$path_hint"
 echo ""
 case "$service" in
   running)
-    echo "the engine is running with the new version (local-only unless sync is enabled)."
+    echo "the engine is running with the new version (local-only unless HEARTH_TAILNET_HOST is set in ~/.hearth/env)."
     echo "  systemctl --user status hearth    check the service"
     echo ""
-    echo "optional sync (local sessions stay local):"
-    echo "  systemctl --user stop hearth"
-    echo "  hearth login"
+    echo "optional tailnet sync (local sessions stay local):"
+    echo "  echo HEARTH_TAILNET_HOST=minis.YOUR-TAILNET.ts.net >> ~/.hearth/env"
+    echo "  echo HEARTH_TAILNET_HUB=1 >> ~/.hearth/env   # on the always-on host only"
     echo "  systemctl --user restart hearth"
     ;;
   manual)
     echo "next: run the local-only engine with \`hearth headless\`."
-    echo "optional sync: run \`hearth login\` before starting the engine."
+    echo "optional sync: set HEARTH_TAILNET_HOST before starting the engine."
     ;;
 esac

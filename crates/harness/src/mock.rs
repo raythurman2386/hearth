@@ -241,7 +241,7 @@ impl Harness for MockHarness {
                 "Inline styles hold while text arrives: **bold stays bold**, ",
                 "*italic stays italic*, `code stays code`, and ~~this stays struck~~.\n\n",
                 "- **Fold** — parts diff into the [Loro doc](https://loro.dev) on a 120ms cadence\n",
-                "- **Relay** — commits fan out through the [session room](https://developers.cloudflare.com/durable-objects/) to every device\n",
+                "- **Relay** — commits fan out through the tailnet hub room to every device\n",
                 "- **Paint** — the [display tree](https://github.com/pulldown-cmark/pulldown-cmark) mends hanging markers in the last block only\n\n",
                 "Links above never flash their URLs, and closing markers never reflow the paragraph.\n",
             )

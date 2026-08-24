@@ -1,6 +1,6 @@
 //! HarnessRegistry — the engine's harness catalog: eager instances (mock) plus lazy
-//! slots resolved on first use (claude-code spawns subprocess discovery; codex/cursor
-//! later). Lazy slots carry a static descriptor so `ListHarnesses` never forces a spawn.
+//! slots resolved on first use (raven/grok ACP, native Codex). Lazy slots carry a
+//! static descriptor so `ListHarnesses` never forces a spawn.
 //!
 //! Also owns the device's harness ENABLEMENT (Settings → Agents): which harnesses
 //! this device's composer offers, persisted in `{data_dir}/harness-prefs.json`.
@@ -319,12 +319,12 @@ impl HarnessRegistry {
     }
 }
 
-/// The production registry: MockHarness (hidden from production pickers) plus a lazy
-/// `claude-code` slot resolved through `hearth_harness` on first use (subprocess
-/// discovery only happens when a run/model call actually needs it).
+/// The production registry: MockHarness (hidden from production pickers) plus
+/// lazy Raven/Codex/Grok slots resolved through `hearth_harness` on first use
+/// (subprocess discovery only happens when a run/model call actually needs it).
 pub fn default_registry() -> HarnessRegistry {
     // Warm the login-shell PATH snapshot in the background so the first
-    // claude/codex resolve doesn't pay the shell-startup latency inline.
+    // raven/codex/grok resolve doesn't pay the shell-startup latency inline.
     hearth_harness::shell_env::prewarm();
     let registry = HarnessRegistry::new();
     registry.register(Arc::new(MockHarness {
@@ -389,28 +389,7 @@ pub fn default_registry() -> HarnessRegistry {
         Box::new(|| hearth_harness::AcpHarness::raven().installed()),
         Box::new(|| Ok(Arc::new(hearth_harness::AcpHarness::raven()) as Arc<dyn Harness>)),
     );
-    registry.register_lazy(
-        HarnessDescriptor {
-            id: HarnessId::ClaudeCode,
-            name: "Claude Code".into(),
-            supports_steering: true,
-            steering_mode: SteeringMode::StepBoundary,
-            // Must mirror ClaudeHarness exactly — the descriptor-stability
-            // rule (see the codex test below).
-            reasoning_levels: vec![
-                ReasoningLevel::Low,
-                ReasoningLevel::Medium,
-                ReasoningLevel::High,
-                ReasoningLevel::XHigh,
-                ReasoningLevel::Max,
-            ],
-            installed: true,
-            enabled: None,
-        },
-        Box::new(|| hearth_harness::ClaudeHarness::new().installed()),
-        Box::new(|| Ok(Arc::new(hearth_harness::ClaudeHarness::new()) as Arc<dyn Harness>)),
-    );
-    // Codex, same lazy pattern: the static descriptor mirrors AcpHarness::codex()
+    // Codex, same lazy pattern: the static descriptor mirrors CodexHarness
     // exactly (`describe()` after the first resolve must not change the
     // catalog entry) — "Codex" per the original HARNESS_LABEL, StepBoundary
     // steering via native `turn/steer`, and the unified reasoning ladder from
@@ -437,22 +416,6 @@ pub fn default_registry() -> HarnessRegistry {
         Box::new(|| hearth_harness::CodexHarness::new().installed()),
         Box::new(|| Ok(Arc::new(hearth_harness::CodexHarness::new()) as Arc<dyn Harness>)),
     );
-    // Cursor via the pinned @cursor/sdk shim (NOT ACP — that surface strips
-    // subagent transcripts), same lazy pattern: the static descriptor mirrors
-    // CursorHarness exactly. Turn-boundary steering; no effort ladder.
-    registry.register_lazy(
-        HarnessDescriptor {
-            id: HarnessId::Cursor,
-            name: "Cursor".into(),
-            supports_steering: true,
-            steering_mode: SteeringMode::TurnBoundary,
-            reasoning_levels: Vec::new(),
-            installed: true,
-            enabled: None,
-        },
-        Box::new(|| hearth_harness::CursorHarness::new().installed()),
-        Box::new(|| Ok(Arc::new(hearth_harness::CursorHarness::new()) as Arc<dyn Harness>)),
-    );
     // Grok Build over ACP, same lazy pattern: the static descriptor mirrors
     // AcpHarness::grok() exactly. No `_session/steering` extension yet, so
     // steers deliver at turn boundaries; the effort ladder applies per
@@ -473,70 +436,6 @@ pub fn default_registry() -> HarnessRegistry {
         },
         Box::new(|| hearth_harness::AcpHarness::grok().installed()),
         Box::new(|| Ok(Arc::new(hearth_harness::AcpHarness::grok()) as Arc<dyn Harness>)),
-    );
-    // Hermes Agent over ACP (`hermes acp`), same lazy pattern: the static
-    // descriptor mirrors AcpHarness::hermes() exactly. No steering extension
-    // (turn boundaries) and no effort ladder — Hermes exposes no effort
-    // config over ACP today (hybrid reasoning is model-internal).
-    registry.register_lazy(
-        HarnessDescriptor {
-            id: HarnessId::Hermes,
-            name: "Hermes".into(),
-            supports_steering: true,
-            steering_mode: SteeringMode::TurnBoundary,
-            reasoning_levels: Vec::new(),
-            installed: true,
-            enabled: None,
-        },
-        Box::new(|| hearth_harness::AcpHarness::hermes().installed()),
-        Box::new(|| Ok(Arc::new(hearth_harness::AcpHarness::hermes()) as Arc<dyn Harness>)),
-    );
-    // pi over ACP (community `pi-acp` adapter), same lazy pattern: the static
-    // descriptor mirrors AcpHarness::pi() exactly — turn-boundary steering,
-    // pi's thinking ladder minus its "off" tier.
-    registry.register_lazy(
-        HarnessDescriptor {
-            id: HarnessId::Pi,
-            name: "Pi".into(),
-            supports_steering: true,
-            steering_mode: SteeringMode::TurnBoundary,
-            reasoning_levels: vec![
-                ReasoningLevel::Minimal,
-                ReasoningLevel::Low,
-                ReasoningLevel::Medium,
-                ReasoningLevel::High,
-                ReasoningLevel::XHigh,
-                ReasoningLevel::Max,
-            ],
-            installed: true,
-            enabled: None,
-        },
-        Box::new(|| hearth_harness::AcpHarness::pi().installed()),
-        Box::new(|| Ok(Arc::new(hearth_harness::AcpHarness::pi()) as Arc<dyn Harness>)),
-    );
-    // opencode over its NATIVE HTTP/SSE protocol (the one the opencode
-    // desktop app speaks — `opencode serve` + the /global/event bus), same
-    // lazy pattern: the static descriptor mirrors OpencodeHarness exactly.
-    // Turn-boundary steering; the effort ladder rides model VARIANTS (the
-    // run sends the first advertised variant id for the picked level).
-    registry.register_lazy(
-        HarnessDescriptor {
-            id: HarnessId::Opencode,
-            name: "OpenCode".into(),
-            supports_steering: true,
-            steering_mode: SteeringMode::TurnBoundary,
-            reasoning_levels: vec![
-                ReasoningLevel::Low,
-                ReasoningLevel::Medium,
-                ReasoningLevel::High,
-                ReasoningLevel::XHigh,
-                ReasoningLevel::Max,
-            ],
-            installed: true,
-            enabled: None,
-        },
-        Box::new(|| hearth_harness::OpencodeHarness::new().installed()),
-        Box::new(|| Ok(Arc::new(hearth_harness::OpencodeHarness::new()) as Arc<dyn Harness>)),
     );
     registry
 }
@@ -582,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn default_registry_lists_mock_claude_codex_and_grok_slots() {
+    fn default_registry_lists_mock_raven_codex_and_grok_slots() {
         let registry = default_registry();
         let ids: Vec<HarnessId> = registry.descriptors().iter().map(|d| d.id).collect();
         assert_eq!(
@@ -590,23 +489,18 @@ mod tests {
             vec![
                 HarnessId::Mock,
                 HarnessId::Raven,
-                HarnessId::ClaudeCode,
                 HarnessId::Codex,
-                HarnessId::Cursor,
                 HarnessId::Grok,
-                HarnessId::Hermes,
-                HarnessId::Pi,
-                HarnessId::Opencode
             ]
         );
         assert!(registry.resolve(HarnessId::Mock).is_ok());
-        assert!(registry.resolve(HarnessId::ClaudeCode).is_ok());
-        // A codex-configured chat resolves the right harness (construction is
-        // cheap; CLI discovery is deferred to models()/run()).
+        let raven = registry.resolve(HarnessId::Raven).unwrap();
+        assert_eq!(raven.id(), HarnessId::Raven);
+        assert_eq!(raven.display_name(), "Raven");
+        assert_eq!(raven.steering_mode(), SteeringMode::TurnBoundary);
+        assert!(raven.reasoning_levels().is_empty());
         let codex = registry.resolve(HarnessId::Codex).unwrap();
         assert_eq!(codex.id(), HarnessId::Codex);
-        // Grok resolves through the shared ACP harness; its descriptor must
-        // mirror the resolved harness (descriptor-stability rule).
         let grok = registry.resolve(HarnessId::Grok).unwrap();
         assert_eq!(grok.id(), HarnessId::Grok);
         assert_eq!(grok.display_name(), "Grok");
@@ -617,52 +511,6 @@ mod tests {
                 ReasoningLevel::Low,
                 ReasoningLevel::Medium,
                 ReasoningLevel::High
-            ]
-        );
-        // Cursor, Hermes and Pi mirror their specs the same way.
-        let cursor = registry.resolve(HarnessId::Cursor).unwrap();
-        assert_eq!(cursor.id(), HarnessId::Cursor);
-        assert_eq!(cursor.display_name(), "Cursor");
-        assert_eq!(cursor.steering_mode(), SteeringMode::TurnBoundary);
-        assert!(cursor.reasoning_levels().is_empty());
-        let hermes = registry.resolve(HarnessId::Hermes).unwrap();
-        assert_eq!(hermes.id(), HarnessId::Hermes);
-        assert_eq!(hermes.display_name(), "Hermes");
-        assert_eq!(hermes.steering_mode(), SteeringMode::TurnBoundary);
-        assert!(hermes.reasoning_levels().is_empty());
-        // Raven resolves through the shared ACP harness, mirroring its spec.
-        let raven = registry.resolve(HarnessId::Raven).unwrap();
-        assert_eq!(raven.id(), HarnessId::Raven);
-        assert_eq!(raven.display_name(), "Raven");
-        assert_eq!(raven.steering_mode(), SteeringMode::TurnBoundary);
-        assert!(raven.reasoning_levels().is_empty());
-        let opencode = registry.resolve(HarnessId::Opencode).unwrap();
-        assert_eq!(opencode.id(), HarnessId::Opencode);
-        assert_eq!(opencode.display_name(), "OpenCode");
-        assert_eq!(opencode.steering_mode(), SteeringMode::TurnBoundary);
-        assert_eq!(
-            opencode.reasoning_levels(),
-            &[
-                ReasoningLevel::Low,
-                ReasoningLevel::Medium,
-                ReasoningLevel::High,
-                ReasoningLevel::XHigh,
-                ReasoningLevel::Max,
-            ]
-        );
-        let pi = registry.resolve(HarnessId::Pi).unwrap();
-        assert_eq!(pi.id(), HarnessId::Pi);
-        assert_eq!(pi.display_name(), "Pi");
-        assert_eq!(pi.steering_mode(), SteeringMode::TurnBoundary);
-        assert_eq!(
-            pi.reasoning_levels(),
-            &[
-                ReasoningLevel::Minimal,
-                ReasoningLevel::Low,
-                ReasoningLevel::Medium,
-                ReasoningLevel::High,
-                ReasoningLevel::XHigh,
-                ReasoningLevel::Max
             ]
         );
     }
@@ -723,13 +571,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let registry = HarnessRegistry::new();
         registry.load_prefs(dir.path());
-        test_slot(&registry, HarnessId::ClaudeCode, true);
+        test_slot(&registry, HarnessId::Raven, true);
         test_slot(&registry, HarnessId::Codex, true);
         test_slot(&registry, HarnessId::Grok, true);
-        test_slot(&registry, HarnessId::Hermes, false);
 
         // Enablement follows detection: the three found CLIs are on with no
-        // prefs file at all, and the missing one is off.
+        // prefs file at all.
         let flags: Vec<(HarnessId, Option<bool>)> = registry
             .descriptors()
             .into_iter()
@@ -738,22 +585,19 @@ mod tests {
         assert_eq!(
             flags,
             vec![
-                (HarnessId::ClaudeCode, Some(true)),
+                (HarnessId::Raven, Some(true)),
                 (HarnessId::Codex, Some(true)),
                 (HarnessId::Grok, Some(true)),
-                (HarnessId::Hermes, Some(false)),
             ]
         );
 
-        // The gate: a missing CLI can't be enabled; unknown ids refuse.
-        assert!(registry.set_enabled(HarnessId::Hermes, true).is_err());
-        assert!(registry.set_enabled(HarnessId::Pi, true).is_err());
+        // The gate: the mock test rig cannot be enabled as a real agent.
         assert!(registry.set_enabled(HarnessId::Mock, true).is_err());
         // Installed CLIs toggle both ways; no-op flips are fine.
         registry.set_enabled(HarnessId::Grok, true).unwrap();
         registry.set_enabled(HarnessId::Grok, true).unwrap();
         registry.set_enabled(HarnessId::Codex, false).unwrap();
-        registry.set_enabled(HarnessId::ClaudeCode, false).unwrap();
+        registry.set_enabled(HarnessId::Raven, false).unwrap();
         // Grok is the last one standing — refusing keeps the composer usable.
         assert!(registry.set_enabled(HarnessId::Grok, false).is_err());
         assert_eq!(registry.enabled_set(), vec![HarnessId::Grok]);
@@ -761,7 +605,7 @@ mod tests {
         // A fresh registry over the same data dir reads the persisted opt-outs.
         let reloaded = HarnessRegistry::new();
         reloaded.load_prefs(dir.path());
-        test_slot(&reloaded, HarnessId::ClaudeCode, true);
+        test_slot(&reloaded, HarnessId::Raven, true);
         test_slot(&reloaded, HarnessId::Codex, true);
         test_slot(&reloaded, HarnessId::Grok, true);
         assert_eq!(reloaded.enabled_set(), vec![HarnessId::Grok]);
@@ -777,7 +621,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let registry = HarnessRegistry::new();
         registry.load_prefs(dir.path());
-        test_slot(&registry, HarnessId::ClaudeCode, true);
+        test_slot(&registry, HarnessId::Raven, true);
         test_slot(&registry, HarnessId::Codex, true);
         // Not installed yet — the probe flips when the user installs the CLI.
         let found = Arc::new(AtomicBool::new(false));
@@ -796,23 +640,23 @@ mod tests {
             Box::new(|| Err(HarnessError::NotInstalled("test slot".into()))),
         );
         registry.set_enabled(HarnessId::Codex, false).unwrap();
-        assert_eq!(registry.enabled_set(), vec![HarnessId::ClaudeCode]);
+        assert_eq!(registry.enabled_set(), vec![HarnessId::Raven]);
 
         // The CLI appears mid-session; no restart, no visit to Settings.
         found.store(true, Ordering::SeqCst);
         assert_eq!(
             registry.enabled_set(),
-            vec![HarnessId::ClaudeCode, HarnessId::Grok]
+            vec![HarnessId::Raven, HarnessId::Grok]
         );
         // The opt-out survives the reload that picks the new agent up.
         let reloaded = HarnessRegistry::new();
         reloaded.load_prefs(dir.path());
-        test_slot(&reloaded, HarnessId::ClaudeCode, true);
+        test_slot(&reloaded, HarnessId::Raven, true);
         test_slot(&reloaded, HarnessId::Codex, true);
         test_slot(&reloaded, HarnessId::Grok, true);
         assert_eq!(
             reloaded.enabled_set(),
-            vec![HarnessId::ClaudeCode, HarnessId::Grok]
+            vec![HarnessId::Raven, HarnessId::Grok]
         );
     }
 
@@ -845,22 +689,16 @@ mod tests {
         )
         .unwrap();
         let registry = HarnessRegistry::new();
-        test_slot(&registry, HarnessId::ClaudeCode, true);
+        test_slot(&registry, HarnessId::Raven, true);
         test_slot(&registry, HarnessId::Codex, true);
         test_slot(&registry, HarnessId::Grok, true);
         registry.load_prefs(dir.path());
-        assert_eq!(registry.enabled_set(), vec![HarnessId::ClaudeCode]);
+        assert_eq!(registry.enabled_set(), vec![HarnessId::Raven]);
 
         // The rewritten file is the new shape, and the legacy key is gone.
         let text = std::fs::read_to_string(dir.path().join("harness-prefs.json")).unwrap();
         assert!(!text.contains("enabled"), "{text}");
         assert!(text.contains("codex") && text.contains("grok"), "{text}");
-        // An agent registered after the migration is new, not a past "no".
-        test_slot(&registry, HarnessId::Cursor, true);
-        assert_eq!(
-            registry.enabled_set(),
-            vec![HarnessId::ClaudeCode, HarnessId::Cursor]
-        );
     }
 
     /// The fresh-machine shape (#128): no CLIs installed at all. Under
@@ -872,12 +710,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let registry = HarnessRegistry::new();
         registry.load_prefs(dir.path());
-        test_slot(&registry, HarnessId::ClaudeCode, false);
+        test_slot(&registry, HarnessId::Raven, false);
         test_slot(&registry, HarnessId::Codex, false);
 
         assert_eq!(registry.enabled_set(), Vec::<HarnessId>::new());
         registry.set_enabled(HarnessId::Codex, false).unwrap();
-        registry.set_enabled(HarnessId::ClaudeCode, false).unwrap();
+        registry.set_enabled(HarnessId::Raven, false).unwrap();
         assert_eq!(registry.enabled_set(), Vec::<HarnessId>::new());
 
         let reloaded = HarnessRegistry::new();
@@ -888,9 +726,8 @@ mod tests {
     /// The Codex lazy descriptor must be indistinguishable from `describe()`
     /// after the first resolve — otherwise the catalog entry silently changes
     /// the moment the harness is used (name/ladder flip in the picker rail).
-    /// (KNOWN GAP, predates this slot: the claude-code descriptor advertises
-    /// `[Ultrathink]` while the resolved adapter reports `[Low..Max]` — left
-    /// as-is here; flagged for its own pass.)
+    /// Descriptor-stability: listing a slot then resolving it must not
+    /// change name / steering / ladder.
     #[test]
     fn codex_lazy_descriptor_matches_resolved_harness() {
         let registry = default_registry();

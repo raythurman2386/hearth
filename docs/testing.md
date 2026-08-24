@@ -9,9 +9,10 @@ How Hearth’s tests are organized and how to run a useful subset locally.
 | `crates/*/src/**` `#[cfg(test)]` | Unit tests next to code |
 | `crates/harness/tests/` | Integration tests against fake agent scripts (`fixtures/fake-*.sh`) and real CLI probes (some ignored / env-gated) |
 | `crates/engine/tests/` | Engine e2e: sessions, worktrees, resume, routing, sync-ish flows |
-| `crates/doc/tests/`, `crates/rpc/tests/`, `crates/sync/tests/` | Crate-focused integration |
-| `edge/` | Vitest + workerd tests for the optional Cloudflare edge |
-| `scripts/e2e-smoke.sh` | Higher-level smoke helper (when present / maintained) |
+| `crates/doc/tests/`, `crates/rpc/tests/`, `crates/sync/tests/` | Crate-focused integration (`hub.rs` = chat2/registry/HTTP against the real mux) |
+| `crates/engine/tests/tailnet_hub.rs` | Two engines sharing a loopback hub registry |
+| `crates/rpc/tests/tailnet_rpc.rs` | Direct `/rpc` echo + idle ping over the hub |
+| `scripts/e2e-smoke.sh` | Two-process tailnet-hub smoke (loopback; not in CI) |
 
 ## Common commands
 
@@ -41,7 +42,7 @@ Release builds are heavier; prefer `--lib` filters while iterating.
 
 ## Ignored / external tests
 
-Some engine tests require a live edge or extra binaries and are `#[ignore]` with instructions in the test attribute (for example `HEARTH_EDGE_WS=…`). Do not assume `cargo test -- --ignored` passes on a stock laptop without that setup.
+Some engine tests require extra binaries and are `#[ignore]` with instructions in the test attribute. Do not assume `cargo test -- --ignored` passes on a stock laptop without that setup.
 
 ## What “green” means for a docs-accurate change
 

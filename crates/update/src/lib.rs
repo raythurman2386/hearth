@@ -2,9 +2,9 @@
 //! background checker + `ApplyUpdate`), the CLI (`hearth update`), and the UI
 //! (the sidebar update strip + macOS bundle swap).
 //!
-//! Release layout (see `.github/workflows/release.yml` and `edge/src/install.sh`):
-//! artifacts live in the `comet-native-releases` R2 bucket, served pre-auth at
-//! `{edge}/releases/*`. `manifest.json` carries the latest version plus a
+//! Release layout (see `.github/workflows/release.yml` and `scripts/install.sh`):
+//! artifacts live on the tailnet hub at `{hub}/releases/*` (files under
+//! `{data_dir}/releases/`). `manifest.json` carries the latest version plus a
 //! sha256 per artifact; `latest.txt` (version only) remains as the fallback for
 //! releases published before the manifest existed.
 //!

@@ -689,49 +689,6 @@ async fn nudges_reach_the_host_callback() {
     assert_eq!(got, "chat-42");
 }
 
-/// Live-edge variant: run the same host+client path through a real DeviceRoom DO.
-/// `HEARTH_EDGE_WS=http://127.0.0.1:26640 cargo test -p hearth-rpc -- --ignored live_edge`
-/// (dev-mode edge; HEARTH_EDGE_TOKEN defaults to a fixed dev user id).
-#[tokio::test]
-#[ignore = "needs a running edge (set HEARTH_EDGE_WS)"]
-async fn live_edge_relay_round_trip() {
-    let Ok(edge_url) = std::env::var("HEARTH_EDGE_WS") else {
-        panic!("set HEARTH_EDGE_WS to the edge base URL (e.g. http://127.0.0.1:26640)");
-    };
-    let token = std::env::var("HEARTH_EDGE_TOKEN").unwrap_or_else(|_| "relay-live-test".into());
-    let device_id = format!("relay-live-{}", uuid::Uuid::new_v4());
-
-    let service = TestService::new("live-host");
-    let mut config = HostRelayConfig::new(
-        edge_url.clone(),
-        device_id.clone(),
-        Arc::new(StaticToken(token.clone())),
-    );
-    config.retry = Duration::from_millis(500);
-    let _host = HostRelay::spawn(config, service, noop_nudge());
-
-    let mut cache_config = LinkCacheConfig::new(edge_url, Arc::new(StaticToken(token)));
-    cache_config.probe_timeout = Duration::from_secs(5);
-    let links = LinkCache::new(cache_config);
-
-    // The host claims the room asynchronously; retry the dial until it answers.
-    let client = loop {
-        match links.client(&device_id).await {
-            Ok(client) => break client,
-            Err(err) => {
-                eprintln!("dial retry: {err}");
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-        }
-    };
-    let echoed = client
-        .call("Echo", serde_json::json!({ "live": true }))
-        .await
-        .expect("echo");
-    assert_eq!(echoed["host"], "live-host");
-    assert_eq!(echoed["params"]["live"], true);
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn zombie_relay_path_trips_the_echo_deadline() {
     // 2026-08-19 incident shape: the client↔edge leg stays healthy (pongs

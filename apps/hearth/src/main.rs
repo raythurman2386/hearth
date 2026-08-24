@@ -57,39 +57,6 @@ enum DaemonCommand {
     Status,
 }
 
-/// Production edge (Cloudflare Worker + Durable Objects on the hearth.sh zone).
-/// `HEARTH_EDGE_URL` overrides (local dev / self-hosting).
-const DEFAULT_EDGE_URL: &str = "https://edge.hearth.sh";
-
-// Production WorkOS AuthKit client id — removed from this local-first fork:
-// sync is opt-in via env, not baked in. (Keep the constant out so a bare run
-// stays local-only.)
-fn edge_url_from_env() -> String {
-    std::env::var("HEARTH_EDGE_URL")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_EDGE_URL.into())
-}
-
-/// WorkOS client id resolution: explicit env wins (empty string = dev mode);
-/// otherwise a `HEARTH_EDGE_TOKEN` dev bearer keeps dev mode (smoke tests,
-/// local wrangler); otherwise — the DEFAULT — dev mode with no sync.
-///
-/// This fork is local-first by default: no baked production client id, so a
-/// bare `hearth` run resolves `WorkScope::Development` with no bearer and the
-/// edge is never dialed. Sync is opt-in: set `HEARTH_WORKOS_CLIENT_ID` (real
-/// auth) or `HEARTH_EDGE_TOKEN` (dev bearer) to reach the edge.
-fn workos_client_id_from_env(edge_token: &Option<String>) -> Option<String> {
-    match std::env::var("HEARTH_WORKOS_CLIENT_ID") {
-        Ok(v) if v.trim().is_empty() => None,
-        Ok(v) => Some(v),
-        // No explicit client id: if a dev bearer is present we're in dev mode
-        // (sync with a token); otherwise stay local-only.
-        Err(_) if edge_token.is_some() => None,
-        Err(_) => None,
-    }
-}
-
 /// mimalloc: system malloc (macOS libmalloc especially) never returns the
 /// streaming churn's high-water pages, so transient allocation became
 /// permanent RSS (docs/memory-plan.md §1).
@@ -171,7 +138,16 @@ fn main() -> anyhow::Result<()> {
         }
         Some(Command::Update { check }) => {
             let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(update_cli::update(&edge_url_from_env(), check))
+            let cfg = engine_config_from_env();
+            let base = cfg.tailnet_http_url().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "set HEARTH_TAILNET_HOST to the hub MagicDNS name (releases are served \
+                     from the hub at GET /releases/). See docs/configuration.md; on the hub \
+                     put artifacts under ~/.hearth/releases/ and re-run `hearth daemon install` \
+                     after editing ~/.hearth/env"
+                )
+            })?;
+            runtime.block_on(update_cli::update(&base, check))
         }
         Some(Command::Daemon { command }) => match command {
             DaemonCommand::Install => daemon::install(&engine_config_from_env().data_dir),
@@ -182,22 +158,17 @@ fn main() -> anyhow::Result<()> {
             DaemonCommand::Status => daemon::status(),
         },
         None => {
-            let edge_token = std::env::var("HEARTH_EDGE_TOKEN").ok();
             // Headed: the UI probes HEARTH_IPC_PORT and connects to a running
             // daemon, or embeds the engine in-process (ARCHITECTURE §1).
+            let cfg = engine_config_from_env();
             hearth_ui::run_app(hearth_ui::UiConfig {
-                data_dir: std::env::var_os("HEARTH_DATA_DIR")
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(dirs_data_dir),
-                ipc_port: std::env::var("HEARTH_IPC_PORT")
-                    .ok()
-                    .and_then(|p| p.parse().ok())
-                    .unwrap_or(27654),
-                edge_url: edge_url_from_env(),
-                workos_client_id: workos_client_id_from_env(&edge_token),
-                edge_token,
-                org_id: std::env::var("HEARTH_ORG_ID").ok(),
-                default_harness: harness_from_env(),
+                data_dir: cfg.data_dir,
+                ipc_port: cfg.ipc_port,
+                edge_url: cfg.edge_url,
+                workos_client_id: None,
+                edge_token: cfg.edge_token,
+                org_id: cfg.org_id,
+                default_harness: cfg.default_harness,
             });
             Ok(())
         }
@@ -208,40 +179,58 @@ fn main() -> anyhow::Result<()> {
 /// `logout`, and `status` — one resolution so the CLI auth commands always
 /// operate on the exact session the daemon will load.
 fn engine_config_from_env() -> hearth_engine::EngineConfig {
-    // Dev-mode bearer (no WorkOS): an explicit token enables sync.
-    let edge_token = std::env::var("HEARTH_EDGE_TOKEN").ok();
+    // Tailnet opt-in: HEARTH_TAILNET_HOST points at the always-on hub.
+    // When set, WorkOS/edge-token are unused; the dummy bearer just enables
+    // the existing room-client seam against the hub's HTTP+WS mux.
+    let tailnet_host = std::env::var("HEARTH_TAILNET_HOST")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let tailnet_port = std::env::var("HEARTH_TAILNET_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(hearth_engine::DEFAULT_TAILNET_PORT);
+    let tailnet_hub = matches!(
+        std::env::var("HEARTH_TAILNET_HUB").as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    );
+    let edge_token = if tailnet_host.is_some() {
+        Some("tailnet".into())
+    } else {
+        std::env::var("HEARTH_EDGE_TOKEN").ok()
+    };
+    let edge_url = tailnet_host
+        .as_deref()
+        .map(|host| format!("http://{host}:{tailnet_port}"))
+        .unwrap_or_default();
     hearth_engine::EngineConfig {
         data_dir: std::env::var_os("HEARTH_DATA_DIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(dirs_data_dir),
-        edge_url: edge_url_from_env(),
+        edge_url,
         ipc_port: std::env::var("HEARTH_IPC_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(27654),
         default_harness: harness_from_env(),
-        // WorkOS mode: the signed-in session's org wins; HEARTH_ORG_ID (dev
-        // default "dev-org") scopes the workspace room otherwise.
         org_id: std::env::var("HEARTH_ORG_ID").ok(),
-        // Real auth against production by default; see
-        // `workos_client_id_from_env` for the dev-mode escape hatches.
-        workos_client_id: workos_client_id_from_env(&edge_token),
+        workos_client_id: None,
         edge_token,
+        tailnet_host,
+        tailnet_port,
+        tailnet_hub,
     }
 }
 
 /// `HEARTH_HARNESS` (kebab-case id) picks the default harness for chats without a
-/// config row — `mock` powers the e2e smoke; default `claude-code`.
+/// config row — `mock` powers the e2e smoke; default `raven`.
 fn harness_from_env() -> hearth_engine::HarnessId {
     match std::env::var("HEARTH_HARNESS").as_deref().map(str::trim) {
         Ok("mock") => hearth_engine::HarnessId::Mock,
         Ok("codex") => hearth_engine::HarnessId::Codex,
-        Ok("cursor") => hearth_engine::HarnessId::Cursor,
         Ok("grok") => hearth_engine::HarnessId::Grok,
-        Ok("hermes") => hearth_engine::HarnessId::Hermes,
         Ok("raven") => hearth_engine::HarnessId::Raven,
-        Ok("pi") => hearth_engine::HarnessId::Pi,
-        _ => hearth_engine::HarnessId::ClaudeCode,
+        _ => hearth_engine::HarnessId::Raven,
     }
 }
 

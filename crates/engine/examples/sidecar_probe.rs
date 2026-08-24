@@ -35,7 +35,7 @@ async fn main() {
         store,
         DocHostConfig {
             device_id: "probe-dev".into(),
-            default_harness: hearth_proto::HarnessId::ClaudeCode,
+            default_harness: hearth_proto::HarnessId::Raven,
             edge: Some(EdgeConfig::with_static_token(
                 format!("http://{addr}"),
                 "probe-user",

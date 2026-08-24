@@ -37,26 +37,26 @@ Worktrees created for runs can be rooted under `HEARTH_WORKTREES_DIR` when set (
 |---|---|---|
 | `HEARTH_DATA_DIR` | `~/.hearth` | Engine + UI state root |
 | `HEARTH_IPC_PORT` | `27654` | Localhost WebSocket port for UI ↔ engine |
-| `HEARTH_HARNESS` | _(unset → `claude-code`)_ | Engine default harness id for chats **without** a config row. Kebab-case: `raven`, `claude-code` (via default), `codex`, `cursor`, `grok`, `hermes`, `pi`, `mock`. **Note:** `opencode` is registered in the catalog but is **not** accepted by this env parser today. |
+| `HEARTH_HARNESS` | _(unset → `raven`)_ | Engine default harness id for chats **without** a config row. Kebab-case: `raven`, `codex`, `grok`, `mock`. |
 | `RUST_LOG` | headed/headless: `info` (loro quieted); one-shot CLI: `warn` | `tracing` filter |
 
 UI new-chat harness resolution prefers: chat config → sticky `composer-defaults.json` → first **offered** catalog entry (Raven is registered first among real agents when installed and enabled). The engine `HEARTH_HARNESS` default is a separate fallback for dispatch when a chat row has no harness.
 
-### Sync (opt-in)
+### Sync (opt-in, Tailscale)
 
-A bare run never dials the edge. Sync requires an explicit opt-in:
+A bare run never dials a remote host. Multi-device sync requires Tailscale and an explicit opt-in:
 
 | Variable | Meaning |
 |---|---|
-| `HEARTH_WORKOS_CLIENT_ID` | Non-empty → WorkOS AuthKit client for real sign-in; empty string forces “no client” |
-| `HEARTH_EDGE_TOKEN` | Dev bearer (no WorkOS); enables sync in development scope when set |
-| `HEARTH_EDGE_URL` | Edge base URL (default `https://edge.hearth.sh`) |
-| `HEARTH_ORG_ID` | Org scope for workspace rooms in dev / when needed |
-| `HEARTH_WORKOS_API_BASE` | Override WorkOS API base when using real auth |
-| `HEARTH_CALLBACK_PORT` | Auth callback port (engine + captured by daemon install) |
+| `HEARTH_TAILNET_HOST` | MagicDNS name (or Tailscale hostname) of the always-on hub, e.g. `minis.tailnet.ts.net`. Non-empty enables sync. |
+| `HEARTH_TAILNET_PORT` | Hub listen/dial port (default `27655`) |
+| `HEARTH_TAILNET_HUB` | `1`/`true`/`yes` — this process hosts chat2/registry rooms. If unset, the engine matches `tailscale status` `Self` against `HEARTH_TAILNET_HOST`. |
 | `HEARTH_DEVICE_NAME` | Optional device display name (engine + daemon install) |
+| `HEARTH_ORG_ID` | Optional registry org key (default `dev-org`) |
 
-`hearth login` / `hearth logout` rewrite the saved session used on the **next** engine start. They do not swap a live engine’s storage mid-flight. See [ARCHITECTURE.md](../ARCHITECTURE.md) § Local-first workspace profiles.
+Auth is Tailscale: inbound connections are identified with `tailscale whois`. There is no WorkOS, no `session.json`, and `hearth login`/`logout` are no-ops when the tailnet host is set.
+
+On the hub, put release artifacts under `{data_dir}/releases/` (served at `/releases/*`) if you want `hearth update` to keep working. Attachments stay on the chat's host device and transfer over the same tailnet RPC link.
 
 ### Agent / adapter overrides
 
@@ -64,12 +64,10 @@ A bare run never dials the edge. Sync requires an explicit opt-in:
 |---|---|
 | `RAVEN_EXECUTABLE` | Absolute path to the Raven binary (else PATH + known install dirs) |
 | `GROK_EXECUTABLE` | Grok Build ACP binary override |
-| `HERMES_EXECUTABLE` | Hermes ACP binary override |
-| `PI_ACP_EXECUTABLE` | `pi-acp` adapter override |
 | `HEARTH_ADAPTERS_DIR` | Where managed npm adapters are installed |
 | `HEARTH_NO_LOGIN_SHELL` | Set to a non-empty value to skip login-shell PATH snapshotting when resolving agent CLIs |
 
-Harnesses that wrap CLIs also honor their own vendor env (for example Claude / Codex / Cursor / OpenCode installs). Prefer putting agent binaries on the login shell PATH so headed apps launched from a desktop entry still find them.
+Harnesses that wrap CLIs also honor their own vendor env (for example Codex / Grok installs). Prefer putting agent binaries on the login shell PATH so headed apps launched from a desktop entry still find them.
 
 ### Tuning / diagnostics (advanced)
 
@@ -77,7 +75,6 @@ Harnesses that wrap CLIs also honor their own vendor env (for example Claude / C
 |---|---|
 | `HEARTH_ACP_PROMPT_STALL_MS` | Override ACP first-byte stall bound; `0` disables |
 | `HEARTH_ACP_QUIET_SETTLE_MS` | Override quiet-settle bound; `0` disables |
-| `HEARTH_OPENCODE_STALL_MS` / `HEARTH_OPENCODE_STARTUP_TIMEOUT_SECS` | OpenCode native driver stalls / startup |
 | `HEARTH_AUTO_UPDATE` | `1`/`true`/`yes` — headless may auto-apply updates |
 | `HEARTH_OPEN_PICKER` | Dev: `model` \| `traits` \| `repo` \| `branch` — open a picker on boot |
 | `HEARTH_MOCK_*` | Mock harness scripting knobs (`DELAY_MS`, `QUESTION`, `REPEAT`, …) when `HEARTH_HARNESS=mock` |
@@ -110,8 +107,16 @@ Install records the `hearth` binary path and a fixed allowlist of `HEARTH_*` / l
 
 | Goal | What to set |
 |---|---|
-| Local only (default) | Nothing; do not set WorkOS / edge token |
-| Dev sync against a self-hosted or smoke edge | `HEARTH_EDGE_TOKEN=…` (and usually `HEARTH_EDGE_URL`) |
-| WorkOS-backed sync | `HEARTH_WORKOS_CLIENT_ID=…`, then `hearth login` |
+| Local only (default) | Nothing |
+| Tailnet sync (spoke) | `HEARTH_TAILNET_HOST=minis.YOUR-TAILNET.ts.net` |
+| Tailnet sync (hub, always-on host) | same, plus `HEARTH_TAILNET_HUB=1` (or a hostname that matches this machine) |
 
-This fork does **not** bake a production WorkOS client id. If you do not set the above, the edge is never dialed.
+Install Tailscale on every device, add them to the same tailnet, and allow TCP `27655` between them. A typical layout:
+
+```
+# on minis (always-on)
+HEARTH_TAILNET_HOST=minis.YOUR-TAILNET.ts.net HEARTH_TAILNET_HUB=1 hearth daemon install
+
+# on a laptop
+HEARTH_TAILNET_HOST=minis.YOUR-TAILNET.ts.net hearth
+```

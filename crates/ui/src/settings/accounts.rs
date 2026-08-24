@@ -1,5 +1,5 @@
 //! Settings → Agents / accounts (feature-inventory §1.9): provider cards
-//! (Claude Code, Codex, Cursor) with account rows — email, plan badge, Active, usage
+//! (Codex) with account rows — email, plan badge, Active, usage
 //! meters (indigo → amber ≥80% → red ≥95%, reset time), Switch / Forget — plus
 //! the add-account dialogs (paste-code and browser-poll flows) and
 //! account-shaped loading skeletons. Hearth retargets devices from the settings
@@ -116,11 +116,7 @@ pub fn format_reset(resets_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Opt
 
 /// The provider cards, in display order: (harness, name, CLI command — named
 /// in the empty-state copy, hearth settings.agents.tsx `PROVIDERS`).
-pub const PROVIDERS: [(HarnessId, &str, &str); 3] = [
-    (HarnessId::ClaudeCode, "Claude Code", "claude"),
-    (HarnessId::Codex, "Codex", "codex"),
-    (HarnessId::Cursor, "Cursor", "cursor-agent"),
-];
+pub const PROVIDERS: [(HarnessId, &str, &str); 1] = [(HarnessId::Codex, "Codex", "codex")];
 
 /// Accounts of one provider, in the engine's order (slot creation). No
 /// active-first re-sort: switching accounts must not move the switched-to
@@ -170,8 +166,7 @@ impl LoginFlow {
         };
         match harness {
             HarnessId::Codex => "Add Codex account",
-            HarnessId::Cursor => "Connect Cursor",
-            _ => "Add Claude account",
+            _ => "Add account",
         }
     }
 }
@@ -1030,24 +1025,15 @@ impl AccountsPage {
                     .into_any_element()
             }
             LoginFlow::Browser {
-                harness,
                 start,
                 message,
                 error,
+                ..
             } => {
                 let has_error = error.is_some();
-                let body = match harness {
-                    HarnessId::Cursor => {
-                        "Finish signing in to Cursor in your browser. This mints a \
-                         hearth-named API key you can revoke any time from Cursor's \
-                         dashboard — it is separate from `cursor-agent login`."
-                    }
-                    _ => {
-                        "Finish signing in to OpenAI in your browser. The new login is \
+                let body = "Finish signing in to OpenAI in your browser. The new login is \
                          captured in an isolated profile — your current session is untouched \
-                         until you switch."
-                    }
-                };
+                         until you switch.";
                 div()
                     .flex()
                     .flex_col()
@@ -1213,16 +1199,8 @@ impl Render for AccountsPage {
 
         let provider_icon = |harness: HarnessId| match harness {
             HarnessId::Codex => (crate::icons::OPENAI_MARK, None),
-            HarnessId::Cursor => (crate::icons::CURSOR_MARK, None),
             HarnessId::Grok => (crate::icons::GROK_MARK, None),
-            HarnessId::Hermes => (crate::icons::HERMES_MARK, None),
-            HarnessId::Raven => (crate::icons::RAVEN_MARK, None),
-            HarnessId::Pi => (crate::icons::PI_MARK, None),
-            HarnessId::Opencode => (crate::icons::OPENCODE_MARK, None),
-            _ => (
-                crate::icons::CLAUDE_MARK,
-                Some(crate::icons::claude_brand()),
-            ),
+            HarnessId::Raven | HarnessId::Mock => (crate::icons::RAVEN_MARK, None),
         };
         // Brand mark inside a 24px centered box (hearth: `grid size-6
         // place-items-center [&_svg]:size-4`).
@@ -1249,8 +1227,7 @@ impl Render for AccountsPage {
                 .map(|(harness, name, _cli)| {
                     let skeleton_id = match harness {
                         HarnessId::Codex => "accounts-skeleton-codex",
-                        HarnessId::Cursor => "accounts-skeleton-cursor",
-                        _ => "accounts-skeleton-claude",
+                        _ => "accounts-skeleton",
                     };
                     div()
                         .mt(px(24.0))
@@ -1336,19 +1313,10 @@ impl Render for AccountsPage {
                             .collect();
                         let add_id: SharedString = format!("add-account-{name}").into();
                         let card = widgets::section_card(&theme).mt(px(8.0));
-                        let empty_copy = match harness {
-                            // Cursor's app login is SEPARATE from `cursor-agent
-                            // login` — pointing at the CLI would send users to a
-                            // sign-in that does not light this up.
-                            HarnessId::Cursor => format!(
-                                "{name} isn't connected on this device — connect it to run \
-                                 Cursor sessions."
-                            ),
-                            _ => format!(
-                                "No {name} login detected on this device — sign in \
-                                 with \u{201C}{cli}\u{201D} or add an account."
-                            ),
-                        };
+                        let empty_copy = format!(
+                            "No {name} login detected on this device — sign in \
+                             with \u{201C}{cli}\u{201D} or add an account."
+                        );
                         let card = if rows.is_empty() {
                             card.child(
                                 div()
@@ -1446,9 +1414,8 @@ impl Render for AccountsPage {
                     )
                     .child(widgets::page_subtitle(
                         &theme,
-                        "The Claude Code, Codex, and Cursor logins on this device. Hearth \
-                         detects the live session, keeps each account backed up, and can \
-                         swap between them.",
+                        "The Codex logins on this device. Hearth detects the live session, \
+                         keeps each account backed up, and can swap between them.",
                     ))
                     .when_some(self.error.clone(), |el, message| {
                         el.child(
@@ -1572,20 +1539,20 @@ mod tests {
         };
         let snapshot = AgentAccountsSnapshot {
             accounts: vec![
-                account("c1", HarnessId::ClaudeCode, false),
                 account("x1", HarnessId::Codex, false),
-                account("c2", HarnessId::ClaudeCode, true),
+                account("x2", HarnessId::Codex, true),
             ],
             warnings: vec![],
         };
-        let claude = provider_accounts(&snapshot, HarnessId::ClaudeCode);
-        let ids: Vec<&str> = claude.iter().map(|a| a.id.as_str()).collect();
+        let ids: Vec<&str> = provider_accounts(&snapshot, HarnessId::Codex)
+            .iter()
+            .map(|a| a.id.as_str())
+            .collect();
         assert_eq!(
             ids,
-            ["c1", "c2"],
+            ["x1", "x2"],
             "engine (creation) order holds — switching must not move a card"
         );
-        assert_eq!(provider_accounts(&snapshot, HarnessId::Codex).len(), 1);
-        assert!(provider_accounts(&snapshot, HarnessId::Cursor).is_empty());
+        assert!(provider_accounts(&snapshot, HarnessId::Raven).is_empty());
     }
 }

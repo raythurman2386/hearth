@@ -1,5 +1,7 @@
 # Parity checklist
 
+> **Historical:** this tracks the Zeron/comet upstream rewrite (including Cloudflare Durable Objects, WorkOS, and harnesses this fork has since removed). For the current product inventory see [harnesses.md](harnesses.md), [configuration.md](configuration.md), and [../ARCHITECTURE.md](../ARCHITECTURE.md).
+
 Status of the native rewrite against `docs/research/feature-inventory.md`
 (§1–§8), audited against the tree after M6. Legend: **done** (implemented and
 tested), **partial** (core in place, listed gaps), **deferred** (intentionally

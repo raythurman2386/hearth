@@ -13,7 +13,6 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable as _, KeyDownEvent, SharedString,
@@ -743,7 +742,7 @@ impl Pickers {
 
     /// The selected space's device when it differs from the connected
     /// engine's own — harness/model catalogs come from the device that RUNS
-    /// the agents (the CLIs live there; the viewer may have neither claude
+    /// the agents (the CLIs live there; the viewer may have neither raven
     /// nor codex installed — user report: "can't load codex models/traits
     /// anywhere" from a Mac without codex).
     fn space_target(&self, cx: &App) -> Option<String> {
@@ -1149,34 +1148,10 @@ impl Pickers {
                     serde_json::Value::String(target.clone()),
                 );
             }
-            // A plugin-heavy OpenCode cold start can fail once while caches,
-            // MCP servers, or plugin runtimes are still warming. Keep this
-            // single Loading slot alive for two retries so recovery requires
-            // no picker close/reopen and cannot launch duplicate probes.
-            let mut attempt = 1_u64;
-            let result = loop {
-                let result = engine
-                    .client()
-                    .call(methods::LIST_MODELS, params.clone())
-                    .await;
-                if result.is_ok() || harness != HarnessId::Opencode || attempt >= 3 {
-                    break result;
-                }
-                if let Err(error) = &result {
-                    tracing::warn!(
-                        %error,
-                        attempt,
-                        "OpenCode model discovery failed; retrying automatically"
-                    );
-                }
-                if this.update(cx, |_, _| {}).is_err() {
-                    return;
-                }
-                cx.background_executor()
-                    .timer(Duration::from_secs(attempt * 2))
-                    .await;
-                attempt += 1;
-            };
+            let result = engine
+                .client()
+                .call(methods::LIST_MODELS, params.clone())
+                .await;
             this.update(cx, |pickers, cx| {
                 let loaded = match result {
                     Ok(value) => match serde_json::from_value::<Vec<Model>>(value) {
@@ -3776,9 +3751,6 @@ fn default_badge(theme: &Theme) -> gpui::Div {
         .child(SharedString::from("Default"))
 }
 
-/// Brand mark + optional tint for a harness (the Claude mark keeps its brand
-/// orange even on the monochrome surface; the mock harness scripts
-/// Claude-flavoured runs, so it wears the Claude mark).
 /// The 3px bar marking the selected rail tab (t3 ModelPickerSidebar
 /// `SELECTED_INDICATOR_CLASS`, `rounded-l-full`): LEFT half-capsule only —
 /// the flat right edge presses against the rail/pane border it hugs.
@@ -3820,39 +3792,14 @@ fn empty_list_note(theme: &Theme, copy: &str) -> AnyElement {
 /// Display-side model-list hygiene, mirroring the engine's discovery-side
 /// fold (`models_from_session`) for catalogs served by OLDER engines (the
 /// space's device may run any version): the `default` alias row drops when a
-/// real row exists, an orphan `<model>[1m]` variant presents as its base id
-/// with the Context Window trait pinned to 1M, and Claude rows adopt the
-/// curated catalog's labels so the version number always shows ("Opus 5",
-/// not the wire's terse "Opus" alias — user request). Idempotent over
-/// already-clean lists. The send path recomposes the advertised id from the
-/// base + trait (`pick_model_value`), so a folded pick still runs.
-pub(crate) fn normalize_model_rows(harness: HarnessId, models: Vec<Model>) -> Vec<Model> {
+/// real row exists, and an orphan `<model>[1m]` variant presents as its base
+/// id with the Context Window trait pinned to 1M. Idempotent over already-
+/// clean lists. The send path recomposes the advertised id from the base +
+/// trait (`pick_model_value`), so a folded pick still runs.
+pub(crate) fn normalize_model_rows(_harness: HarnessId, models: Vec<Model>) -> Vec<Model> {
     fn strip_1m(id: &str) -> Option<&str> {
         id.strip_suffix("[1m]").or_else(|| id.strip_suffix("-1m"))
     }
-    fn norm(id: &str) -> String {
-        id.chars()
-            .filter(|c| c.is_ascii_alphanumeric())
-            .collect::<String>()
-            .to_ascii_lowercase()
-    }
-    let catalog = match harness {
-        HarnessId::ClaudeCode => hearth_harness::claude::catalog::static_models(),
-        _ => Vec::new(),
-    };
-    // Curated label for an id: exact normalized match, else — for bare
-    // alphabetic aliases like `opus` — the first (flagship-ordered) family
-    // row. Versioned foreign ids never fuzzy-match.
-    let curated_label = |id: &str| -> Option<String> {
-        let id_norm = norm(id);
-        if let Some(row) = catalog.iter().find(|m| norm(&m.id) == id_norm) {
-            return Some(row.label.clone());
-        }
-        (!id_norm.is_empty() && id_norm.chars().all(|c| c.is_ascii_alphabetic()))
-            .then(|| catalog.iter().find(|m| norm(&m.id).contains(&id_norm)))
-            .flatten()
-            .map(|m| m.label.clone())
-    };
     let ids: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
     let has_real = ids.iter().any(|id| !id.eq_ignore_ascii_case("default"));
     models
@@ -3895,9 +3842,6 @@ pub(crate) fn normalize_model_rows(harness: HarnessId, models: Vec<Model>) -> Ve
                     });
                 }
             }
-            if let Some(label) = curated_label(&model.id) {
-                model.label = label;
-            }
             Some(model)
         })
         .collect()
@@ -3905,20 +3849,9 @@ pub(crate) fn normalize_model_rows(harness: HarnessId, models: Vec<Model>) -> Ve
 
 pub(crate) fn harness_brand_icon(harness: HarnessId) -> (&'static str, Option<gpui::Hsla>) {
     match harness {
-        HarnessId::ClaudeCode | HarnessId::Mock => (
-            crate::icons::CLAUDE_MARK,
-            Some(crate::icons::claude_brand()),
-        ),
         HarnessId::Codex => (crate::icons::OPENAI_MARK, None),
-        HarnessId::Cursor => (crate::icons::CURSOR_MARK, None),
-        // Monochrome mark, tinted by the surface like OpenAI's.
         HarnessId::Grok => (crate::icons::GROK_MARK, None),
-        // Nous Research's mark (the Hermes product icon), monochrome.
-        HarnessId::Hermes => (crate::icons::HERMES_MARK, None),
-        HarnessId::Raven => (crate::icons::RAVEN_MARK, None),
-        HarnessId::Pi => (crate::icons::PI_MARK, None),
-        // The pixel-"o" from opencode's wordmark (their favicon), monochrome.
-        HarnessId::Opencode => (crate::icons::OPENCODE_MARK, None),
+        HarnessId::Raven | HarnessId::Mock => (crate::icons::RAVEN_MARK, None),
     }
 }
 
@@ -4105,10 +4038,7 @@ impl Render for Pickers {
         let harness_icon: (&'static str, Option<gpui::Hsla>) = match self.effective_harness(cx) {
             Some(harness) => harness_brand_icon(harness),
             None if no_agents => (crate::icons::TERMINAL, Some(theme.text_muted)),
-            None => (
-                crate::icons::CLAUDE_MARK,
-                Some(crate::icons::claude_brand()),
-            ),
+            None => (crate::icons::RAVEN_MARK, None),
         };
         let explicit_options = self.explicit_options(cx);
         let traits_set = traits_summary(
@@ -4354,32 +4284,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_gives_claude_rows_their_versioned_catalog_labels() {
-        // The real prod shape: alias values with terse names. Claude rows
-        // adopt the curated labels so the version number always shows
-        // (user request), exact ids included; foreign ids pass through.
-        let models = normalize_model_rows(
-            HarnessId::ClaudeCode,
-            vec![
-                bare_model("default", "Default (recommended)"),
-                bare_model("opus[1m]", "Opus (1M context)"),
-                bare_model("claude-fable-5[1m]", "Fable"),
-                bare_model("sonnet", "Sonnet"),
-                bare_model("haiku", "Haiku"),
-                bare_model("claude-nova-1", "Nova 1"),
-            ],
-        );
-        assert_eq!(
-            models.iter().map(|m| m.label.as_str()).collect::<Vec<_>>(),
-            vec!["Opus 5", "Fable 5", "Sonnet 5", "Haiku 4.5", "Nova 1"]
-        );
-        assert_eq!(
-            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-            vec!["opus", "claude-fable-5", "sonnet", "haiku", "claude-nova-1"]
-        );
-    }
-
-    #[test]
     fn traits_summary_formats_non_defaults() {
         let model = Model {
             id: "opus".into(),
@@ -4592,11 +4496,11 @@ mod tests {
     fn resolved_chat_config_requires_harness() {
         let mut resolved = ResolvedRunConfig::default();
         assert!(resolved.chat_config().is_none());
-        resolved.harness = Some(HarnessId::ClaudeCode);
+        resolved.harness = Some(HarnessId::Raven);
         resolved.model = Some("opus".into());
         resolved.reasoning = Some(ReasoningLevel::High);
         let config = resolved.chat_config().expect("harness set");
-        assert_eq!(config.harness, HarnessId::ClaudeCode);
+        assert_eq!(config.harness, HarnessId::Raven);
         assert_eq!(config.model.as_deref(), Some("opus"));
         assert_eq!(config.sandbox, SandboxLevel::WorkspaceWrite);
     }
@@ -4666,12 +4570,12 @@ mod tests {
         };
         let mixed = vec![
             descriptor(HarnessId::Mock, "Mock"),
-            descriptor(HarnessId::ClaudeCode, "Claude Code"),
+            descriptor(HarnessId::Raven, "Claude Code"),
         ];
         // Env-independent core: mock hidden in production…
         let visible = visible_harnesses_impl(&mixed, false);
         assert_eq!(visible.len(), 1);
-        assert_eq!(visible[0].id, HarnessId::ClaudeCode);
+        assert_eq!(visible[0].id, HarnessId::Raven);
         let only_mock = vec![descriptor(HarnessId::Mock, "Mock")];
         assert_eq!(visible_harnesses_impl(&only_mock, false).len(), 1);
         // …and opted back in by HEARTH_HARNESS=mock (the e2e rig).
@@ -4693,7 +4597,7 @@ mod tests {
         let catalog = |claude: Option<bool>, codex: Option<bool>, grok: Option<bool>| {
             vec![
                 descriptor(HarnessId::Mock, "Mock", Some(false)),
-                descriptor(HarnessId::ClaudeCode, "Claude Code", claude),
+                descriptor(HarnessId::Raven, "Raven", claude),
                 descriptor(HarnessId::Codex, "Codex", codex),
                 descriptor(HarnessId::Grok, "Grok", grok),
             ]
@@ -4703,20 +4607,20 @@ mod tests {
         let offered = offered_harnesses_impl(&catalog(None, None, None), false);
         assert_eq!(
             offered.iter().map(|d| d.id).collect::<Vec<_>>(),
-            vec![HarnessId::ClaudeCode, HarnessId::Codex, HarnessId::Grok]
+            vec![HarnessId::Raven, HarnessId::Codex, HarnessId::Grok]
         );
         // The device's flags win: Grok on, Codex off; catalog order holds.
         let offered = offered_harnesses_impl(&catalog(Some(true), Some(false), Some(true)), false);
         assert_eq!(
             offered.iter().map(|d| d.id).collect::<Vec<_>>(),
-            vec![HarnessId::ClaudeCode, HarnessId::Grok]
+            vec![HarnessId::Raven, HarnessId::Grok]
         );
         // The dev-rig mock opt-in survives the enabled filter (and Grok's
         // unknown flag still resolves through its installed probe).
         let offered = offered_harnesses_impl(&catalog(Some(true), Some(false), None), true);
         assert_eq!(
             offered.iter().map(|d| d.id).collect::<Vec<_>>(),
-            vec![HarnessId::Mock, HarnessId::ClaudeCode, HarnessId::Grok]
+            vec![HarnessId::Mock, HarnessId::Raven, HarnessId::Grok]
         );
         // Nothing enabled offers nothing — the composer renders the
         // no-agents empty state instead of resurrecting disabled agents.
@@ -4747,7 +4651,7 @@ mod tests {
         // combination (enablement follows detection), but a catalog from an
         // older engine still can — the filter is the cross-version defense.
         let catalog = vec![
-            descriptor(HarnessId::ClaudeCode, "Claude Code", Some(true), false),
+            descriptor(HarnessId::Raven, "Claude Code", Some(true), false),
             descriptor(HarnessId::Codex, "Codex", Some(true), false),
             descriptor(HarnessId::Grok, "Grok", Some(true), true),
         ];
@@ -4762,7 +4666,7 @@ mod tests {
         // NotInstalled errors at send; the composer shows the no-agents
         // state and blocks new sends instead.
         let catalog = vec![
-            descriptor(HarnessId::ClaudeCode, "Claude Code", Some(true), false),
+            descriptor(HarnessId::Raven, "Claude Code", Some(true), false),
             descriptor(HarnessId::Codex, "Codex", Some(false), false),
             descriptor(HarnessId::Grok, "Grok", Some(false), true),
         ];

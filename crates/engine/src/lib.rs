@@ -110,7 +110,32 @@ pub struct EngineConfig {
     pub org_id: Option<String>,
     /// WorkOS client id — enables real auth; `None` = dev mode (bearer = `edge_token`).
     pub workos_client_id: Option<String>,
+    /// MagicDNS hostname (or Tailscale hostname) of the always-on hub.
+    /// Set `HEARTH_TAILNET_HOST` to opt into tailnet sync. Empty = local only.
+    pub tailnet_host: Option<String>,
+    /// Hub listen/dial port (default 27655).
+    pub tailnet_port: u16,
+    /// When true this process hosts chat2/registry rooms. When false, detect
+    /// from `tailscale status` matching [`Self::tailnet_host`].
+    pub tailnet_hub: bool,
 }
+
+impl EngineConfig {
+    pub fn tailnet_enabled(&self) -> bool {
+        self.tailnet_host
+            .as_deref()
+            .is_some_and(|h| !h.trim().is_empty())
+    }
+
+    /// `http://{tailnet_host}:{tailnet_port}` when tailnet is configured.
+    pub fn tailnet_http_url(&self) -> Option<String> {
+        let host = self.tailnet_host.as_deref()?.trim();
+        (!host.is_empty()).then(|| format!("http://{host}:{}", self.tailnet_port))
+    }
+}
+
+/// Default tailnet listen/dial port (IPC is 27654).
+pub const DEFAULT_TAILNET_PORT: u16 = 27655;
 
 /// The assembled engine core — also constructible without the IPC server for tests
 /// and the in-process (headed) mode.
@@ -498,6 +523,7 @@ pub struct Engine {
 pub struct EngineRuntime {
     core: EngineCore,
     host_relay: std::sync::Mutex<Option<hearth_rpc::HostRelay>>,
+    hub: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 /// IPC-only lifecycle control owned by `hearth headless`. The regular
@@ -543,6 +569,14 @@ impl EngineRuntime {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
+        if let Some(hub) = self
+            .hub
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            hub.abort();
+        }
         self.core.disconnect_edge();
     }
 
@@ -558,6 +592,14 @@ impl Drop for EngineRuntime {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
+        if let Some(hub) = self
+            .hub
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            hub.abort();
+        }
     }
 }
 
@@ -689,8 +731,12 @@ impl Engine {
         profile: EngineProfile,
         lock: Option<InstanceLock>,
     ) -> anyhow::Result<EngineRuntime> {
+        let tailnet = config.tailnet_enabled();
+        let edge_url = config
+            .tailnet_http_url()
+            .unwrap_or_else(|| config.edge_url.clone());
         let edge_enabled = match profile.scope() {
-            WorkspaceScope::Local => false,
+            WorkspaceScope::Local => tailnet,
             WorkspaceScope::Synced => {
                 // Validate the persisted session in the BACKGROUND: the probe
                 // still transitions auth to SignedOut on definitive revocation
@@ -708,10 +754,13 @@ impl Engine {
             // token, including when WorkOS was merely disabled with
             // HEARTH_WORKOS_CLIENT_ID="". Only an explicitly configured,
             // non-empty bearer opts this runtime into Edge rooms and relays.
-            WorkspaceScope::Development => config
-                .edge_token
-                .as_deref()
-                .is_some_and(|token| !token.trim().is_empty()),
+            WorkspaceScope::Development => {
+                tailnet
+                    || config
+                        .edge_token
+                        .as_deref()
+                        .is_some_and(|token| !token.trim().is_empty())
+            }
         };
         if edge_enabled {
             // OS network-path events (macOS NWPathMonitor): the instant the
@@ -721,8 +770,9 @@ impl Engine {
             hearth_sync::net_path::spawn_path_monitor();
         }
         let device_id = load_or_create_device_id(profile.device_root())?;
+        let rooms_dir = profile.store_root().to_path_buf();
         let edge = edge_enabled.then(|| {
-            EdgeConfig::new(config.edge_url.clone(), Arc::new(auth.clone())).with_device(device_id)
+            EdgeConfig::new(edge_url.clone(), Arc::new(auth.clone())).with_device(device_id)
         });
 
         let core = match lock {
@@ -750,7 +800,7 @@ impl Engine {
                 let terminals = core.terminals.clone();
                 Arc::new(move || !sessions.any_active() && !terminals.any_open())
             };
-            let updater = hearth_update::Updater::spawn(config.edge_url.clone(), Some(quiescent));
+            let updater = hearth_update::Updater::spawn(edge_url.clone(), Some(quiescent));
             if let Some(mut token_changes) = edge.as_ref().and_then(EdgeConfig::token_changes) {
                 let updater_for_tokens = updater.clone();
                 let wake = tokio::spawn(async move {
@@ -768,7 +818,77 @@ impl Engine {
         // never waits on — or dies inside — an npm run.
         hearth_harness::acp::prewarm_managed_adapters();
 
-        let host_relay = edge.as_ref().map(|edge| {
+        let mut host_relay = None;
+        let mut hub = None;
+        if tailnet {
+            let port = config.tailnet_port;
+            let workspace_for_url = core.workspace.clone();
+            let mut link_config =
+                hearth_rpc::LinkCacheConfig::new(edge_url.clone(), Arc::new(auth.clone()));
+            let workspace_for_liveness = core.workspace.clone();
+            link_config.liveness = Some(Arc::new(move |device_id: &str| {
+                workspace_for_liveness.peer_liveness(device_id)
+            }));
+            link_config.peer_url = Some(Arc::new(move |device_id: &str| {
+                let workspace = workspace_for_url.clone();
+                let device_id = device_id.to_string();
+                Box::pin(async move {
+                    let Some(host) = resolve_tailnet_host(&workspace, &device_id).await else {
+                        return Err(hearth_rpc::RpcError::Transport(format!(
+                            "no Tailscale peer matches device {device_id} — rename the device \
+                             to its Tailscale hostname (or MagicDNS first label) and retry"
+                        )));
+                    };
+                    Ok(format!("ws://{host}:{port}/rpc"))
+                })
+            }));
+            let links = hearth_rpc::LinkCache::new(link_config);
+            let links_for_presence = links.clone();
+            core.workspace
+                .set_peer_alive_hook(Arc::new(move |device_id: &str| {
+                    links_for_presence.reset_cooldown(device_id);
+                }));
+            core.set_links(links);
+
+            let serve_rooms = config.tailnet_hub || this_device_is_hub(config).await;
+            let service: Arc<dyn hearth_rpc::RpcService> = core.rpc_service();
+            let on_rpc: hearth_sync::RpcHandler = Arc::new(move |ws| {
+                let service = service.clone();
+                tokio::spawn(hearth_rpc::serve_websocket(ws, service));
+            });
+            let listen = format!("0.0.0.0:{port}");
+            match hearth_sync::Hub::bind(
+                listen,
+                hearth_sync::HubConfig {
+                    data_dir: rooms_dir,
+                    serve_rooms,
+                    on_rpc: Some(on_rpc),
+                    skip_whois: false,
+                },
+            )
+            .await
+            {
+                Ok(server) => {
+                    tracing::info!(
+                        addr = %server.local_addr(),
+                        serve_rooms,
+                        "tailnet hub listening"
+                    );
+                    hub = Some(server.spawn());
+                }
+                Err(err) if serve_rooms => {
+                    return Err(anyhow::anyhow!(
+                        "tailnet hub failed to bind (this process hosts rooms): {err}"
+                    ));
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "tailnet /rpc listen failed — this device can still dial the hub"
+                    );
+                }
+            }
+        } else if let Some(edge) = edge.as_ref() {
             let mut link_config =
                 hearth_rpc::LinkCacheConfig::new(edge.url.clone(), Arc::new(auth.clone()));
             // Registry-dark dial gate: devices with no recent presence fail
@@ -785,12 +905,13 @@ impl Engine {
                     links_for_presence.reset_cooldown(device_id);
                 }));
             core.set_links(links);
-            core.start_host_relay(&edge.url)
-        });
+            host_relay = Some(core.start_host_relay(&edge.url));
+        }
 
         Ok(EngineRuntime {
             core,
             host_relay: std::sync::Mutex::new(host_relay),
+            hub: std::sync::Mutex::new(hub),
         })
     }
 
@@ -1122,6 +1243,59 @@ fn native_friendly_device_name() -> Option<String> {
 }
 
 /// Trimmed env var or the given default.
+async fn this_device_is_hub(config: &EngineConfig) -> bool {
+    if config.tailnet_hub {
+        return true;
+    }
+    let Some(want) = config.tailnet_host.as_deref() else {
+        return false;
+    };
+    match hearth_sync::tailnet::discover_self().await {
+        Ok(me) => host_matches(&me, want),
+        Err(err) => {
+            tracing::warn!(error = %err, "tailnet: could not read Self; not hosting rooms");
+            false
+        }
+    }
+}
+
+fn dns_first_label(host: &str) -> &str {
+    host.trim_end_matches('.').split('.').next().unwrap_or(host)
+}
+
+/// True when `configured` names this Tailscale peer: exact MagicDNS / hostname,
+/// or first-label equality (`minis` ↔ `minis.tailnet.ts.net`). Prefix matches
+/// like `mac` ↔ `macbook…` are rejected.
+fn host_matches(peer: &hearth_sync::tailnet::Peer, configured: &str) -> bool {
+    let want = configured.trim().trim_end_matches('.').to_ascii_lowercase();
+    if want.is_empty() {
+        return false;
+    }
+    let dns = peer.dns_host().to_ascii_lowercase();
+    let host = peer.host_name.to_ascii_lowercase();
+    dns == want || host == want || dns_first_label(&dns) == want || dns_first_label(&want) == host
+}
+
+/// Resolve a registry device id to a Tailscale dial host. Returns `None` when
+/// the device's friendly name does not match any peer — callers must not fall
+/// back to the hub (that would run peer RPC on the wrong machine).
+async fn resolve_tailnet_host(workspace: &WorkspaceHost, device_id: &str) -> Option<String> {
+    let name = workspace
+        .read_devices()
+        .ok()
+        .and_then(|devs| devs.into_iter().find(|d| d.id == device_id).map(|d| d.name))?;
+    let peers = hearth_sync::tailnet::discover_peers().await.ok()?;
+    let want = name.to_ascii_lowercase();
+    peers
+        .iter()
+        .find(|p| {
+            p.host_name.eq_ignore_ascii_case(&want)
+                || p.dns_host().eq_ignore_ascii_case(&want)
+                || dns_first_label(&p.dns_host().to_ascii_lowercase()) == want
+        })
+        .map(|p| p.dns_host().to_string())
+}
+
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key)
         .ok()
@@ -1269,6 +1443,50 @@ fn replace_empty_device_id(temp_path: &Path, path: &Path) -> std::io::Result<()>
             Err(err) => return Err(err),
         }
         std::fs::hard_link(temp_path, path)
+    }
+}
+
+#[cfg(test)]
+mod host_match_tests {
+    use super::{dns_first_label, host_matches};
+    use hearth_sync::tailnet::Peer;
+
+    fn peer(host_name: &str, dns_name: &str) -> Peer {
+        Peer {
+            id: "p".into(),
+            host_name: host_name.into(),
+            dns_name: dns_name.into(),
+            tailscale_ips: vec![],
+            os: "linux".into(),
+            online: true,
+            user_id: 0,
+            login_name: String::new(),
+        }
+    }
+
+    #[test]
+    fn hub_autodetect_matches_short_and_magicdns() {
+        let me = peer("minis", "minis.tailnet.ts.net.");
+        assert!(host_matches(&me, "minis"));
+        assert!(host_matches(&me, "minis.tailnet.ts.net"));
+        assert!(host_matches(&me, "minis.tailnet.ts.net."));
+    }
+
+    #[test]
+    fn hub_autodetect_rejects_hostname_prefix_collisions() {
+        let spoke = peer("mac", "mac.tailnet.ts.net.");
+        assert!(!host_matches(&spoke, "macbook.tailnet.ts.net"));
+        assert!(!host_matches(&spoke, "macbook"));
+        let book = peer("macbook", "macbook.tailnet.ts.net.");
+        assert!(!host_matches(&book, "mac"));
+        assert!(!host_matches(&book, "mac.tailnet.ts.net"));
+    }
+
+    #[test]
+    fn dns_first_label_strips_suffix() {
+        assert_eq!(dns_first_label("minis.tailnet.ts.net"), "minis");
+        assert_eq!(dns_first_label("minis."), "minis");
+        assert_eq!(dns_first_label("minis"), "minis");
     }
 }
 

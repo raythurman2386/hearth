@@ -2,6 +2,8 @@
 
 **Status: shipped behind the `reg1/` room namespace; replaces the `ws4/` Loro workspace doc.**
 
+**Implementation (this fork):** Rust hub rooms in `crates/sync` (`registry_room.rs`, `hub.rs`) over Tailscale. References to `edge/src/registry-room.ts` below are historical; the merge logic still lives in `crates/doc/src/registry.rs`.
+
 ## Why
 
 The workspace doc (sidebar index: devices, spaces, chats, session status) was a Loro CRDT
@@ -31,15 +33,14 @@ and that side is measured and healthy.
 
 ```
 engine A ── RegistryDoc (rows + pending ops, SQLite-persisted) ── RegistryClient ─┐
-                                                                                  ├─ RegistryRoom DO (reg1/{org}/{user})
+                                                                                  ├─ RegistryRoom (reg1/{org}/{user})
 engine B ── RegistryDoc ── RegistryClient ────────────────────────────────────────┘   rows table + seq counter
 ```
 
-- **RegistryRoom DO** (`edge/src/registry-room.ts`): authoritative row table in DO SQLite.
+- **RegistryRoom** (`crates/sync/src/registry_room.rs` on the hub): authoritative row table.
   Applies pushed ops with per-field LWW (HLC compare), bumps a monotonic `seq` per batch,
   broadcasts merged rows to every socket. Cursor sync: a client joining with `cursor=N`
-  gets only rows with `seq > N`. Pure merge logic lives in `registry-core.ts` (unit-tested;
-  mirrored 1:1 in Rust).
+  gets only rows with `seq > N`. Pure merge logic lives in `crates/doc/src/registry.rs`.
 - **RegistryDoc** (`crates/doc/src/registry.rs`): the client-side table. Authoritative rows
   (server truth) + a pending-op queue (offline writes, replayed as an overlay for reads).
   Typed API is a drop-in for the old `WorkspaceDoc`. Serialized whole into `DocsStore`

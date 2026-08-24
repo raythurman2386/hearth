@@ -1,5 +1,5 @@
 //! `hearth update` — check for and apply a newer release, natively (the same
-//! flow `edge/src/install.sh` performs: download → verify → symlink swap →
+//! flow `scripts/install.sh` performs: download → verify → symlink swap →
 //! service restart). macOS app bundles swap the bundle instead; source builds
 //! are report-only.
 

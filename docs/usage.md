@@ -4,7 +4,7 @@ Day-to-day workflows for **Hearth**. See the [root README](../README.md) for ins
 
 ## What Hearth is (and is not)
 
-Hearth is a **desktop control surface**: sessions, composer, transcripts, diffs, terminals, and harness pickers. Coding agents run **outside** Hearth (for example `raven --acp`, Claude Code, Codex). Hearth starts them, streams events into a chat document, and lets you steer or stop a run.
+Hearth is a **desktop control surface**: sessions, composer, transcripts, diffs, terminals, and harness pickers. Coding agents run **outside** Hearth (for example `raven --acp`, Codex, Grok). Hearth starts them, streams events into a chat document, and lets you steer or stop a run.
 
 Hearth’s CLI has **no** one-shot `-p` / `--mode` task flags. Those belong to agents such as Raven (`raven --mode agent -p "…"`). Running bare `hearth` opens the UI.
 

@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
@@ -614,7 +615,9 @@ impl DeviceLink {
             // the host leg is alive (the dial's readiness probe proves it
             // too; this seeds the ongoing cadence).
             if !echo_frame.is_empty() {
-                let _ = sink.send(WsMessage::Binary(echo_frame.clone().into())).await;
+                let _ = sink
+                    .send(WsMessage::Binary(echo_frame.clone().into()))
+                    .await;
             }
             let reason = loop {
                 tokio::select! {
@@ -703,6 +706,70 @@ impl DeviceLink {
         })
     }
 
+    /// Direct tailnet RPC: text frames on `ws://peer:port/rpc`, no device-room
+    /// envelope. Same [`RpcClient`] surface as the relay path.
+    pub async fn connect_plain(url: &str) -> Result<Self, RpcError> {
+        let ws = hearth_sync::dial::connect_ws(url)
+            .await
+            .map_err(|e| RpcError::Transport(format!("peer rpc unreachable: {e}")))?;
+        let (mut sink, mut stream) = ws.split();
+        let (out_tx, mut out_rx) = mpsc::channel::<String>(256);
+        let (in_tx, in_rx) = mpsc::channel::<String>(256);
+        let (closed_tx, closed_rx) = watch::channel::<Option<String>>(None);
+
+        let pump = tokio::spawn(async move {
+            let mut ping = tokio::time::interval(client_ping_interval());
+            ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            ping.tick().await;
+            let mut last_rx = tokio::time::Instant::now();
+            let reason = loop {
+                tokio::select! {
+                    frame = out_rx.recv() => match frame {
+                        Some(text) => {
+                            if sink.send(WsMessage::Text(text.into())).await.is_err() {
+                                break "connection lost".to_string();
+                            }
+                        }
+                        None => {
+                            let _ = sink.send(WsMessage::Close(None)).await;
+                            break "closed".to_string();
+                        }
+                    },
+                    message = stream.next() => match message {
+                        Some(Ok(WsMessage::Text(text))) => {
+                            last_rx = tokio::time::Instant::now();
+                            if text == "pong" {
+                                continue;
+                            }
+                            if in_tx.send(text.to_string()).await.is_err() {
+                                break "client dropped".to_string();
+                            }
+                        }
+                        Some(Ok(WsMessage::Close(_))) | Some(Err(_)) | None => {
+                            break "connection lost".to_string();
+                        }
+                        Some(Ok(_)) => last_rx = tokio::time::Instant::now(),
+                    },
+                    _ = ping.tick() => {
+                        if sink.send(WsMessage::Text("ping".into())).await.is_err() {
+                            break "connection lost".to_string();
+                        }
+                    }
+                    _ = tokio::time::sleep_until(last_rx + SILENCE_LEASE) => {
+                        break "silent past lease".to_string();
+                    }
+                }
+            };
+            let _ = closed_tx.send(Some(reason));
+        });
+
+        Ok(Self {
+            client: Arc::new(RpcClient::new(out_tx, in_rx)),
+            closed_rx,
+            pump,
+        })
+    }
+
     pub fn client(&self) -> Arc<RpcClient> {
         self.client.clone()
     }
@@ -740,9 +807,16 @@ pub enum PeerLiveness {
 
 pub type PeerLivenessProbe = Arc<dyn Fn(&str) -> PeerLiveness + Send + Sync>;
 
+/// Resolve a device id to a WebSocket URL (`ws://host:port/rpc`). When set,
+/// [`LinkCache`] dials that URL with plain RPC instead of the DeviceRoom relay.
+pub type PeerUrlFactory =
+    Arc<dyn Fn(&str) -> BoxFuture<'static, Result<String, RpcError>> + Send + Sync>;
+
 pub struct LinkCacheConfig {
     pub edge_url: String,
     pub token: Arc<dyn TokenSource>,
+    /// Tailnet direct-dial. `None` keeps the historical DeviceRoom path.
+    pub peer_url: Option<PeerUrlFactory>,
     /// Exponential dial cooldown after failures (base, cap) — a dead peer must not be
     /// redialed at full cadence; callers fail fast in between (hearth peers.ts behavior).
     pub cooldown_base: Duration,
@@ -773,7 +847,13 @@ impl LinkCacheConfig {
             cooldown_max: Duration::from_secs(60),
             probe_timeout: Duration::from_secs(10),
             liveness: None,
+            peer_url: None,
         }
+    }
+
+    pub fn with_peer_url(mut self, peer_url: PeerUrlFactory) -> Self {
+        self.peer_url = Some(peer_url);
+        self
     }
 }
 
@@ -1007,29 +1087,38 @@ impl LinkCache {
     }
 
     async fn dial(&self, device_id: &str) -> Result<Arc<DeviceLink>, RpcError> {
-        // Fresh token on every attempt — an expired one is never reused.
-        let token = self
-            .config
-            .token
-            .token()
-            .await
-            .ok_or_else(|| RpcError::Transport("not signed in".into()))?;
-        let conn_id = uuid::Uuid::new_v4().to_string();
-        let url = device_room_ws_url(
-            &self.config.edge_url,
-            device_id,
-            "client",
-            Some(&conn_id),
-            &token,
-        );
-        tracing::info!(device = %device_id, "peer: dialing via device room");
-        // Bounded connect: `DeviceLink::connect` was the one unbounded await
-        // under `forward()` — a wedged edge socket hung callers indefinitely
-        // and only the UI's own per-call timers saved them (silently).
         const DIAL_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-        let link = tokio::time::timeout(DIAL_CONNECT_TIMEOUT, DeviceLink::connect(&url))
-            .await
-            .map_err(|_| RpcError::Transport(format!("peer {device_id}: connect timed out")))?;
+        let (url, plain) = if let Some(factory) = &self.config.peer_url {
+            (factory(device_id).await?, true)
+        } else {
+            let token = self
+                .config
+                .token
+                .token()
+                .await
+                .ok_or_else(|| RpcError::Transport("not signed in".into()))?;
+            let conn_id = uuid::Uuid::new_v4().to_string();
+            (
+                device_room_ws_url(
+                    &self.config.edge_url,
+                    device_id,
+                    "client",
+                    Some(&conn_id),
+                    &token,
+                ),
+                false,
+            )
+        };
+        tracing::info!(device = %device_id, plain, "peer: dialing");
+        let link = tokio::time::timeout(DIAL_CONNECT_TIMEOUT, async {
+            if plain {
+                DeviceLink::connect_plain(&url).await
+            } else {
+                DeviceLink::connect(&url).await
+            }
+        })
+        .await
+        .map_err(|_| RpcError::Transport(format!("peer {device_id}: connect timed out")))?;
         let link = Arc::new(link?);
         // Readiness probe: prove the host answers before caching (an offline host bounces
         // host_offline, which closes the link and fails this call fast).

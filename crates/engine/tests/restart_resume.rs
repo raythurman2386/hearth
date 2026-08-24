@@ -825,15 +825,15 @@ async fn persistent_startup_crash_keeps_stored_session_id() {
     core.shutdown().await;
 }
 
-/// Real-CLI proof of the whole regression fix: tell claude a codeword, restart
+/// Real-CLI proof of the whole regression fix: tell Codex a codeword, restart
 /// the engine (fresh `EngineCore::assemble` over the same data dir), ask for
 /// the codeword back — the reply can only contain it if the second run resumed
 /// the first run's harness session. Ignored by default: needs an installed,
-/// authenticated `claude` CLI and spends real tokens (haiku, two tiny turns).
+/// authenticated `codex` CLI and spends real tokens (two tiny turns).
 /// Run with: `cargo test -p hearth-engine --test restart_resume -- --ignored`
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires installed+authenticated claude CLI; spends tokens"]
-async fn real_claude_remembers_codeword_across_engine_restart() {
+#[ignore = "requires installed+authenticated codex CLI; spends tokens"]
+async fn real_codex_remembers_codeword_across_engine_restart() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("data");
     let cwd = tmp.path().join("project");
@@ -858,7 +858,7 @@ async fn real_claude_remembers_codeword_across_engine_restart() {
         EngineCore::assemble(
             &dir,
             Arc::new(hearth_engine::default_registry()),
-            HarnessId::ClaudeCode,
+            HarnessId::Codex,
             None,
         )
         .expect("engine core assembles")
@@ -879,7 +879,7 @@ async fn real_claude_remembers_codeword_across_engine_restart() {
         .expect("queue first real run");
     wait_for_within(
         || complete_assistant_count(&core) == 1,
-        "first real claude turn",
+        "first real codex turn",
         Duration::from_secs(120),
     )
     .await;
@@ -905,7 +905,7 @@ async fn real_claude_remembers_codeword_across_engine_restart() {
         .expect("queue second real run");
     wait_for_within(
         || complete_assistant_count(&core) == 2,
-        "post-restart real claude turn",
+        "post-restart real codex turn",
         Duration::from_secs(120),
     )
     .await;

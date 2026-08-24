@@ -161,21 +161,17 @@ mod tests {
     fn round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let mut defaults = ComposerDefaults {
-            harness: Some(HarnessId::ClaudeCode),
+            harness: Some(HarnessId::Raven),
             reasoning: Some(ReasoningLevel::XHigh),
             ..Default::default()
         };
-        defaults.remember_model(
-            HarnessId::ClaudeCode,
-            "claude-fable-5".into(),
-            "Fable 5".into(),
-        );
+        defaults.remember_model(HarnessId::Raven, "claude-fable-5".into(), "Fable 5".into());
         defaults.remember_model(HarnessId::Codex, "gpt-5.2-codex".into(), "GPT-5.2".into());
         defaults.save(dir.path()).unwrap();
         let loaded = ComposerDefaults::load(dir.path());
         assert_eq!(loaded, defaults);
         assert_eq!(
-            loaded.model_for(HarnessId::ClaudeCode).map(|m| &*m.label),
+            loaded.model_for(HarnessId::Raven).map(|m| &*m.label),
             Some("Fable 5")
         );
     }
@@ -198,16 +194,16 @@ mod tests {
     fn favorites_toggle_and_persist() {
         let dir = tempfile::tempdir().unwrap();
         let mut defaults = ComposerDefaults::default();
-        assert!(defaults.toggle_favorite(HarnessId::ClaudeCode, "claude-opus-5"));
+        assert!(defaults.toggle_favorite(HarnessId::Raven, "claude-opus-5"));
         assert!(defaults.toggle_favorite(HarnessId::Codex, "gpt-5.2-codex"));
-        assert!(defaults.is_favorite(HarnessId::ClaudeCode, "claude-opus-5"));
+        assert!(defaults.is_favorite(HarnessId::Raven, "claude-opus-5"));
         // Same id under a different harness is a distinct star.
         assert!(!defaults.is_favorite(HarnessId::Codex, "claude-opus-5"));
         defaults.save(dir.path()).unwrap();
         assert_eq!(ComposerDefaults::load(dir.path()), defaults);
         // Untoggle removes, preserving the other's order.
-        assert!(!defaults.toggle_favorite(HarnessId::ClaudeCode, "claude-opus-5"));
-        assert!(!defaults.is_favorite(HarnessId::ClaudeCode, "claude-opus-5"));
+        assert!(!defaults.toggle_favorite(HarnessId::Raven, "claude-opus-5"));
+        assert!(!defaults.is_favorite(HarnessId::Raven, "claude-opus-5"));
         assert!(defaults.is_favorite(HarnessId::Codex, "gpt-5.2-codex"));
     }
 
@@ -221,6 +217,6 @@ mod tests {
             defaults.model_for(HarnessId::Codex).map(|m| &*m.id),
             Some("m2")
         );
-        assert!(defaults.model_for(HarnessId::ClaudeCode).is_none());
+        assert!(defaults.model_for(HarnessId::Raven).is_none());
     }
 }

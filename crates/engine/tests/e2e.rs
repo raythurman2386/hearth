@@ -1682,15 +1682,15 @@ async fn attachment_upload_then_run_threads_refs_and_paths() {
 }
 
 /// Real-CLI proof of the image pipeline: upload a tiny solid-red PNG through
-/// the chunked RPC path, run claude (haiku) with the staged path on
+/// the chunked RPC path, run Codex with the staged path on
 /// `attachments` + the refs in the prompt, and check the reply names the
 /// color — it can only know it by SEEING the inline image block (the sandbox
 /// prompt forbids opening the file). Ignored by default: needs an installed,
-/// authenticated `claude` CLI and spends real tokens.
+/// authenticated `codex` CLI and spends real tokens.
 /// Run with: `cargo test -p hearth-engine --test e2e -- --ignored`
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires installed+authenticated claude CLI; spends tokens"]
-async fn real_claude_sees_uploaded_image_inline() {
+#[ignore = "requires installed+authenticated codex CLI; spends tokens"]
+async fn real_codex_sees_uploaded_image_inline() {
     use base64::Engine as _;
     let b64 = base64::engine::general_purpose::STANDARD;
     let tmp = tempfile::tempdir().unwrap();
@@ -1701,7 +1701,7 @@ async fn real_claude_sees_uploaded_image_inline() {
     let core = EngineCore::assemble(
         &dir,
         Arc::new(hearth_engine::default_registry()),
-        HarnessId::ClaudeCode,
+        HarnessId::Codex,
         None,
     )
     .expect("engine core assembles");

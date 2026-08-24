@@ -20,6 +20,8 @@ pub enum SyncError {
     Loro(String),
     #[error("auth: {0}")]
     Auth(String),
+    #[error("tailnet: {0}")]
+    Tailnet(String),
     #[error("client is shut down")]
     Closed,
 }

@@ -1,7 +1,6 @@
 //! RegistryClient integration tests against the in-process mock server
 //! (`registry::mock_server`), which runs the SAME merge fn as the client and
-//! speaks the DO's JSON WS protocol. TS↔Rust interop is proven separately by
-//! the `--ignored` live-edge test (registry_edge.rs) and scripts/e2e-smoke.sh.
+//! speaks the JSON WS protocol. The real hub mux is covered by `tests/hub.rs`.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

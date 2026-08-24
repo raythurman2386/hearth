@@ -245,6 +245,18 @@ impl EngineHandle {
             default_harness: config.default_harness,
             org_id: config.org_id,
             workos_client_id: config.workos_client_id,
+            tailnet_host: std::env::var("HEARTH_TAILNET_HOST")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            tailnet_port: std::env::var("HEARTH_TAILNET_PORT")
+                .ok()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(hearth_engine::DEFAULT_TAILNET_PORT),
+            tailnet_hub: matches!(
+                std::env::var("HEARTH_TAILNET_HUB").as_deref(),
+                Ok("1") | Ok("true") | Ok("yes")
+            ),
         };
 
         // Own the data dir before opening anything under it or binding IPC —
@@ -2932,7 +2944,7 @@ mod tests {
         let mut state = AppState::new();
         state.apply_chats(vec![chat("a", 0, None), chat("b", 1, None)]);
         let config = hearth_proto::ChatConfig {
-            harness: HarnessId::ClaudeCode,
+            harness: HarnessId::Raven,
             model: Some("claude-fable-5".into()),
             mode: None,
             reasoning: Some(hearth_proto::ReasoningLevel::XHigh),
@@ -2957,7 +2969,7 @@ mod tests {
         state.apply_chat_config(
             "missing",
             hearth_proto::ChatConfig {
-                harness: HarnessId::ClaudeCode,
+                harness: HarnessId::Raven,
                 model: None,
                 mode: None,
                 reasoning: None,

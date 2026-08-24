@@ -187,6 +187,32 @@ impl TextConnector for WsTextConnector {
     }
 }
 
+/// Tailnet connector — dials a peer's tailnet address directly (no edge/DO,
+/// no `?token=`). The room protocol is unchanged; only the transport differs.
+struct TailnetTextConnector {
+    hostname: String,
+    port: u16,
+    path: String,
+}
+
+impl TextConnector for TailnetTextConnector {
+    fn connect(&self) -> BoxFuture<'static, Result<TextPipe, SyncError>> {
+        let hostname = self.hostname.clone();
+        let path = self.path.clone();
+        let port = self.port;
+        Box::pin(async move {
+            let ws = crate::tailnet::connect_peer(&hostname, port, &path).await?;
+            let (out_tx, out_rx) = mpsc::channel(64);
+            let (in_tx, in_rx) = mpsc::channel(64);
+            tokio::spawn(pump(ws, out_rx, in_tx));
+            Ok(TextPipe {
+                tx: out_tx,
+                rx: in_rx,
+            })
+        })
+    }
+}
+
 /// Shuttle text frames between the WebSocket and the actor's channels, plus
 /// the ping keepalive and the transport silence lease.
 async fn pump(
@@ -352,6 +378,25 @@ impl RegistryClient {
     ) -> Result<Self, SyncError> {
         let connector = Arc::new(WsTextConnector { url: provider });
         Self::connect_with_transport(connector, doc, device_id, tuning, None).await
+    }
+
+    /// Connect over the tailnet: dial `hostname:port` directly (no edge/DO, no
+    /// `?token=`). `path` is the room path (e.g. `/registry/{org}/ws`). The
+    /// room protocol is unchanged; only the transport differs.
+    pub async fn connect_via_tailnet(
+        hostname: &str,
+        port: u16,
+        path: &str,
+        doc: Arc<Mutex<RegistryDoc>>,
+        device_id: &str,
+    ) -> Result<Self, SyncError> {
+        let connector = Arc::new(TailnetTextConnector {
+            hostname: hostname.to_string(),
+            port,
+            path: path.to_string(),
+        });
+        Self::connect_with_transport(connector, doc, device_id, RegistryTuning::default(), None)
+            .await
     }
 
     /// Connect with a plain-HTTPS pull/push seam alongside the socket (the

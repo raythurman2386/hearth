@@ -82,6 +82,22 @@ pub async fn login(config: EngineConfig) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.data_dir)?;
     let _lock = engine_lock(&config, "sign in")?;
     let auth = Engine::build_auth(&config).await;
+    if config.tailnet_enabled() {
+        println!(
+            "Auth is Tailscale. Devices on the tailnet are already trusted; there is nothing to sign in to."
+        );
+        println!(
+            "Hub: {} port {}{}",
+            config.tailnet_host.as_deref().unwrap_or("-"),
+            config.tailnet_port,
+            if config.tailnet_hub {
+                " (this device hosts rooms)"
+            } else {
+                ""
+            }
+        );
+        return Ok(());
+    }
     if !auth.workos_enabled() {
         println!("Auth is in dev mode (no WorkOS client id) — there is nothing to sign in to.");
         return Ok(());
@@ -126,6 +142,12 @@ pub async fn logout(config: EngineConfig) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.data_dir)?;
     let _lock = engine_lock(&config, "sign out")?;
     let auth = Engine::build_auth(&config).await;
+    if config.tailnet_enabled() {
+        println!(
+            "Auth is Tailscale — there is no session to clear. Leave the tailnet to revoke access."
+        );
+        return Ok(());
+    }
     if !auth.workos_enabled() {
         // Dev mode has no live session, but clear any stale session.json from a
         // previous WorkOS-mode run so the next real run starts signed out.
@@ -233,6 +255,9 @@ mod tests {
             default_harness: HarnessId::Mock,
             org_id: None,
             workos_client_id: Some("client_test".into()),
+            tailnet_host: None,
+            tailnet_port: hearth_engine::DEFAULT_TAILNET_PORT,
+            tailnet_hub: false,
         }
     }
 

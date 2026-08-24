@@ -632,11 +632,10 @@ pub(crate) struct RawChat {
     #[serde(default)]
     checkout_id: Option<String>,
     /// LENIENT: a config this build can't decode (a harness/reasoning/sandbox
-    /// id from a NEWER peer — field incident: pre-v0.2.10 laptops dropped
-    /// every `"opencode"` chat row wholesale, so new sessions silently never
-    /// appeared in the sidebar) degrades to `None` instead of failing the
-    /// row. The chat stays visible and selectable with generic defaults;
-    /// up-to-date devices still see the real config.
+    /// id from a NEWER peer) degrades to `None` instead of failing the row.
+    /// Retired harness ids (`claude-code`, `cursor`, …) deserialize as Raven
+    /// so old chats stay runnable. Truly unknown future ids still cost only
+    /// the config, not the row.
     #[serde(default, deserialize_with = "lenient_chat_config")]
     config: Option<ChatConfig>,
     #[serde(default)]
@@ -816,7 +815,7 @@ mod tests {
             serde_json::Value::String("1m".into()),
         );
         let config = ChatConfig {
-            harness: HarnessId::ClaudeCode,
+            harness: HarnessId::Raven,
             model: Some("claude-fable-5".into()),
             mode: None,
             reasoning: Some(hearth_proto::ReasoningLevel::XHigh),

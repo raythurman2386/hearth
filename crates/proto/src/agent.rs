@@ -2,26 +2,42 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HarnessId {
-    ClaudeCode,
     Codex,
-    Cursor,
     /// xAI's Grok Build agent, driven over ACP (`grok agent stdio`).
     Grok,
-    /// Nous Research's Hermes Agent, driven over ACP (`hermes acp`).
-    Hermes,
-    /// Raven (`~/Development/raven`), driven over ACP (`raven --acp`).
+    /// Raven, driven over ACP (`raven --acp`).
     Raven,
-    /// The pi coding agent (pi.dev), driven over ACP via the `pi-acp` adapter.
-    Pi,
-    /// SST's opencode agent, driven natively over its own HTTP/SSE server
-    /// protocol (`opencode serve` — the same wire the opencode desktop app
-    /// speaks).
-    Opencode,
     /// Test harness; never shown in production pickers.
     Mock,
+}
+
+impl HarnessId {
+    /// Wire id. Retired names (`claude-code`, `cursor`, `hermes`, `pi`,
+    /// `opencode`) map to [`Self::Raven`] so old chat rows stay readable.
+    /// Truly unknown ids return `None` so a future peer's config can degrade
+    /// without dropping the chat row.
+    pub fn from_wire(raw: &str) -> Option<Self> {
+        match raw {
+            "codex" => Some(Self::Codex),
+            "grok" => Some(Self::Grok),
+            "raven" => Some(Self::Raven),
+            "mock" => Some(Self::Mock),
+            "claude-code" | "cursor" | "hermes" | "pi" | "opencode" => Some(Self::Raven),
+            _ => None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for HarnessId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Self::from_wire(&raw).ok_or_else(|| {
+            serde::de::Error::unknown_variant(&raw, &["codex", "grok", "raven", "mock"])
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -574,8 +590,17 @@ mod tests {
     #[test]
     fn harness_id_uses_kebab_case() {
         assert_eq!(
-            serde_json::to_string(&HarnessId::ClaudeCode).unwrap(),
-            "\"claude-code\""
+            serde_json::to_string(&HarnessId::Raven).unwrap(),
+            "\"raven\""
         );
+        assert_eq!(
+            serde_json::from_str::<HarnessId>("\"claude-code\"").unwrap(),
+            HarnessId::Raven
+        );
+        assert_eq!(
+            serde_json::from_str::<HarnessId>("\"codex\"").unwrap(),
+            HarnessId::Codex
+        );
+        assert!(serde_json::from_str::<HarnessId>("\"harness-from-the-future\"").is_err());
     }
 }

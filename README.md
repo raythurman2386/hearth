@@ -1,6 +1,6 @@
 # Hearth
 
-A **local-first** control surface for coding agents (Raven, Claude Code, Codex, Cursor, Grok, Hermes, Pi, OpenCode) on Linux, macOS, and Windows.
+A **local-first** control surface for coding agents (Raven, Codex, Grok) on Linux, macOS, and Windows.
 
 Hearth is a fork of [**Zeron**](https://github.com/zeronsh/comet) — a native rewrite (Rust + [gpui](https://github.com/zed-industries/zed)) of a multi-device agent controller. This fork keeps the part that matters on a single machine: a fast, private harness runner you drive locally. No hosted account, no cloud sync, and no telemetry is required for normal use.
 
@@ -8,7 +8,7 @@ Hearth is a fork of [**Zeron**](https://github.com/zeronsh/comet) — a native r
 
 - **Local-first by default** — a bare `hearth` run does not dial the edge.
 - **One binary** — headed UI by default; `hearth headless` for an engine daemon the UI can attach to.
-- **Harness-agnostic** — ACP agents over stdio plus native drivers (Claude Code, Codex, Cursor, OpenCode). **Raven** is registered first among real harnesses and is the usual new-chat fallback when it is installed.
+- **Harness-agnostic** — ACP agents over stdio (Raven, Grok) plus a native Codex driver. **Raven** is registered first among real harnesses and is the usual new-chat fallback when it is installed.
 - **Ravenwood themed** — UI colors follow the [Ravenwood](https://github.com/raythurman2386/ravenwood-vscode) palette.
 - **Workspace-aware** — spaces (device + folder), optional git worktrees, diffs, session transcripts, steering, and a terminal pane.
 
@@ -78,7 +78,9 @@ Details: [docs/usage.md](docs/usage.md), [docs/harnesses.md](docs/harnesses.md).
 
 ## Sync
 
-Sync is **off** by default. Upstream multi-device sync (Loro CRDT rooms, WorkOS auth, edge workers) remains in the tree for self-hosters. To opt in, set `HEARTH_WORKOS_CLIENT_ID` and/or `HEARTH_EDGE_TOKEN` (see [docs/configuration.md](docs/configuration.md)). A bare install never dials out for sync.
+Sync is **off** by default. This fork syncs over **Tailscale** instead of WorkOS + Cloudflare: the tailnet is the trust boundary, and an always-on host (typically minis) serves the chat2/registry rooms.
+
+To opt in, set `HEARTH_TAILNET_HOST` to the hub's MagicDNS name (see [docs/configuration.md](docs/configuration.md)). A bare install never dials out.
 
 ## Credit
 

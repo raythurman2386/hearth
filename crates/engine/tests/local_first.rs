@@ -28,6 +28,9 @@ fn config(
         default_harness: HarnessId::Mock,
         org_id: None,
         workos_client_id: workos_client_id.map(str::to_string),
+        tailnet_host: None,
+        tailnet_port: hearth_engine::DEFAULT_TAILNET_PORT,
+        tailnet_hub: false,
     }
 }
 
@@ -224,7 +227,11 @@ async fn serve_daemon_edge(
                     "rows": [],
                     "presence": {}
                 });
-                if sink.send(WsMessage::Text(state.to_string().into())).await.is_err() {
+                if sink
+                    .send(WsMessage::Text(state.to_string().into()))
+                    .await
+                    .is_err()
+                {
                     return;
                 }
             }

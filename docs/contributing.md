@@ -35,14 +35,13 @@ apps/hearth/          # Binary: CLI + headed/headless entry
 crates/
   proto/              # Shared wire types (HarnessId, RunRequest, AgentEvent, …)
   doc/                # Loro-backed session/workspace documents
-  harness/            # Agent adapters (ACP, Claude, Codex, Cursor, OpenCode, mock)
+  harness/            # Agent adapters (ACP Raven/Grok, native Codex, mock)
   engine/             # Sessions, registry, docs host, repos, terminals, uploads
   rpc/                # Localhost JSON-RPC / WebSocket between UI and engine
-  sync/               # Optional edge/registry clients (off by default)
+  sync/               # Optional tailnet room clients + hub (off by default)
   ui/                 # gpui shell, composer, pickers, transcript, settings
   syntax/             # Highlighting helpers
   update/             # Self-update helpers
-edge/                 # Cloudflare Worker + Durable Objects (TypeScript; optional sync)
 docs/                 # Product + research docs
 scripts/              # Packaging and smoke helpers
 ```
@@ -59,7 +58,7 @@ scripts/              # Packaging and smoke helpers
 1. Add or extend a type under `crates/harness` implementing `Harness`.
 2. Register it in `crates/engine/src/registry.rs` (lazy descriptor + install probe + factory). Keep descriptor fields aligned with the live harness (tests assert stability for several adapters).
 3. Wire UI affordances if needed (`crates/ui` icons, catalogs, Settings → Agents).
-4. If the engine default env should accept a new id, extend `harness_from_env` in `apps/hearth/src/main.rs` (today `opencode` is catalogued but not parsed from `HEARTH_HARNESS`).
+4. If the engine default env should accept a new id, extend `harness_from_env` in `apps/hearth/src/main.rs` (today: `raven`, `codex`, `grok`, `mock`).
 5. Add harness tests under `crates/harness/tests/` with fixtures where possible (see [testing](testing.md)).
 
 ## ACP session modes

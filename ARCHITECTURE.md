@@ -1,14 +1,13 @@
 # hearth — Architecture
 
-User and contributor guides live under [`docs/`](docs/README.md) (usage, configuration, harnesses, troubleshooting). This file is the **system architecture** note for the engine/UI/optional-edge topology. Sync paths described below are **opt-in** in this fork; a bare install stays local-only.
+User and contributor guides live under [`docs/`](docs/README.md) (usage, configuration, harnesses, troubleshooting). This file is the **system architecture** note for the engine/UI/optional-tailnet topology. Sync paths described below are **opt-in** in this fork; a bare install stays local-only.
 
 A ground-up native rewrite (Zeron/comet lineage) of a multi-device controller for coding agents
 — in Rust, with a gpui UI. Fresh app; no backwards compatibility required.
 
 **Pillars (from the goal):**
-- Optional sync uses Loro CRDT docs (loro-mirror model) through Cloudflare Durable Objects; the same docs persist locally when sync is disabled.
-- Durable Objects stay **TypeScript** (decision + evidence: `docs/research/durable-objects-language.md`).
-  Everything device-side is Rust.
+- Optional sync uses Loro CRDT docs (loro-mirror model) over the tailnet; the same docs persist locally when sync is disabled.
+- Room servers (chat2 log + registry) run in Rust on the always-on hub. Everything device-side is Rust.
 - Feature parity with hearth **except token-usage display** (poor fit for CRDTs; excluded).
 - Frontend is **gpui** (pinned Zed rev). Virtualization + markdown techniques ported from
   **mugen + pretext** (`docs/research/mugen-pretext.md`).
@@ -18,20 +17,19 @@ A ground-up native rewrite (Zeron/comet lineage) of a multi-device controller fo
 ## 1. Topology (unchanged shape, new materials)
 
 ```
-gpui UI ─ in-proc/localhost RPC ─ engine A ══ DeviceRoom DO relay ══ engine B ─ RPC ─ gpui UI
-                    │       optional edge Worker: auth, rooms, R2        │
-                    └── optional chat2 sync ──  ChatRoom DO (per chat) ──┘
-                                          └─ Workspace registry room ────┘
+gpui UI ─ localhost RPC ─ engine A ══ WS over tailnet ══ engine B (hub) ─ RPC ─ gpui UI
+                                │  HEARTH_TAILNET_HOST:PORT
+                                └── chat2 + registry rooms on the hub
+                                └── /rpc on every device (direct peer RPC)
 ```
 
 - **Engine = backend** (was `@hearth/backend`): runs agents, owns auth, terminals, repos/worktrees,
   diff sync, doc hosting. Pure Rust daemon, fully functional headless.
 - **UI = viewport** (was Electron): gpui app rendering engine state. Talks the same typed RPC whether the engine is in-process or a separate daemon. Organized around **spaces** — (device, folder) pairs, local or synced according to the active profile. The sidebar is the data: an attention-sorted Sessions list, filtered by a searchable spaces dropdown ("All spaces" included) that also hosts space management. The horizontal tabs are a **device-local viewport** onto that list (`ui-settings.json` `openTabs`, cross-space): closing a tab is local-only — archiving is an explicit sidebar action — and a sidebar click (re)opens a session as a tab. The new-session canvas carries a space picker (defaulting to the sidebar filter, else the last selected space); new sessions are minted onto the picked space's device via relay-forwardable RPCs.
-- **Edge (TypeScript, ported from hearth `apps/edge`)**: Worker + ChatRoom DO (per chat, the
-  chat2 row protocol; the legacy SessionRoom DO remains deployed only for pre-cutover clients —
-  no current client dials it) + DeviceRoom DO (per device) + R2 attachments + WorkOS JWKS auth.
-  Absorbs the old `apps/server` responsibilities (WorkOS code exchange/refresh, orgs) so
-  **Postgres, the Hono server, and the WebRTC/signaling stack are all gone**.
+- **Tailnet hub (Rust, `crates/sync`)**: the always-on host binds one TCP port and serves chat2
+  rooms, registry rooms, optional `/releases/*`, and (on every device) direct `/rpc`. Identity is
+  `tailscale whois`. There is no Cloudflare Worker, Durable Objects package, or WorkOS login on
+  this path.
 
 ### Headed / headless
 Single binary `hearth`:
@@ -41,25 +39,26 @@ Single binary `hearth`:
   port**. The embedded engine is not private: any other viewport can attach to the running app
   without it first being restarted as a daemon. Binding is best-effort — if the port is taken the
   window still opens, having lost only the ability to host peers.
-- `hearth headless` — engine only. A clean installation immediately serves its local profile over localhost IPC; when a saved account selects the synced profile at startup and a bearer is available, it also hosts its DeviceRoom for remote control. A VPS can run this while a laptop's UI drives it.
+- `hearth headless` — engine only. A clean installation serves its local profile over localhost IPC.
+  With `HEARTH_TAILNET_HOST` set it also dials the hub (and may host rooms when this machine is the
+  hub). A mini PC can run the hub while a laptop UI drives remote spaces over the tailnet.
 
 ### Local-first workspace profiles
 
 Authentication and workspace selection are deliberately separate state machines:
 
-- `AuthState` is live credential state: `SignedOut`, `NeedsOrganization`, or `SignedIn`. It may change after login, refresh, revocation, or logout.
+- `AuthState` is live credential state: `SignedOut`, `NeedsOrganization`, or `SignedIn`.
 - `WorkspaceScope` is the immutable storage and transport boundary captured once at engine startup: `Local`, `Synced`, or explicit `Development`.
 
-The engine never re-resolves an open store because `AuthState` changed. This prevents a sign-in, token refresh, or revocation from silently swapping databases or attaching online transports to a runtime that started local-only.
+The engine never re-resolves an open store because `AuthState` changed. This prevents a sign-in or revocation from silently swapping databases or attaching online transports to a runtime that started local-only.
 
 | Startup condition | `WorkspaceScope` | Online transports |
 | --- | --- | --- |
-| WorkOS enabled, no parseable saved `session.json` | `Local` | Disabled |
-| Parseable saved WorkOS session | `Synced` | Enabled when a bearer is available; organization onboarding completes before opening the store when needed |
-| WorkOS disabled without a dev bearer | `Development` | Disabled |
-| Explicit non-empty dev bearer | `Development` | Enabled |
+| No `HEARTH_TAILNET_HOST` (default) | `Local` | Disabled |
+| `HEARTH_TAILNET_HOST` set | `Development` (dummy bearer) | Enabled — dials the hub; hub bind when this host matches |
+| Legacy WorkOS session path (tests / unused product path) | `Synced` | Historical; not used when the tailnet host is set |
 
-`hearth login` and `hearth logout` operate on `session.json` while the engine is stopped. Login selects `Synced` for the next start; logout selects `Local` for the next start. The UI may update live authentication status, but the active `WorkspaceScope` still changes only after restart.
+On the tailnet path, `hearth login` / `logout` are no-ops. Local-only installs stay on the `Local` profile until restarted with a tailnet host.
 
 The resolved profile selects the session snapshots, registry snapshot, run journals, and attachment cache that may contain workspace data:
 
@@ -133,23 +132,21 @@ hearth/
     sync/         hearth-sync     # loro room client (join/VV backfill/fragments/backoff),
                                  # ephemeral presence, DocsStore (SQLite snapshots +
                                  # processed-command ledger)
-    harness/      hearth-harness  # Harness trait + claude-code (stream-json subprocess),
-                                 # codex (app-server JSON-RPC), mock; steering mailbox,
+    harness/      hearth-harness  # Harness trait + ACP (Raven, Grok),
+                                 # Codex (app-server JSON-RPC), mock; steering mailbox,
                                  # requestInput, models/reasoning/options catalogs
     engine/       hearth-engine   # sessions engine (pub/sub, run journal, recovery, stall
                                  # watchdog), doc host + command executor, repos/worktrees,
                                  # checkout-diff sync, terminals (portable-pty), uploads,
-                                 # agent accounts (cred swap), auth (WorkOS via edge),
-                                 # device-room host/peers, identity
+                                 # agent accounts (Codex cred swap), Tailscale identity,
+                                 # device peer links
     rpc/          hearth-rpc      # UiRpc/ControlRpc: typed req/resp/stream over WS (tokio-
-                                 # tungstenite) + in-memory transport; device-room virtual
-                                 # sockets ({s,k,to,from} frames)
+                                 # tungstenite) + in-memory transport; direct tailnet /rpc
+                                 # peer links
     ui/           hearth-ui       # gpui app: shell, sidebar, conversation, composer,
                                  # terminal view, diff pane, settings, animation kit
   apps/
     hearth/                       # the binary (headed default, `headless` subcommand)
-  edge/                          # TypeScript Worker + DOs (ported from hearth/apps/edge,
-                                 # + auth-exchange routes absorbed from apps/server)
   docs/                          # this file + research reports
 ```
 
@@ -215,72 +212,59 @@ Direct ports of hearth behaviors (spec: feature-inventory §3):
   diff sidecar, presence); warm-open recent chats (14d/cap 30); nudge-driven cold open; SQLite
   snapshot store.
 - **Harness** (research pending — `docs/research/harness.md`): trait mirroring hearth's
-  `HarnessShape`; Claude Code via `claude` CLI stream-json in/out (control protocol for
-  permissions/AskUserQuestion→requestInput, resume, steering); Codex via app-server JSON-RPC or
-  `codex exec --json`; model/reasoning/option catalogs ported from `packages/harness`.
+  `HarnessShape`; Raven and Grok over ACP (`raven --acp`, `grok agent stdio`); Codex via
+  app-server JSON-RPC; model/reasoning/option catalogs from each driver.
 - **Repos/diffs**: git2 or `git` subprocess (subprocess — matches hearth, avoids libgit2 edge
   cases); worktrees under `~/.hearth/worktrees`; fs watchers (`notify`) + 2min repair; diff
   capture (patch + numstat + untracked, 3MiB cap, sha256) → workspace registry summary + DO diff
   sidecar.
-- **Agent accounts**: credential-slot swap (macOS Keychain via `security-framework`, files
-  elsewhere), plan labels, usage probes, paste-code/browser-poll OAuth flows.
-- **Auth**: WorkOS through edge routes (`/auth/exchange`, `/auth/refresh`, orgs); loopback
-  callback server headed, paste-code headless; dev mode (no key ⇒ bearer = configured user id).
+- **Agent accounts**: Codex credential-slot swap (`~/.codex/auth.json`), plan labels,
+  usage probes, browser-poll `codex login` flows.
+- **Auth**: Tailscale. The tailnet is the trust boundary; inbound peers are identified with
+  `tailscale whois`. No WorkOS, no JWKS, no `session.json`.
 
-## 6. Edge plan (TypeScript, `edge/`)
+## 6. Tailnet hub (Rust, `crates/sync`)
 
-Port `hearth/apps/edge` nearly verbatim (it is already Loro-native and smoke-tested: session room
-w/ hibernation + two-level compaction + daily alarm backups, device room byte relay + nudges +
-sidecar slots, R2 attachments, JWKS auth). Additions:
-1. Private per-user registry rooms (`/registry/{orgId}/ws` → `reg1/{orgId}/{userId}`) with authenticated row sync and ephemeral device presence.
-2. `/auth/*` routes absorbed from `apps/server` (WorkOS API key in Worker secret).
-3. Drop `/seed` migration path and legacy sync anything (fresh app).
-Hibernation hygiene: no idle timers (flush timer only while dirty), auto-response ping/pong —
-per `docs/research/durable-objects-language.md`.
+The always-on host (`HEARTH_TAILNET_HUB=1`, typically minis) binds one TCP port and serves:
+
+1. Chat2 rooms (`/chat2/{id}/ws` plus HTTP checkpoint/rows) — the dumb log relay, no Loro in the server.
+2. Registry rooms (`/registry/{org}/ws`) — current-state LWW rows, same merge as the client.
+3. Direct RPC (`/rpc`) on every device so `targetDeviceId` dials MagicDNS instead of a DeviceRoom DO.
+4. Static releases (`GET /releases/*` from `{data_dir}/releases/`).
+
+Loopback is allowed without whois (tests). Other peers must resolve through `tailscale whois`.
 
 ## 7. Parity exclusions & deliberate changes
 
 - **Excluded**: token-usage display (profile heatmap, lifetime stats, per-message token columns,
   `WatchUsage`). Rate-limit meters on agent accounts are *kept* (separate concern; probed from
   CLIs, not CRDT-synced).
-- **Changed**: Postgres entity sync/server → workspace registry + edge; Electron/React/mugen → gpui with
-  ported techniques; Node harness SDKs → subprocess protocols; WebRTC → device-room relay (hearth
-  had already made this move); mobile app → out of scope for this repo.
-- **Kept verbatim**: session-doc schema shape + constants, command ledger rules, edge DO design,
-  render-parts privacy policy, UX behaviors and animation timings.
+- **Changed**: Postgres entity sync/server → workspace registry; Electron/React/mugen → gpui with
+  ported techniques; Node harness SDKs → subprocess protocols; WebRTC/DeviceRoom DO → direct
+  tailnet `/rpc`; mobile app → out of scope for this repo.
+- **Kept verbatim**: session-doc schema shape + constants, command ledger rules, chat2/registry
+  wire frames, render-parts privacy policy, UX behaviors and animation timings.
+- **Harness cut**: Claude Code, Cursor, Hermes, Pi, and OpenCode removed. Remaining: Raven (ACP,
+  default), Codex (native), Grok (ACP), Mock (tests). Retired wire ids deserialize as Raven.
 
 ## 8. Milestones
 
-Status legend: ✅ shipped · 🟡 shipped with named gaps (see `docs/PARITY.md`).
+Status legend: ✅ shipped · 🟡 shipped with named gaps (see `docs/PARITY.md` for upstream lineage).
 
-- ✅ **M0 Scaffold** — workspace builds; `proto`/`doc` crates with ledger + parts + continuation
-  unit tests; gpui hello-window runs.
-- ✅ **M1 Doc + sync core** — `hearth-doc` mirror over loro 1.13; room client syncs with the edge
-  running under `wrangler dev`; Rust⇄edge⇄Rust convergence test (M1 exit: two Rust peers converge
-  through a real SessionRoom DO, tail endpoint serves).
-- ✅ **M2 Engine core** — Claude harness end-to-end headless: `hearth headless` + dev auth runs a
-  turn, journal + doc writes, recovery test.
-- ✅ **M3 UI core** — shell (sidebar/panes/header), transcript (virtualized, markdown, streaming,
-  stick-to-bottom), composer (send/steer/stop, question panel); local chat fully usable headed.
-- ✅ **M4 Multi-device** — device-room host/client virtual sockets, remote device control, workspace
-  registry sync, WorkOS auth + org gate, presence. Proven live by `scripts/e2e-smoke.sh`:
-  two headless engines against a real edge — B queues a run into the chat doc, the durable
-  nudge wakes host A, A executes (mock harness), transcript + session status sync back to B.
+- ✅ **M0–M3** — scaffold, doc/sync core, engine core, gpui UI (sessions, composer, transcript).
+- ✅ **M4 Multi-device (this fork)** — Tailscale hub-and-spoke: chat2 + registry rooms on the hub,
+  direct `/rpc` on every device, `tailscale whois` identity. Proven by `scripts/e2e-smoke.sh`
+  (loopback hub) and `crates/sync/tests/hub.rs`.
 - 🟡 **M5 Full surface** — terminals, diff pane, repo/branch/folder pickers + worktrees,
-  agent accounts UI, settings (devices/shortcuts/archived), Codex harness. Gaps: composer
-  attachment UI (engine upload RPCs exist), Cursor harness.
-- 🟡 **M6 Polish** — wire reconciliation (proto AuthState on the wire, `LocalDevice`),
-  two-device e2e smoke, keyboard map, clippy/fmt sweep, Linux packaging
+  Codex agent-accounts UI, settings. Gaps: composer attachment UI (engine upload RPCs exist).
+- 🟡 **M6 Polish** — wire reconciliation, keyboard map, clippy/fmt sweep, Linux packaging
   (`scripts/package-linux.sh` + release profile), macOS bundling config (`dist/macos/`,
   not executed — needs a Mac). Gaps: prefers-reduced-motion, engine hardening
-  (instance lock, watchdogs), edge production deploy.
+  (instance lock, watchdogs).
 
 ## 9. Open questions (tracked, non-blocking)
 
-1. loro-protocol Rust client ⇄ TS edge interop — verify at M1; fallback is a ~300-line hand-rolled
-   client (the frame protocol is small and we control both ends).
-2. `lorosurgeon` fit for the mirror write path vs hand-rolled reconcile.
-3. Cursor harness (hearth has it; CLI surface for Rust TBD) — parity item, scheduled after Codex.
-4. Text shaping performance for analytic row heights: gpui measures shaped text natively (Rust ⇒
+1. `lorosurgeon` fit for the mirror write path vs hand-rolled reconcile.
+2. Text shaping performance for analytic row heights: gpui measures shaped text natively (Rust ⇒
    cheap), so we start with gpui `list()` measurement + memoization rather than porting pretext's
    full analytic kernel; revisit only if cold-open of huge transcripts measures slow.

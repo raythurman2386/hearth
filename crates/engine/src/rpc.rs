@@ -1912,7 +1912,7 @@ mod tests {
         }))
         .expect("ui param shape");
         assert_eq!(p.account_id, "acct-1");
-        assert_eq!(p.harness, HarnessId::ClaudeCode);
+        assert_eq!(p.harness, HarnessId::Raven);
     }
 
     #[test]

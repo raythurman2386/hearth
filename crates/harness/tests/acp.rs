@@ -534,7 +534,7 @@ async fn no_mode_means_no_set_mode_call() {
 async fn models_are_discovered_from_the_acp_session() {
     // ACP is the source of truth: the fixture advertises a model config
     // option, so the picker list comes from the wire, not the static catalog.
-    let harness = AcpHarness::hermes().with_executable(fixture_path());
+    let harness = AcpHarness::grok().with_executable(fixture_path());
     let models = harness.models().await.expect("discovery");
     let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
     assert_eq!(ids, vec!["grok-4-fast", "grok-4.5"], "{models:?}");
@@ -573,7 +573,7 @@ async fn models_enrich_from_the_static_catalog_on_id_match() {
 
 #[tokio::test]
 async fn models_fall_back_to_the_static_catalog_when_the_probe_fails() {
-    let harness = AcpHarness::pi().with_executable("/nonexistent/never-a-pi-acp");
+    let harness = AcpHarness::raven().with_executable("/nonexistent/never-a-raven");
     let models = harness.models().await.expect("static fallback");
     let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
     assert_eq!(ids, vec!["default"], "{models:?}");
@@ -608,33 +608,6 @@ async fn hung_handshake_errors_instead_of_spinning_forever() {
         "{error}"
     );
 }
-#[test]
-fn hermes_and_pi_descriptor_surfaces_match_registry_expectations() {
-    let hermes = AcpHarness::hermes();
-    assert_eq!(hermes.id(), HarnessId::Hermes);
-    assert_eq!(hermes.display_name(), "Hermes");
-    assert!(hermes.supports_steering());
-    assert_eq!(hermes.steering_mode(), SteeringMode::TurnBoundary);
-    assert!(hermes.reasoning_levels().is_empty());
-
-    let pi = AcpHarness::pi();
-    assert_eq!(pi.id(), HarnessId::Pi);
-    assert_eq!(pi.display_name(), "Pi");
-    assert!(pi.supports_steering());
-    assert_eq!(pi.steering_mode(), SteeringMode::TurnBoundary);
-    assert_eq!(
-        pi.reasoning_levels(),
-        &[
-            hearth_proto::ReasoningLevel::Minimal,
-            hearth_proto::ReasoningLevel::Low,
-            hearth_proto::ReasoningLevel::Medium,
-            hearth_proto::ReasoningLevel::High,
-            hearth_proto::ReasoningLevel::XHigh,
-            hearth_proto::ReasoningLevel::Max,
-        ]
-    );
-}
-
 #[tokio::test]
 async fn prompt_complete_extension_settles_a_hung_prompt_response() {
     // The grok field hang: `_x.ai/session/prompt_complete` fires (echoing

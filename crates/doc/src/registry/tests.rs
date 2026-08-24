@@ -456,10 +456,11 @@ fn pre_epoch_snapshots_resync_in_full_once() {
 #[test]
 fn future_harness_chat_rows_stay_visible_without_their_config() {
     // Field incident: a pre-v0.2.10 client received rows whose
-    // config.harness said "opencode" — a variant it didn't have — and
-    // dropped the WHOLE row ("skipping malformed registry row"), so new
-    // sessions silently never appeared in that device's sidebar. Unknown
-    // config values must cost the config, not the row.
+    // config.harness was a variant it didn't have and dropped the WHOLE
+    // row ("skipping malformed registry row"), so new sessions silently
+    // never appeared in that device's sidebar. Unknown config values must
+    // cost the config, not the row. Retired ids (`claude-code`, …) map to
+    // Raven; this covers a truly future id.
     let mut ws = RegistryDoc::new("dev-a");
     ws.upsert_chat(&chat("chat-1", "dev-a")).unwrap();
     let fields: std::collections::BTreeMap<String, serde_json::Value> = [

@@ -30,13 +30,13 @@ Draft picks clear when you change the selected chat. If a chip still looks wrong
 1. Settings → Agents — the harness may be disabled (`harness-prefs.json` opt-out).
 2. CLI not installed / not on PATH. Desktop launches often see a thinner PATH than your terminal; Hearth snapshots the **login shell** environment unless `HEARTH_NO_LOGIN_SHELL` is set.
 3. Set an override: `RAVEN_EXECUTABLE=/path/to/raven`, `GROK_EXECUTABLE=…`, etc.
-4. For managed adapters (pi-acp, some npm ACP wrappers), ensure `npm` works; installs land under `~/.hearth/adapters` (or `HEARTH_ADAPTERS_DIR`).
+4. For managed adapters (the Grok npm wrapper), ensure `npm` works; installs land under `~/.hearth/adapters` (or `HEARTH_ADAPTERS_DIR`).
 
 ---
 
 ## Agent not found / spawn failed
 
-- Run the CLI yourself in a terminal (`raven --acp`, `claude`, `codex`, …) to confirm it starts.
+- Run the CLI yourself in a terminal (`raven --acp`, `codex`, `grok agent stdio`, …) to confirm it starts.
 - Check `~/.hearth/logs/` for the harness spawn error and stderr tail.
 - ACP agents must speak JSON-RPC over stdio; a binary that only opens a TUI will hang or fail the handshake.
 
@@ -58,7 +58,7 @@ no engine listening on 127.0.0.1:27654
 
 ## Sync / login confusion on a local-only install
 
-Bare Hearth **does not** dial the edge. If you never set `HEARTH_WORKOS_CLIENT_ID` or `HEARTH_EDGE_TOKEN`, `hearth login` is not required for normal local use. `hearth sync` will not show useful rooms without an opted-in, running synced engine.
+Bare Hearth **does not** dial the tailnet. If you never set `HEARTH_TAILNET_HOST`, `hearth login` is not required for normal local use. `hearth sync` will not show useful rooms without an opted-in, running engine that can reach the hub.
 
 ---
 

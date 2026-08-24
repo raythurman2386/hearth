@@ -6,6 +6,7 @@ use std::sync::Arc;
 use futures::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
+use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::handshake::server::{
     ErrorResponse, Request as HandshakeRequest, Response as HandshakeResponse,
@@ -181,6 +182,15 @@ async fn serve_ws_socket(stream: TcpStream, service: Arc<dyn RpcService>) {
             return;
         }
     };
+    serve_websocket(ws, service).await;
+}
+
+/// Serve an already-handshaken WebSocket as an RPC connection. Used by the
+/// tailnet hub (`/rpc`) as well as the localhost IPC listener.
+pub async fn serve_websocket<S>(ws: WebSocketStream<S>, service: Arc<dyn RpcService>)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let (mut sink, mut ws_stream) = ws.split();
     let (out_tx, mut out_rx) = mpsc::channel::<String>(256);
     let (in_tx, in_rx) = mpsc::channel::<String>(256);
@@ -201,13 +211,18 @@ async fn serve_ws_socket(stream: TcpStream, service: Arc<dyn RpcService>) {
                     }
                 },
                 message = ws_stream.next() => match message {
+                    Some(Ok(WsMessage::Text(text))) if text == "ping" => {
+                        if sink.send(WsMessage::Text("pong".into())).await.is_err() {
+                            break;
+                        }
+                    }
                     Some(Ok(WsMessage::Text(text))) => {
                         if in_tx.send(text.to_string()).await.is_err() {
                             break;
                         }
                     }
                     Some(Ok(WsMessage::Close(_))) | Some(Err(_)) | None => break,
-                    Some(Ok(_)) => {} // ping/pong/binary — ignored
+                    Some(Ok(_)) => {} // protocol ping/pong/binary — ignored
                 },
             }
         }

@@ -24,6 +24,9 @@ fn config(
         default_harness: HarnessId::Mock,
         org_id: None,
         workos_client_id: workos_client_id.map(str::to_string),
+        tailnet_host: None,
+        tailnet_port: hearth_engine::DEFAULT_TAILNET_PORT,
+        tailnet_hub: false,
     }
 }
 
