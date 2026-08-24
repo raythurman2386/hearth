@@ -62,6 +62,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
+      # The test binaries are huge (each links hundreds of crates); the
+      # ubuntu-latest runner's 14GB disk fills up mid-build otherwise.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
