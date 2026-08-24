@@ -367,7 +367,7 @@ async fn dispatch_http(
                 .await;
             };
             let seq = room.checkpoint_seq()?.to_string();
-            let extra = vec![("x-chat2-checkpoint-seq", seq.as_str())];
+            let extra = [("x-chat2-checkpoint-seq", seq.as_str())];
             if let Some(range) = req.headers.get("range").and_then(|v| parse_range_start(v)) {
                 if range >= bytes.len() {
                     let cr = format!("bytes */{}", bytes.len());

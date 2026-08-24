@@ -168,6 +168,9 @@ struct WhoisNode {
     name: String,
     #[serde(rename = "User", default)]
     user: u64,
+    /// `whois --json` emits CIDR-form (`100.64.0.2/32`), while `status --json`
+    /// uses bare IPs (`100.64.0.2`). Do not compare these verbatim against a
+    /// peer's address — strip any `/len` suffix first.
     #[serde(rename = "TailscaleIPs", alias = "Addresses", default)]
     tailscale_ips: Vec<String>,
 }

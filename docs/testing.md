@@ -22,6 +22,10 @@ cargo test -p hearth-harness --lib
 cargo test -p hearth-engine --lib
 cargo test -p hearth-proto --lib
 
+# hearth-sync requires the mock-server feature for its registry tests
+# (`registry::mock_server` is cfg-gated); without it the test build fails.
+cargo test -p hearth-sync --features mock-server
+
 # Harness ACP fixture tests (fake-acp.sh)
 cargo test -p hearth-harness --test acp
 

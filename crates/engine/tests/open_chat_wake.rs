@@ -6,9 +6,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::stream::BoxStream;
-use futures::StreamExt;
 use async_trait::async_trait;
+use futures::StreamExt;
+use futures::stream::BoxStream;
 
 use hearth_doc::{MessageRole, MessageStatus, SessionCommandPayload};
 use hearth_engine::{EdgeConfig, EngineCore, HarnessId, HarnessRegistry};
@@ -81,15 +81,8 @@ fn assemble(dir: &std::path::Path, device_id: &str, hub: &str) -> EngineCore {
     std::fs::create_dir_all(dir).expect("create data dir");
     std::fs::write(dir.join("device-id"), device_id).expect("write device id");
     let edge = Some(EdgeConfig::with_static_token(hub, "tailnet").with_device(device_id));
-    EngineCore::assemble_with_identity(
-        dir,
-        registry(),
-        HarnessId::Mock,
-        edge,
-        "wake-org",
-        "alice",
-    )
-    .expect("engine assembles")
+    EngineCore::assemble_with_identity(dir, registry(), HarnessId::Mock, edge, "wake-org", "alice")
+        .expect("engine assembles")
 }
 
 fn complete_assistant_count(core: &EngineCore) -> usize {
