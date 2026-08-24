@@ -22,7 +22,10 @@
 //!
 //! Set `HEARTH_NO_LOGIN_SHELL=1` to disable the snapshot entirely.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
+#[cfg(unix)]
+use std::ffi::OsString;
+#[cfg(unix)]
 use std::sync::OnceLock;
 
 #[cfg(unix)]
