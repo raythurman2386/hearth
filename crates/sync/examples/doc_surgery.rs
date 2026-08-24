@@ -4,9 +4,9 @@
 //!   inspect-workspace <data_dir> <chat_id>
 //!   inspect-chat      <data_dir> <chat_id>
 //!   cut-chat          <data_dir> <chat_id> <from_index>
-use loro::{LoroDoc, ToJson};
 use hearth_doc::SessionDoc;
 use hearth_sync::DocsStore;
+use loro::{LoroDoc, ToJson};
 
 fn load_doc(store: &DocsStore, doc_id: &str) -> LoroDoc {
     let bytes = store

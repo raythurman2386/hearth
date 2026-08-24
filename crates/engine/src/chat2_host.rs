@@ -251,7 +251,6 @@ impl CheckpointFetcher for EdgeCheckpointFetcher {
     }
 }
 
-
 /// Plain-HTTPS chat pull/push (the airplane-wifi transport): GET/POST
 /// `/chat2/{id}/rows` with the same bearer auth the checkpoint fetcher uses.
 pub struct EdgeChatTransport {
@@ -304,7 +303,10 @@ impl hearth_sync::chat_client::ChatTransport for EdgeChatTransport {
                 .await
                 .map_err(|e| SyncError::WebSocket(e.to_string()))?;
             if !res.status().is_success() {
-                return Err(SyncError::Protocol(format!("chat pull http {}", res.status())));
+                return Err(SyncError::Protocol(format!(
+                    "chat pull http {}",
+                    res.status()
+                )));
             }
             let bytes = res
                 .bytes()
@@ -337,7 +339,10 @@ impl hearth_sync::chat_client::ChatTransport for EdgeChatTransport {
                 .await
                 .map_err(|e| SyncError::WebSocket(e.to_string()))?;
             if !res.status().is_success() {
-                return Err(SyncError::Protocol(format!("chat push http {}", res.status())));
+                return Err(SyncError::Protocol(format!(
+                    "chat push http {}",
+                    res.status()
+                )));
             }
             res.text()
                 .await
@@ -388,10 +393,7 @@ mod frontier_tests {
         );
         // A real, contained frontier still short-circuits the fetch — the
         // doc needs actual ops, or its own frontier is the vacuous-empty one.
-        doc.doc()
-            .get_map("meta")
-            .insert("k", "v")
-            .expect("insert");
+        doc.doc().get_map("meta").insert("k", "v").expect("insert");
         doc.doc().commit();
         let vv = doc.doc().oplog_vv().encode();
         assert!(sink.contains_frontier(&vv));

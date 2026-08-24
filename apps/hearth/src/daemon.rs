@@ -446,7 +446,8 @@ mod tests {
         assert!(plist.contains("<string>headless</string>"));
         assert!(plist.contains("<key>SuccessfulExit</key><false/>"));
         assert!(
-            plist.contains("<key>StandardOutPath</key><string>/Users/x/.hearth/daemon.log</string>")
+            plist
+                .contains("<key>StandardOutPath</key><string>/Users/x/.hearth/daemon.log</string>")
         );
     }
 }

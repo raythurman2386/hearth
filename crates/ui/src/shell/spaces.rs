@@ -1072,12 +1072,10 @@ impl Shell {
         };
         if rows.is_empty() {
             let text = flow.search.read(cx).text().to_string();
-            if text.starts_with('/') || text.starts_with('~') {
-                if let Some(target) =
-                    crate::pickers::typed_path_target(&text, flow.home.as_deref())
-                {
-                    self.add_space_descend(target, false, cx);
-                }
+            if (text.starts_with('/') || text.starts_with('~'))
+                && let Some(target) = crate::pickers::typed_path_target(&text, flow.home.as_deref())
+            {
+                self.add_space_descend(target, false, cx);
             }
             return;
         }
@@ -1651,12 +1649,9 @@ impl Shell {
                     (SharedString::from(d.name.clone()), mount, at_mount)
                 });
                 let folded = 1 + match (&drive_crumb, home.as_deref()) {
-                    (Some((_, mount, _)), _) => {
-                        mount.split('/').filter(|s| !s.is_empty()).count()
-                    }
+                    (Some((_, mount, _)), _) => mount.split('/').filter(|s| !s.is_empty()).count(),
                     (None, Some(h))
-                        if listing.path == h
-                            || listing.path.starts_with(&format!("{h}/")) =>
+                        if listing.path == h || listing.path.starts_with(&format!("{h}/")) =>
                     {
                         h.split('/').filter(|s| !s.is_empty()).count()
                     }
@@ -1907,26 +1902,28 @@ impl Shell {
         //    Locations (home + the picked device's mounted drives), an info
         //    line naming the browsed device. Rows are the tab recipe (h-28
         //    rounded-8 washes), vertical.
-        let location_rows: Vec<(LocationRow, SharedString, &'static str, Option<String>)> = device
-            .is_some()
-            .then(|| {
-                std::iter::once((
-                    LocationRow::Home,
-                    SharedString::from("Home"),
-                    icons::HOME,
-                    None,
-                ))
-                .chain(drives.iter().enumerate().map(|(ix, drive)| {
-                    (
-                        LocationRow::Drive(ix),
-                        SharedString::from(drive.name.clone()),
-                        icons::HARD_DRIVE,
-                        Some(drive.path.clone()),
-                    )
-                }))
-                .collect()
-            })
-            .unwrap_or_default();
+        let location_rows: Vec<(LocationRow, SharedString, &'static str, Option<String>)> =
+            if device.is_some() {
+                {
+                    std::iter::once((
+                        LocationRow::Home,
+                        SharedString::from("Home"),
+                        icons::HOME,
+                        None,
+                    ))
+                    .chain(drives.iter().enumerate().map(|(ix, drive)| {
+                        (
+                            LocationRow::Drive(ix),
+                            SharedString::from(drive.name.clone()),
+                            icons::HARD_DRIVE,
+                            Some(drive.path.clone()),
+                        )
+                    }))
+                    .collect()
+                }
+            } else {
+                Default::default()
+            };
         let rail = div()
             .id("add-space-rail")
             .w(px(196.0))

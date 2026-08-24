@@ -551,10 +551,16 @@ mod tests {
             Some("th-c".into())
         );
         assert_eq!(
-            notification_thread_id("turn/completed", &json!({"threadId": "th-1", "turn": {"id": "t"}})),
+            notification_thread_id(
+                "turn/completed",
+                &json!({"threadId": "th-1", "turn": {"id": "t"}})
+            ),
             Some("th-1".into())
         );
-        assert_eq!(notification_thread_id("error", &json!({"message": "x"})), None);
+        assert_eq!(
+            notification_thread_id("error", &json!({"message": "x"})),
+            None
+        );
     }
 
     #[test]

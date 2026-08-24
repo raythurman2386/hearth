@@ -14,13 +14,13 @@ use gpui::{
     canvas, div, point, px,
 };
 
-use crate::motion::{self, GRADIENT_SPIN, PULSE_STAGGER, SPLASH_OUT, HEARTH_PULSE};
+use crate::motion::{self, GRADIENT_SPIN, HEARTH_PULSE, PULSE_STAGGER, SPLASH_OUT};
 use crate::theme::Theme;
 
 // Shared with the terminal viewport (`hearth_proto::motion`) so both animate the
 // same loaders from the same numbers.
 pub use hearth_proto::motion::{
-    MARK_CELLS, MARK_SPREAD, MATRIX_SIDE, HEARTH_CELLS, mark_cell_stagger,
+    HEARTH_CELLS, MARK_CELLS, MARK_SPREAD, MATRIX_SIDE, mark_cell_stagger,
 };
 
 /// The animated hearth mark (hearth-loader.tsx `HearthLoader`): the full logo

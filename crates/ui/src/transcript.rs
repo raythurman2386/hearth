@@ -1143,8 +1143,9 @@ pub fn rows_for_entry(
 /// the smoothness measurement knob. Off by default; zero cost when off.
 fn frame_stats_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED
-        .get_or_init(|| std::env::var("HEARTH_FRAME_STATS").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *ENABLED.get_or_init(|| {
+        std::env::var("HEARTH_FRAME_STATS").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
 }
 
 const FRAME_STATS_WINDOW: usize = 240;
@@ -2810,7 +2811,7 @@ impl Transcript {
                     // The legal rest zone below the hold is the epsilon plus
                     // rounding; anything deeper is a transient-collision sink
                     // and rubber-bands back.
-                    err > 0.5 || err < -(OWN_SEND_SCROLL_SLACK_PX + 2.0)
+                    !(-(OWN_SEND_SCROLL_SLACK_PX + 2.0)..=0.5).contains(&err)
                 }
                 // Bounds vanish in the glued representation (dissolved
                 // above, so at most for this one frame) and through splice
@@ -2908,8 +2909,7 @@ impl Transcript {
             }
             self.own_turn_last_tick = None;
         } else if anchored
-            && err <= OWN_SEND_GLIDE_SNAP_PX
-            && err >= -(OWN_SEND_SCROLL_SLACK_PX + 2.0)
+            && (-(OWN_SEND_SCROLL_SLACK_PX + 2.0)..=OWN_SEND_GLIDE_SNAP_PX).contains(&err)
         {
             // At the hold — or resting inside the slack under it (a restick
             // that fired at the true bottom): land WITHOUT pulling the view
@@ -3756,7 +3756,7 @@ impl Transcript {
             if !live {
                 return None;
             }
-            let elapsed = ((now.timestamp_millis() - last.created_at).max(0) / 1000) as i64;
+            let elapsed = (now.timestamp_millis() - last.created_at).max(0) / 1000;
             (false, false, elapsed, flavour_seed(doc_id))
         } else {
             let chat_id = self.chat_id.clone()?;
@@ -4210,7 +4210,7 @@ impl Transcript {
             .map(|(_, ix)| *ix);
         let row_key = row_id.clone();
         let entity = cx.weak_entity();
-        let handler: Rc<dyn Fn(usize, SharedString, &mut Window, &mut gpui::App)> =
+        let handler: crate::markdown::render::CopyHandler =
             Rc::new(move |ix, code, _window, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(code.to_string()));
                 let row_key = row_key.clone();
@@ -6150,7 +6150,7 @@ mod tests {
             tools[0].detail.as_deref(),
             Some(ToolDetail::Output { lines, .. }) if !lines.is_empty()
         ));
-        let summary = tool_group_summary(&tools);
+        let summary = tool_group_summary(tools);
         assert!(summary.starts_with("Thought 2 times"), "{summary}");
         assert!(summary.contains("2 commands"), "{summary}");
 
@@ -6166,7 +6166,7 @@ mod tests {
         let RowKind::ToolGroup { tools, .. } = &rows[0].kind else {
             panic!("expected a tool group");
         };
-        assert_eq!(tool_group_summary(&tools), "Thought process");
+        assert_eq!(tool_group_summary(tools), "Thought process");
 
         // Empty reasoning renders nothing.
         let entry = assistant(

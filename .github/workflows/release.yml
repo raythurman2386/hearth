@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            use-cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            use-cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            use-cross: true
+          - target: aarch64-apple-darwin
+            os: macos-14
+            use-cross: false
+          # x86_64-apple-darwin (Intel) is intentionally omitted: it requires a
+          # macos-13 runner, which is scarce and slow (the job sat queued for
+          # ~1h and never finished). Modern Macs are all Apple Silicon; the ACP
+          # registry only warns on a missing OS family, it does not block.
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97"
+
+      - name: Install cross
+        if: matrix.use-cross
+        uses: taiki-e/install-action@cross
+
+      - name: Build (native)
+        if: ${{ !matrix.use-cross }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.use-cross
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Prepare binary
+        id: artifact
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            BIN_NAME="hearth-${VERSION}-${{ matrix.target }}.exe"
+            cp "target/${{ matrix.target }}/release/hearth.exe" "${BIN_NAME}"
+          else
+            BIN_NAME="hearth-${VERSION}-${{ matrix.target }}"
+            cp "target/${{ matrix.target }}/release/hearth" "${BIN_NAME}"
+          fi
+          echo "bin_name=${BIN_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact.outputs.bin_name }}
+          path: ${{ steps.artifact.outputs.bin_name }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        # Compute SHA-256 over every built binary so the installers can verify
+        # integrity. Written into the artifacts dir so it's uploaded alongside
+        # the binaries and the installers find it as checksums.txt.
+        working-directory: artifacts
+        shell: bash
+        run: |
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create archives
+        # Build .tar.gz (unix) / .zip (windows) archives for the ACP registry's
+        # `binary` distribution. Each archive contains a stable `hearth` /
+        # `hearth.exe` so the registry's `cmd` stays version-independent. The raw
+        # binaries are kept alongside (the installers download those directly).
+        # Archive checksums are appended to checksums.txt so agent.json can pin
+        # them.
+        working-directory: artifacts
+        shell: bash
+        run: |
+          for f in hearth-*; do
+            [[ "$f" == "checksums.txt" ]] && continue
+            mkdir -p stage
+            if [[ "$f" == *.exe ]]; then
+              cp "$f" stage/hearth.exe
+              (cd stage && zip -q "../${f}.zip" hearth.exe)
+            else
+              cp "$f" stage/hearth
+              (cd stage && tar -czf "../${f}.tar.gz" hearth)
+            fi
+            rm -rf stage
+          done
+          sha256sum hearth-*.tar.gz >> checksums.txt 2>/dev/null || true
+          sha256sum hearth-*.zip >> checksums.txt 2>/dev/null || true
+          echo "--- checksums.txt (raw + archives) ---"
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/*
+          generate_release_notes: true

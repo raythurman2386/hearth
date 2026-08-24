@@ -16,7 +16,7 @@
 
 use std::borrow::Cow;
 
-use gpui::{svg, AssetSource, Hsla, Result, SharedString, Styled as _, Svg};
+use gpui::{AssetSource, Hsla, Result, SharedString, Styled as _, Svg, svg};
 
 macro_rules! icon_assets {
     ($(($const_name:ident, $path:literal)),+ $(,)?) => {

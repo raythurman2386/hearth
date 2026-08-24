@@ -6,13 +6,13 @@ use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use futures::{SinkExt, StreamExt};
+use hearth_engine::{AuthState, Engine, EngineConfig, EngineInfo, HarnessId, WorkspaceScope};
+use hearth_rpc::{connect_ws, memory_client, methods};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::handshake::server::{
     Request as WsRequest, Response as WsResponse,
 };
-use hearth_engine::{AuthState, Engine, EngineConfig, EngineInfo, HarnessId, WorkspaceScope};
-use hearth_rpc::{connect_ws, memory_client, methods};
 
 fn config(
     data_dir: &std::path::Path,
@@ -120,6 +120,7 @@ impl Drop for ActiveSocket {
     }
 }
 
+#[allow(clippy::result_large_err)] // the tungstenite handshake callback's Err is the large WsResponse
 async fn serve_daemon_edge(
     mut stream: tokio::net::TcpStream,
     active: Arc<Mutex<HashMap<String, usize>>>,
@@ -223,11 +224,7 @@ async fn serve_daemon_edge(
                     "rows": [],
                     "presence": {}
                 });
-                if sink
-                    .send(WsMessage::Text(state.to_string().into()))
-                    .await
-                    .is_err()
-                {
+                if sink.send(WsMessage::Text(state.to_string())).await.is_err() {
                     return;
                 }
             }

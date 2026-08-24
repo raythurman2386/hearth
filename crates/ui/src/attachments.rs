@@ -651,12 +651,12 @@ pub fn attachment_snapshot(device_id: &str, path: &str) -> AttachmentSnapshot {
             // resolves the rewritten ref instantly instead of blanking the
             // thumbnail into a skeleton while the bytes round-trip
             // (2026-08-19 "photo disappears after it finishes sending").
-            if let Some(image) = upload_alias_id8(path)
-                .and_then(|id8| match cache.map.get(&alias_key(device_id, &id8)) {
+            if let Some(image) = upload_alias_id8(path).and_then(|id8| {
+                match cache.map.get(&alias_key(device_id, &id8)) {
                     Some(CacheEntry::Loaded { image, .. }) => Some(image.clone()),
                     _ => None,
-                })
-            {
+                }
+            }) {
                 cache.insert_loaded(key(device_id, path), image.clone());
                 return AttachmentSnapshot::Loaded(image);
             }
@@ -671,9 +671,8 @@ pub fn attachment_snapshot(device_id: &str, path: &str) -> AttachmentSnapshot {
 fn upload_alias_id8(path: &str) -> Option<String> {
     let base = std::path::Path::new(path).file_name()?.to_str()?;
     let (id8, _) = base.split_at_checked(8)?;
-    (base.as_bytes().get(8) == Some(&b'-')
-        && id8.bytes().all(|b| b.is_ascii_alphanumeric()))
-    .then(|| id8.to_string())
+    (base.as_bytes().get(8) == Some(&b'-') && id8.bytes().all(|b| b.is_ascii_alphanumeric()))
+        .then(|| id8.to_string())
 }
 
 fn alias_key(device_id: &str, id8: &str) -> (String, String) {
@@ -929,7 +928,7 @@ mod tests {
     fn upload_chunk_fits_the_relay_frame_ceiling() {
         // Cloudflare caps a WebSocket message at 1 MiB; the chunk rides one
         // relay frame with a small JSON envelope + uleb header.
-        assert!(UPLOAD_CHUNK_B64_CHARS + 1_024 < 1_048_576);
+        const { assert!(UPLOAD_CHUNK_B64_CHARS + 1_024 < 1_048_576) };
         // A slice of the whole-file base64 must stay independently decodable.
         assert_eq!(UPLOAD_CHUNK_B64_CHARS % 4, 0);
     }
@@ -941,7 +940,10 @@ mod tests {
         // Exact multiple: no trailing empty chunk.
         let exact = chunk_ranges(UPLOAD_CHUNK_B64_CHARS * 2);
         assert_eq!(exact.len(), 2);
-        assert_eq!(exact[1], (1, UPLOAD_CHUNK_B64_CHARS..UPLOAD_CHUNK_B64_CHARS * 2));
+        assert_eq!(
+            exact[1],
+            (1, UPLOAD_CHUNK_B64_CHARS..UPLOAD_CHUNK_B64_CHARS * 2)
+        );
         // Partial tail.
         let partial = chunk_ranges(UPLOAD_CHUNK_B64_CHARS + 7);
         assert_eq!(partial.len(), 2);

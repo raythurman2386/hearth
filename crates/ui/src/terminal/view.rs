@@ -1074,13 +1074,19 @@ mod tests {
         let dark = terminal_bg_for(Appearance::Dark);
         // Ravenwood dark bg0: #141814 — a muted olive, not pure grey.
         assert!((dark.l - 20.0 / 255.0).abs() < 0.05);
-        assert!(dark.s > 0.0, "ravenwood dark terminal bg carries an olive tint");
+        assert!(
+            dark.s > 0.0,
+            "ravenwood dark terminal bg carries an olive tint"
+        );
 
         let light = terminal_bg_for(Appearance::Light);
         // Ravenwood cream bg: #fdf6e3 — warm paper, not white.
         assert!(light.l > 0.90);
         assert!(light.l < 1.0, "light terminal bg should not be pure white");
-        assert!(light.s > 0.0, "ravenwood light terminal bg is warm cream, not grey");
+        assert!(
+            light.s > 0.0,
+            "ravenwood light terminal bg is warm cream, not grey"
+        );
     }
 
     /// Slot 0 is "black" — the one slot whose job is to sit *at* the dark end

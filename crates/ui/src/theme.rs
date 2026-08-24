@@ -612,31 +612,31 @@ impl Theme {
         Self {
             appearance: Appearance::Dark,
             // Ravenwood dark-medium (olive-tinged forest floor, never pure grey).
-            bg: hex("141814"),       // bg0 — deepest content plane
-            surface: hex("1f241f"),  // bg1 — sidebar, one step up from bg
-            surface_raised: hex("3d4a40"), // bg3 — pills/bubbles, lighter than panel
-            surface_card: hex("1f241f"), // bg1 — inline card on the panel
-            surface_dialog: hex("222822"), // bg — dialog plane
+            bg: hex("141814"),              // bg0 — deepest content plane
+            surface: hex("1f241f"),         // bg1 — sidebar, one step up from bg
+            surface_raised: hex("3d4a40"),  // bg3 — pills/bubbles, lighter than panel
+            surface_card: hex("1f241f"),    // bg1 — inline card on the panel
+            surface_dialog: hex("222822"),  // bg — dialog plane
             surface_overlay: hex("2d3830"), // bg2 — popovers, the highest plane
             element_hover: hsla(0.13, 0.25, 0.55, 0.30), // warm translucent hover
             element_active: hsla(0.13, 0.25, 0.55, 0.18),
             border: hsla(0.14, 0.15, 0.70, 0.12),
             border_strong: hsla(0.14, 0.15, 0.70, 0.18),
-            text: hex("e8d5b7"), // fg — warm beige
+            text: hex("e8d5b7"),       // fg — warm beige
             text_muted: hex("859289"), // grey1
             text_faint: hex("7f897d"), // grey0
             text_dim: hex("8a9489"),
-            solid: hex("e8d5b7"),  // warm-beige plate
+            solid: hex("e8d5b7"), // warm-beige plate
             on_solid: hex("141814"),
             accent: hex("4ade80"), // green — the hero
             accent_strong: hex("2ebd6b"),
             on_accent: hex("0f1410"),
-            danger: hex("e67e80"),     // red
+            danger: hex("e67e80"), // red
             danger_muted: hex("da6362"),
-            warning: hex("e69875"),    // orange
+            warning: hex("e69875"), // orange
             warning_muted: hex("d77f48"),
-            success: hex("4ade80"),    // green
-            busy: hex("f472b6"),       // purple — streaming
+            success: hex("4ade80"), // green
+            busy: hex("f472b6"),    // purple — streaming
             success_muted: hex("5e8d5e"),
             surface_raised_hover: hex("4a5a4d"), // bg4
             band: band_for(Appearance::Dark),
@@ -670,8 +670,8 @@ impl Theme {
         Self {
             appearance: Appearance::Light,
             // Ravenwood light-medium (warm cream paper, not bright white).
-            bg: hex("fdf6e3"),       // main content panel
-            surface: hex("efebd4"),  // shell/sidebar — one step *down* from bg
+            bg: hex("fdf6e3"),             // main content panel
+            surface: hex("efebd4"),        // shell/sidebar — one step *down* from bg
             surface_raised: hex("efebd4"), // pills — cream plate
             surface_card: hex("fdf6e3"),
             surface_dialog: hex("fdf6e3"),
@@ -680,21 +680,21 @@ impl Theme {
             element_active: hsla(0.0, 0.0, 0.10, 0.09),
             border: hsla(0.0, 0.0, 0.0, 0.10),
             border_strong: hsla(0.0, 0.0, 0.0, 0.17),
-            text: hex("3d4c53"),   // cool slate foreground
+            text: hex("3d4c53"),       // cool slate foreground
             text_muted: hex("5c6658"), // grey2 — dark enough for cream
             text_faint: hex("5c6658"), // muted — clears the faint floor on both planes
             text_dim: hex("5c6658"),
-            solid: hex("3d4c53"),    // near-black slate plate
+            solid: hex("3d4c53"), // near-black slate plate
             on_solid: hex("fdf6e3"),
-            accent: hex("5c7a0c"),   // green — the hero, darkened for cream
+            accent: hex("5c7a0c"), // green — the hero, darkened for cream
             accent_strong: hex("5c7a0c"),
             on_accent: hex("fdf6e3"),
-            danger: hex("c03c39"),   // red
+            danger: hex("c03c39"), // red
             danger_muted: hex("9e2b29"),
-            warning: hex("c55e15"),  // orange
+            warning: hex("c55e15"), // orange
             warning_muted: hex("9e5410"),
-            success: hex("5c7a0c"),  // green
-            busy: hex("b84d94"),     // purple
+            success: hex("5c7a0c"), // green
+            busy: hex("b84d94"),    // purple
             success_muted: hex("4a6210"),
             surface_raised_hover: hex("e6e2cc"), // bg4
             band: band_for(Appearance::Light),
@@ -1198,7 +1198,11 @@ mod tests {
             ("text_muted", l.text_muted, &l),
         ] {
             let r = contrast_ratio(fg, theme.bg);
-            assert!(r >= 5.0, "{name} ({fg:?}) is {r:.2}:1 on {:?} — too faint", theme.appearance);
+            assert!(
+                r >= 5.0,
+                "{name} ({fg:?}) is {r:.2}:1 on {:?} — too faint",
+                theme.appearance
+            );
         }
     }
 
@@ -1438,7 +1442,11 @@ mod tests {
             ("surface_dialog", l.surface_dialog),
             ("surface_overlay", l.surface_overlay),
         ] {
-            assert!(c.l >= l.bg.l, "light {name} ({:.3}) dropped below the panel", c.l);
+            assert!(
+                c.l >= l.bg.l,
+                "light {name} ({:.3}) dropped below the panel",
+                c.l
+            );
         }
         // With no strong lightness step, the border is the only separator —
         // it has to actually register against the plane behind it.
@@ -1485,7 +1493,10 @@ mod tests {
         }
         // Dark: green-leaning olive floor.
         let [dr, dg, _] = hsl_to_rgb(d.bg.h, d.bg.s, d.bg.l);
-        assert!(dg > dr, "dark bg should lean green, got r={dr:.2} g={dg:.2}");
+        assert!(
+            dg > dr,
+            "dark bg should lean green, got r={dr:.2} g={dg:.2}"
+        );
         // Light: warm cream, red > green > blue, and not pure white.
         let [lr, lg, lb] = hsl_to_rgb(l.bg.h, l.bg.s, l.bg.l);
         assert!(lr > lg && lg > lb, "light bg should be warm cream");

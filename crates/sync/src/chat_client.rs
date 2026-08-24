@@ -234,7 +234,7 @@ async fn pump(
         tokio::select! {
             frame = out_rx.recv() => match frame {
                 Some(bytes) => {
-                    if sink.send(WsMessage::Binary(bytes.into())).await.is_err() {
+                    if sink.send(WsMessage::Binary(bytes)).await.is_err() {
                         break;
                     }
                 }
@@ -1020,9 +1020,7 @@ impl Actor {
                 let backfill = tokio::time::timeout(BACKFILL_DEADLINE, async {
                     loop {
                         let bytes = pipe.rx.recv().await?;
-                        let Some(frame) = wire::decode(&bytes) else {
-                            return None;
-                        };
+                        let frame = wire::decode(&bytes)?;
                         match frame.kind {
                             frame_type::ROWS_DONE => {
                                 let done: wire::RowsDoneHeader =
@@ -1201,24 +1199,23 @@ impl Actor {
             for (batch_id, bytes) in batches {
                 match transport.push(batch_id, bytes).await {
                     Ok(ack) => {
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&ack) {
-                            if let (Some(b), Some(seq)) = (v["batchId"].as_str(), v["seq"].as_u64())
-                            {
-                                let mut sh = lock(&shared);
-                                sh.pending.retain(|p| p.batch_id != b);
-                                // Contiguity rule (see handle_frame ACK): an
-                                // own-push ack proves the server has rows up
-                                // to `seq`, not that WE have the interleaved
-                                // ones. The pull below starts at the honest
-                                // cursor and walks the gap.
-                                if seq <= sh.cursor + 1 {
-                                    sh.cursor = sh.cursor.max(seq);
-                                }
-                                let cursor = sh.cursor;
-                                drop(sh);
-                                sink.advance_cursor(cursor);
-                                let _ = events.send(ChatEvent::Applied);
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&ack)
+                            && let (Some(b), Some(seq)) = (v["batchId"].as_str(), v["seq"].as_u64())
+                        {
+                            let mut sh = lock(&shared);
+                            sh.pending.retain(|p| p.batch_id != b);
+                            // Contiguity rule (see handle_frame ACK): an
+                            // own-push ack proves the server has rows up
+                            // to `seq`, not that WE have the interleaved
+                            // ones. The pull below starts at the honest
+                            // cursor and walks the gap.
+                            if seq <= sh.cursor + 1 {
+                                sh.cursor = sh.cursor.max(seq);
                             }
+                            let cursor = sh.cursor;
+                            drop(sh);
+                            sink.advance_cursor(cursor);
+                            let _ = events.send(ChatEvent::Applied);
                         }
                     }
                     Err(err) => {
@@ -1257,33 +1254,32 @@ impl Actor {
                 busy.store(false, Relaxed);
                 return;
             };
-            if state_frame.kind == frame_type::STATE {
-                if let Ok(state) =
+            if state_frame.kind == frame_type::STATE
+                && let Ok(state) =
                     serde_json::from_value::<wire::StateHeader>(state_frame.header.clone())
+            {
+                lock(&shared).server = Some(state);
+                let contained =
+                    state.checkpoint_size == 0 || sink.contains_frontier(&state_frame.payload);
+                if let CatchUpPlan::CheckpointThenRows { after } =
+                    plan_catch_up(cursor, &state, contained)
                 {
-                    lock(&shared).server = Some(state);
-                    let contained =
-                        state.checkpoint_size == 0 || sink.contains_frontier(&state_frame.payload);
-                    if let CatchUpPlan::CheckpointThenRows { after } =
-                        plan_catch_up(cursor, &state, contained)
-                    {
-                        let fetched =
-                            tokio::time::timeout(CHECKPOINT_FETCH_DEADLINE, fetcher.fetch()).await;
-                        match fetched {
-                            Ok(Ok(bytes)) => {
-                                if sink.apply_checkpoint(&bytes, state.checkpoint_seq).is_err() {
-                                    busy.store(false, Relaxed);
-                                    return;
-                                }
-                                let mut sh = lock(&shared);
-                                sh.cursor = sh.cursor.max(after);
-                                drop(sh);
-                                let _ = events.send(ChatEvent::Applied);
-                            }
-                            _ => {
+                    let fetched =
+                        tokio::time::timeout(CHECKPOINT_FETCH_DEADLINE, fetcher.fetch()).await;
+                    match fetched {
+                        Ok(Ok(bytes)) => {
+                            if sink.apply_checkpoint(&bytes, state.checkpoint_seq).is_err() {
                                 busy.store(false, Relaxed);
                                 return;
                             }
+                            let mut sh = lock(&shared);
+                            sh.cursor = sh.cursor.max(after);
+                            drop(sh);
+                            let _ = events.send(ChatEvent::Applied);
+                        }
+                        _ => {
+                            busy.store(false, Relaxed);
+                            return;
                         }
                     }
                 }
@@ -1305,8 +1301,11 @@ impl Actor {
                             if row.seq <= sh.cursor + 1 {
                                 sh.cursor = sh.cursor.max(row.seq);
                             } else {
-                                tracing::warn!(seq = row.seq, cursor = sh.cursor,
-                                    "chat2: pull row gap; holding cursor");
+                                tracing::warn!(
+                                    seq = row.seq,
+                                    cursor = sh.cursor,
+                                    "chat2: pull row gap; holding cursor"
+                                );
                             }
                             sh.cursor
                         };
@@ -1342,7 +1341,11 @@ impl Actor {
             tracing::warn!("chat2: gap repairs exhausted; redialing for a full catch-up");
             return false;
         }
-        tracing::info!(after, attempt = *repairs, "chat2: backfilling over a row gap");
+        tracing::info!(
+            after,
+            attempt = *repairs,
+            "chat2: backfilling over a row gap"
+        );
         let req = wire::encode(
             frame_type::ROWS_REQ,
             &wire::RowsReqHeader {
@@ -1447,10 +1450,10 @@ impl Actor {
                 let _ = self.events.send(ChatEvent::Presence);
             }
             frame_type::PROBE_OK => {
-                if let Ok(probe) = serde_json::from_value::<wire::ProbeOkHeader>(frame.header) {
-                    if let Some(server) = &mut lock(&self.shared).server {
-                        server.head_seq = server.head_seq.max(probe.head_seq);
-                    }
+                if let Ok(probe) = serde_json::from_value::<wire::ProbeOkHeader>(frame.header)
+                    && let Some(server) = &mut lock(&self.shared).server
+                {
+                    server.head_seq = server.head_seq.max(probe.head_seq);
                 }
             }
             frame_type::STATE => {

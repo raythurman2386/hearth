@@ -445,6 +445,10 @@ impl NavHistory {
     pub fn len(&self) -> usize {
         self.entries.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 /// Sidebar resort glide (feature-inventory §1.6): 260ms
@@ -1313,8 +1317,7 @@ impl Shell {
             self.debug_upload = None;
             if let Some((pct, img_path)) = spec.split_once(':')
                 && let Ok(pct) = pct.parse::<u64>()
-                && let Ok(att) =
-                    crate::attachments::stage_file(std::path::Path::new(img_path))
+                && let Ok(att) = crate::attachments::stage_file(std::path::Path::new(img_path))
             {
                 let pending_path = format!("pending/{}/{}", att.id, att.name);
                 let device_ids: Vec<String> = {

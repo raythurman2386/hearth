@@ -960,6 +960,7 @@ fn empty_state_json() -> serde_json::Value {
 /// and must narrate the outage (Disconnected event + disconnect counters) —
 /// the UI-truth signal the pill and Queued badges ride on.
 #[tokio::test(start_paused = true)]
+#[allow(clippy::await_holding_lock)] // serialization guard held across the whole test
 async fn drops_and_refused_dials_deliver_the_push_exactly_once() {
     let _serial = lock(&PATH_AND_TIMING);
     let (pipe1, mut end1) = pipe_pair();
@@ -1054,6 +1055,7 @@ async fn drops_and_refused_dials_deliver_the_push_exactly_once() {
 /// — reset-on-join alone hot-looped at 250ms forever. A session that stays
 /// healthy past STABLE_RESET earns the fresh 250ms base again.
 #[tokio::test(start_paused = true)]
+#[allow(clippy::await_holding_lock)] // serialization guard held across the whole test
 async fn connect_and_die_sessions_grow_backoff_until_a_stable_session_resets_it() {
     let _serial = lock(&PATH_AND_TIMING);
     let mut pipes = Vec::new();
@@ -1141,6 +1143,7 @@ async fn connect_and_die_sessions_grow_backoff_until_a_stable_session_resets_it(
 /// the online event un-parks it IMMEDIATELY (event-driven recovery, not
 /// timer luck).
 #[tokio::test(start_paused = true)]
+#[allow(clippy::await_holding_lock)] // serialization guard held across the whole test
 async fn os_offline_parks_dials_and_the_online_event_unparks_immediately() {
     let _serial = lock(&PATH_AND_TIMING);
     let (pipe1, mut end1) = pipe_pair();
