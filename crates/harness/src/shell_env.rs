@@ -25,6 +25,7 @@
 use std::ffi::{OsStr, OsString};
 use std::sync::OnceLock;
 
+#[cfg(unix)]
 static CACHE: OnceLock<Option<OsString>> = OnceLock::new();
 
 /// The PATH the user's login shell reports, captured once and cached for the
