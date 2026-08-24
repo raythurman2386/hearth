@@ -75,6 +75,7 @@ struct HarnessSessionRef {
 struct RuntimeConfig {
     harness_id: HarnessId,
     model: Option<String>,
+    mode: Option<hearth_proto::SessionMode>,
     reasoning: Option<hearth_proto::ReasoningLevel>,
     model_options: serde_json::Map<String, serde_json::Value>,
     cwd: String,
@@ -88,6 +89,7 @@ impl RuntimeConfig {
         Self {
             harness_id,
             model: request.model.clone(),
+            mode: request.mode,
             reasoning: request.reasoning,
             model_options: request.model_options.clone(),
             cwd: request.cwd.clone(),
@@ -2184,6 +2186,10 @@ mod tests {
         follow_up.reasoning = Some(hearth_proto::ReasoningLevel::Medium);
         assert!(!config.can_route(HarnessId::Grok, &follow_up));
         follow_up.reasoning = initial.reasoning;
+
+        follow_up.mode = Some(hearth_proto::SessionMode::Agent);
+        assert!(!config.can_route(HarnessId::Grok, &follow_up));
+        follow_up.mode = initial.mode;
 
         follow_up.attachments.push("/tmp/image.png".into());
         assert!(!config.can_route(HarnessId::Grok, &follow_up));
