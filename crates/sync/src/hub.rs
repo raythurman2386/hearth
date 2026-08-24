@@ -110,7 +110,14 @@ impl Hub {
                             )
                             .await
                             {
-                                tracing::debug!(error = %err, %peer, "hub: connection ended");
+                                // Whois/auth failures reset the TCP socket from the
+                                // client's POV — keep them visible at warn.
+                                let msg = err.to_string();
+                                if msg.contains("whois") || msg.contains("parse whois") {
+                                    tracing::warn!(error = %err, %peer, "hub: peer auth failed");
+                                } else {
+                                    tracing::debug!(error = %err, %peer, "hub: connection ended");
+                                }
                             }
                         });
                     }

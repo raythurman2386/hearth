@@ -160,7 +160,9 @@ struct TailscaleWhois {
 
 #[derive(Debug, Clone, Deserialize)]
 struct WhoisNode {
-    #[serde(rename = "ID")]
+    /// Tailscale's `--json` whois emits a numeric `ID`; older/docs fixtures
+    /// used a string. Accept either so hub auth does not reset peers.
+    #[serde(rename = "ID", deserialize_with = "deserialize_stringish")]
     id: String,
     #[serde(rename = "Name")]
     name: String,
@@ -168,6 +170,33 @@ struct WhoisNode {
     user: u64,
     #[serde(rename = "TailscaleIPs", alias = "Addresses", default)]
     tailscale_ips: Vec<String>,
+}
+
+/// Serde helper: JSON string or number → `String`.
+fn deserialize_stringish<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Stringish;
+    impl<'de> serde::de::Visitor<'de> for Stringish {
+        type Value = String;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a string or number")
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<String, E> {
+            Ok(v.to_owned())
+        }
+        fn visit_string<E: serde::de::Error>(self, v: String) -> Result<String, E> {
+            Ok(v)
+        }
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<String, E> {
+            Ok(v.to_string())
+        }
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<String, E> {
+            Ok(v.to_string())
+        }
+    }
+    deserializer.deserialize_any(Stringish)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -456,6 +485,38 @@ mod tests {
         assert_eq!(w.node.name, "minis.tailnet.ts.net.");
         assert_eq!(w.user_profile.login_name, "me@example.com");
         assert_eq!(w.user_profile.display_name, "Me");
+    }
+
+    #[test]
+    fn parses_tailscale_whois_json_numeric_node_id() {
+        // Live `tailscale whois --json` (1.x) emits numeric Node.ID and
+        // CIDR Addresses instead of TailscaleIPs. Fixture values are fake.
+        let json = r#"{
+            "Node": {
+                "ID": 1234567890123456,
+                "StableID": "nTESTSTABLEID0001",
+                "Name": "hub.tailnet-example.ts.net.",
+                "User": 42,
+                "Addresses": ["100.64.0.2/32", "fd7a:115c:a1e0::1/128"]
+            },
+            "UserProfile": {
+                "ID": 42,
+                "LoginName": "someone@example.com",
+                "DisplayName": "Someone"
+            }
+        }"#;
+        let w: TailscaleWhois = serde_json::from_str(json).unwrap();
+        assert_eq!(w.node.id, "1234567890123456");
+        assert_eq!(w.node.name, "hub.tailnet-example.ts.net.");
+        assert_eq!(w.node.user, 42);
+        assert_eq!(
+            w.node.tailscale_ips,
+            vec![
+                "100.64.0.2/32".to_string(),
+                "fd7a:115c:a1e0::1/128".to_string()
+            ]
+        );
+        assert_eq!(w.user_profile.login_name, "someone@example.com");
     }
 
     #[tokio::test]
