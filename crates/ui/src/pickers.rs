@@ -599,6 +599,7 @@ impl Pickers {
                 this.draft_owner = selected;
                 this.config.harness = None;
                 this.config.model = None;
+                this.config.mode = None;
                 this.config.reasoning = None;
                 this.config.model_options.clear();
                 this.switch_error = None;
