@@ -37,6 +37,7 @@ type RequestLog = Arc<Mutex<Vec<RunRequest>>>;
 
 fn run_request(prompt: &str, cwd: &str) -> RunRequest {
     RunRequest {
+        mode: None,
         prompt: prompt.into(),
         harness: None,
         model: None,
@@ -456,7 +457,7 @@ impl Harness for PersistentHarness {
     }
     async fn run(
         &self,
-        request: RunRequest,
+        _request: RunRequest,
         controls: RunControls,
     ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
         *self.runs_started.lock().unwrap() += 1;
@@ -840,6 +841,7 @@ async fn real_claude_remembers_codeword_across_engine_restart() {
     let cwd = cwd.to_string_lossy().to_string();
 
     let real_request = |prompt: &str| RunRequest {
+        mode: None,
         prompt: prompt.into(),
         harness: None,
         model: Some("haiku".into()),

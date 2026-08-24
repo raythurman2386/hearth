@@ -56,6 +56,7 @@ struct ProbeOutcome {
 async fn probe_once(harness: AcpHarness) -> ProbeOutcome {
     let (controls, steer_tx, _token) = controls();
     let req = RunRequest {
+        mode: None,
         prompt: "Use your shell tool to run `echo probe-one`. After you see its output, \
                  run `echo probe-two` as a second separate command. After that, reply \
                  with exactly the word PROBE-DONE."
@@ -199,7 +200,8 @@ async fn real_all_harnesses_quiet_survey() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(3);
-    let agents: Vec<(&str, fn() -> AcpHarness)> = vec![
+    type AgentCtor = fn() -> AcpHarness;
+    let agents: Vec<(&str, AgentCtor)> = vec![
         ("grok", AcpHarness::grok),
         ("hermes", AcpHarness::hermes),
         ("pi", AcpHarness::pi),

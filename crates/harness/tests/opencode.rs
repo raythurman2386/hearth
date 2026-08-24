@@ -10,15 +10,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::StreamExt;
-use serde_json::{Value, json};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{broadcast, mpsc, oneshot};
 use hearth_harness::{
     CancellationToken, Harness, HarnessError, OpencodeHarness, RunControls, SteerMessage,
 };
 use hearth_proto::{
     AgentEvent, DoneStatus, ReasoningLevel, RunRequest, SandboxLevel, ToolCall, UserInputAnswer,
 };
+use serde_json::{Value, json};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 // ---------------------------------------------------------------------------
 // Fake server
@@ -218,6 +218,7 @@ impl FakeOpencode {
 
 fn request(prompt: &str) -> RunRequest {
     RunRequest {
+        mode: None,
         prompt: prompt.into(),
         harness: None,
         model: None,

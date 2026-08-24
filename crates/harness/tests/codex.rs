@@ -35,6 +35,7 @@ fn harness() -> CodexHarness {
 
 fn request(prompt: &str) -> RunRequest {
     RunRequest {
+        mode: None,
         prompt: prompt.into(),
         harness: None,
         model: Some("gpt-5.6-sol".into()),

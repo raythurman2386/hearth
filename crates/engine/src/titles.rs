@@ -162,6 +162,7 @@ impl TitleGenerator {
         );
         for attempt in 0..=RETRY_DELAYS_MS.len() {
             let request = RunRequest {
+                mode: None,
                 prompt: title_prompt.clone(),
                 harness: Some(harness_id),
                 model: cheap.clone(),

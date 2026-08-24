@@ -36,6 +36,9 @@ pub enum SessionCommandStatus {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
+// The Run variant genuinely carries a full RunRequest; boxing it would churn
+// every construction/read site for a marginal win on a serialized wire type.
+#[allow(clippy::large_enum_variant)]
 pub enum SessionCommandPayload {
     #[serde(rename_all = "camelCase")]
     Run {
@@ -303,6 +306,7 @@ mod tests {
 
     fn run_request() -> RunRequest {
         RunRequest {
+            mode: None,
             prompt: "hello".into(),
             harness: None,
             model: None,

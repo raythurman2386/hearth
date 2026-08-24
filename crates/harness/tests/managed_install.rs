@@ -10,10 +10,10 @@
 //! Single-test binary: it mutates HEARTH_ADAPTERS_DIR process-wide.
 
 use futures::StreamExt;
-use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 use hearth_harness::{AcpHarness, Harness, RunControls};
 use hearth_proto::{AgentEvent, RunRequest};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
 #[ignore = "network + npm + codex CLI; installs the pinned adapter for real"]
@@ -34,6 +34,7 @@ async fn managed_install_reaches_session_started() {
         interrupt: interrupt.clone(),
     };
     let request = RunRequest {
+        mode: None,
         prompt: "say the word ok and stop".into(),
         harness: None,
         model: None,

@@ -158,6 +158,7 @@ async fn projectless_chat_runs_from_home_and_mints_no_space() {
             CHAT,
             SessionCommandPayload::Run {
                 request: RunRequest {
+                    mode: None,
                     prompt: "hello from no project".into(),
                     harness: None,
                     model: None,

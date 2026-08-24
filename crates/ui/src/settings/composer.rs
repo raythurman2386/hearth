@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use hearth_proto::{HarnessId, ReasoningLevel};
+use hearth_proto::{HarnessId, ReasoningLevel, SessionMode};
 
 const FILE_NAME: &str = "composer-defaults.json";
 
@@ -46,6 +46,8 @@ pub struct ComposerDefaults {
     pub model_by_harness: HashMap<HarnessId, RememberedModel>,
     /// Last reasoning level picked (global, like hearth's `reasoning` key).
     pub reasoning: Option<ReasoningLevel>,
+    /// Last interaction mode picked (plan/agent/chat), restored on new chats.
+    pub mode: Option<SessionMode>,
     /// Every model label ever seen (id → label), fed from catalog loads.
     /// The chip's fallback while a harness's list is still loading — a
     /// session whose configured model differs from the remembered pick

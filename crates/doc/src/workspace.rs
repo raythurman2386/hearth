@@ -754,6 +754,7 @@ mod tests {
             config: Some(ChatConfig {
                 harness: HarnessId::Mock,
                 model: Some("mock-1".into()),
+                mode: None,
                 reasoning: None,
                 model_options: Default::default(),
                 sandbox: SandboxLevel::WorkspaceWrite,
@@ -817,6 +818,7 @@ mod tests {
         let config = ChatConfig {
             harness: HarnessId::ClaudeCode,
             model: Some("claude-fable-5".into()),
+            mode: None,
             reasoning: Some(hearth_proto::ReasoningLevel::XHigh),
             model_options: options,
             sandbox: SandboxLevel::WorkspaceWrite,

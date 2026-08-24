@@ -5,9 +5,9 @@
 //!     cargo run -p hearth-harness --example grok_subagent_probe -- /tmp/probe-dir
 
 use futures::StreamExt;
-use tokio::sync::{mpsc, oneshot};
 use hearth_harness::{AcpHarness, CancellationToken, Harness, RunControls};
 use hearth_proto::{AgentEvent, RunRequest, SandboxLevel, UserInputAnswer};
+use tokio::sync::{mpsc, oneshot};
 
 #[tokio::main]
 async fn main() {
@@ -33,6 +33,7 @@ async fn main() {
         interrupt: CancellationToken::new(),
     };
     let request = RunRequest {
+        mode: None,
         prompt: "Use spawn_subagent to launch ONE subagent of type general with description \
                  'Viz probe' and prompt: 'Run the terminal command: echo viz-probe-ok && sleep 3. \
                  Then reply with the word finished.'. Wait for it with \

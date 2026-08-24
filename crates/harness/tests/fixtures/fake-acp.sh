@@ -79,15 +79,19 @@ else
   exit 1
 fi
 
-# ---- model/config sets (0..n), then the first turn ---------------------------
+# ---- model/config/mode sets (0..n), then the first turn ---------------------
 CONFIG_SETS=""
 MODEL_SETS=""
+MODE_SETS=""
 read -r promptline || exit 1
 while has "$promptline" '"method":"session/set_config_option"' \
-  || has "$promptline" '"method":"session/set_model"'; do
+  || has "$promptline" '"method":"session/set_model"' \
+  || has "$promptline" '"method":"session/set_mode"'; do
   emit "{\"id\":$(rid "$promptline"),\"result\":{}}"
   if has "$promptline" '"method":"session/set_model"'; then
     MODEL_SETS="$MODEL_SETS $promptline"
+  elif has "$promptline" '"method":"session/set_mode"'; then
+    MODE_SETS="$MODE_SETS $promptline"
   else
     CONFIG_SETS="$CONFIG_SETS $promptline"
   fi
@@ -97,6 +101,17 @@ has "$promptline" '"method":"session/prompt"' || exit 1
 pid=$(rid "$promptline")
 
 case "$promptline" in
+
+*scenario:set-mode*)
+  # The request carries mode=agent; the harness must have sent
+  # session/set_mode with modeId=agent before the prompt.
+  if has "$MODE_SETS" '"modeId":"agent"'; then
+    update '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"mode set"}}'
+    emit "{\"id\":$pid,\"result\":{\"stopReason\":\"end_turn\"}}"
+  else
+    emit "{\"id\":$pid,\"result\":{\"stopReason\":\"refusal\"}}"
+  fi
+  ;;
 
 *scenario:model-api*)
   if has "$MODEL_SETS" '"modelId":"grok-4.5"'; then

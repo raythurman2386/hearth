@@ -6,7 +6,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{HarnessId, ReasoningLevel, SandboxLevel};
+use crate::{HarnessId, ReasoningLevel, SandboxLevel, SessionMode};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +77,10 @@ impl Space {
 pub struct ChatConfig {
     pub harness: HarnessId,
     pub model: Option<String>,
+    /// The session interaction mode (plan/agent/chat). `None` = the harness's
+    /// own default. Additive + serde-defaulted for wire compat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<SessionMode>,
     pub reasoning: Option<ReasoningLevel>,
     #[serde(default)]
     pub model_options: serde_json::Map<String, serde_json::Value>,

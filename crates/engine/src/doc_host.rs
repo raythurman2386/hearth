@@ -2025,11 +2025,8 @@ impl DocHost {
             .as_ref()
             .and_then(|w| w.sync_status())
             .is_some_and(|s| s.connected);
-        let path_offline = grace.degraded(
-            GraceKey::OsPath,
-            hearth_sync::wake::path_is_offline(),
-            now,
-        );
+        let path_offline =
+            grace.degraded(GraceKey::OsPath, hearth_sync::wake::path_is_offline(), now);
         let registry_down = grace.degraded(GraceKey::Registry, !registry_connected, now);
         let (state, retry_at_ms, last_failure) = if path_offline {
             (
@@ -2132,16 +2129,14 @@ impl DocHost {
         // Sending a message revives an archived chat: the user is acting in it
         // again, so the LWW row flips back to active on every device. Best-
         // effort — the command itself is durable regardless.
-        if is_message {
-            if let Some(workspace) = self.workspace() {
-                match workspace.chat(chat_id) {
-                    Ok(Some(chat)) if chat.archived => {
-                        if let Err(err) = workspace.set_chat_archived(chat_id, false) {
-                            tracing::warn!(chat = %chat_id, error = %err, "unarchive on send failed");
-                        }
+        if is_message && let Some(workspace) = self.workspace() {
+            match workspace.chat(chat_id) {
+                Ok(Some(chat)) if chat.archived => {
+                    if let Err(err) = workspace.set_chat_archived(chat_id, false) {
+                        tracing::warn!(chat = %chat_id, error = %err, "unarchive on send failed");
                     }
-                    _ => {}
                 }
+                _ => {}
             }
         }
         // §7 durable delivery: when another device hosts this chat, nudge its device
@@ -3148,6 +3143,7 @@ impl DocHost {
                     let config = hearth_proto::ChatConfig {
                         harness,
                         model: request.model.clone(),
+                        mode: request.mode,
                         reasoning: request.reasoning,
                         model_options: request.model_options.clone(),
                         sandbox: request.sandbox,
@@ -3350,6 +3346,7 @@ impl DocHost {
         };
         let config = chat.config;
         Some(hearth_proto::RunRequest {
+            mode: None,
             prompt: prompt.to_string(),
             harness: config.as_ref().map(|c| c.harness),
             model: config.as_ref().and_then(|c| c.model.clone()),

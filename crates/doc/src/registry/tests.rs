@@ -260,6 +260,7 @@ fn chat(id: &str, device_id: &str) -> Chat {
         config: Some(ChatConfig {
             harness: HarnessId::Mock,
             model: Some("mock-1".into()),
+            mode: None,
             reasoning: None,
             model_options: Default::default(),
             sandbox: SandboxLevel::WorkspaceWrite,

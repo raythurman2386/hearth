@@ -14,7 +14,9 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use hearth_doc::{CommandBasedOn, SessionCommandEntry, SessionCommandPayload, SessionCommandStatus};
+use hearth_doc::{
+    CommandBasedOn, SessionCommandEntry, SessionCommandPayload, SessionCommandStatus,
+};
 use hearth_engine::{EngineCore, HarnessRegistry};
 use hearth_harness::{Harness, HarnessError, RunControls};
 use hearth_proto::{
@@ -145,6 +147,7 @@ where
 
 fn run_request(prompt: &str) -> RunRequest {
     RunRequest {
+        mode: None,
         prompt: prompt.into(),
         harness: None,
         model: None,
@@ -514,6 +517,7 @@ async fn chat_config_selects_the_run_harness() {
             Some(ChatConfig {
                 harness: HarnessId::Cursor,
                 model: None,
+                mode: None,
                 reasoning: None,
                 model_options: Default::default(),
                 sandbox: SandboxLevel::WorkspaceWrite,

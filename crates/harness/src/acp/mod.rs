@@ -358,7 +358,9 @@ fn raven_spec() -> AcpAgentSpec {
             vec![Model {
                 id: "default".into(),
                 label: "Raven default".into(),
-                description: Some("Uses the model configured in Raven (OLLAMA_API_KEY / RAVEN_API_KEY)".into()),
+                description: Some(
+                    "Uses the model configured in Raven (OLLAMA_API_KEY / RAVEN_API_KEY)".into(),
+                ),
                 reasoning_levels: Vec::new(),
                 options: Vec::new(),
             }]
@@ -1919,6 +1921,28 @@ async fn run_session(session: Session) {
             return Err(HarnessError::Protocol(
                 "session/new returned no sessionId".into(),
             ));
+        }
+        // Apply the run's requested interaction mode (plan/agent/chat) via
+        // `session/set_mode`. Best-effort: agents that don't advertise modes
+        // (or reject the id) keep their own default — a rejected mode switch
+        // is logged, not fatal, mirroring the auxiliary config options below.
+        if let Some(mode) = request.mode
+            && let Err(e) = request_draining(
+                &client,
+                &mut incoming,
+                "session/set_mode",
+                json!({
+                    "sessionId": session_id,
+                    "modeId": mode.as_str(),
+                }),
+            )
+            .await
+        {
+            tracing::debug!(
+                target: "hearth_harness::acp",
+                "session/set_mode {} rejected (agent default runs): {e}",
+                mode.as_str()
+            );
         }
         // ACP has had two model-selection surfaces. Newer config-option agents
         // use category=model below; Grok Build currently advertises only the

@@ -27,6 +27,7 @@ const VIEWER: &str = "viewer-device";
 
 fn run_request(prompt: &str) -> RunRequest {
     RunRequest {
+        mode: None,
         prompt: prompt.into(),
         harness: None,
         model: None,
@@ -646,9 +647,9 @@ async fn retry_reissues_a_swallowed_send() {
     .await;
     wait_for(
         || {
-            entries_now(&core)
-                .iter()
-                .any(|e| e.role == MessageRole::Assistant && e.status == Some(MessageStatus::Complete))
+            entries_now(&core).iter().any(|e| {
+                e.role == MessageRole::Assistant && e.status == Some(MessageStatus::Complete)
+            })
         },
         "re-issued send runs to completion",
     )
@@ -1741,6 +1742,7 @@ async fn real_claude_sees_uploaded_image_inline() {
          Attached images (local files — open them to view):\n- {path}"
     );
     let request = RunRequest {
+        mode: None,
         prompt,
         harness: None,
         model: Some("haiku".into()),

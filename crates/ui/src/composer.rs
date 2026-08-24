@@ -128,7 +128,7 @@ pub const CARET_BLINK_MS: u64 = 500;
 /// through the first half-period (typing bursts never blink — each keystroke
 /// resets the phase), then alternating.
 pub fn caret_visible(ms_since_activity: u64) -> bool {
-    (ms_since_activity / CARET_BLINK_MS) % 2 == 0
+    (ms_since_activity / CARET_BLINK_MS).is_multiple_of(2)
 }
 
 /// Auto-grow: content height for a wrapped-line count.
@@ -2627,16 +2627,16 @@ impl ComposerInput {
     /// Keep the cursor visible when content exceeds the element height.
     fn clamp_scroll(&mut self, element_height: f32) -> bool {
         let previous = self.scroll_top;
-        if self.follow_cursor {
-            if let Some(cursor) = self.point_for_index(self.cursor_offset()) {
-                self.scroll_top = input_scroll_offset_for_cursor(
-                    self.scroll_top,
-                    f32::from(cursor.y),
-                    f32::from(self.line_height),
-                    self.content_height,
-                    element_height,
-                );
-            }
+        if self.follow_cursor
+            && let Some(cursor) = self.point_for_index(self.cursor_offset())
+        {
+            self.scroll_top = input_scroll_offset_for_cursor(
+                self.scroll_top,
+                f32::from(cursor.y),
+                f32::from(self.line_height),
+                self.content_height,
+                element_height,
+            );
         }
         self.scroll_top = self
             .scroll_top
@@ -3252,9 +3252,7 @@ fn mention_token(text: &str, cursor: usize) -> Option<MentionToken> {
         .rev()
         .find_map(|(at, ch)| ch.is_whitespace().then_some(at + ch.len_utf8()))
         .unwrap_or(0);
-    let Some(relative_at) = text[token_start..cursor].rfind('@') else {
-        return None;
-    };
+    let relative_at = text[token_start..cursor].rfind('@')?;
     let at = token_start + relative_at;
     let valid_boundary = at == 0
         || text[..at]
@@ -5029,6 +5027,7 @@ impl Composer {
                 } else {
                     SessionCommandPayload::Run {
                         request: RunRequest {
+                            mode: resolved.mode,
                             prompt: content.clone(),
                             harness: resolved.harness,
                             model: resolved.model.clone(),
@@ -6717,7 +6716,7 @@ mod tests {
     fn cluster_inset_glides_between_the_source_endpoints() {
         assert_eq!(ACTION_UTILITY_GAP, 2.0);
         assert_eq!(ACTION_PRIMARY_GAP, Theme::SPACE_SM);
-        assert!(ACTION_UTILITY_GAP < ACTION_PRIMARY_GAP);
+        const { assert!(ACTION_UTILITY_GAP < ACTION_PRIMARY_GAP) };
         // The morph starts from the OLD mode's resting inset (no sideways
         // step at the commit) and eases to the committed mode's…
         assert_eq!(morph_cluster_inset(true, 0.0), 8.0); // expand: from compact pr-2

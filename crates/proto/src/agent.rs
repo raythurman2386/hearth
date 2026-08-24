@@ -48,6 +48,28 @@ pub enum SandboxLevel {
     DangerFullAccess,
 }
 
+/// The interaction mode for a session, mirroring Raven's plan/agent/chat
+/// modes (and the ACP `session/set_mode` ids). `None` on a run means the
+/// harness's own default applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionMode {
+    Plan,
+    Agent,
+    Chat,
+}
+
+impl SessionMode {
+    /// The ACP `session/set_mode` mode id.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SessionMode::Plan => "plan",
+            SessionMode::Agent => "agent",
+            SessionMode::Chat => "chat",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SteeringMode {
@@ -99,6 +121,10 @@ pub struct RunRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<HarnessId>,
     pub model: Option<String>,
+    /// The session interaction mode (plan/agent/chat). `None` = the harness's
+    /// own default. Additive + serde-defaulted for wire compat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<SessionMode>,
     pub reasoning: Option<ReasoningLevel>,
     /// Harness-specific option selections (option id -> choice id), JSON round-tripped.
     #[serde(default)]

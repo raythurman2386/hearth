@@ -32,6 +32,7 @@ fn harness() -> AcpHarness {
 
 fn request(prompt: &str) -> RunRequest {
     RunRequest {
+        mode: None,
         prompt: prompt.into(),
         harness: None,
         model: Some("grok-4.5".into()),
@@ -504,6 +505,32 @@ fn descriptor_surface_matches_registry_expectations() {
 }
 
 #[tokio::test]
+async fn requested_mode_is_sent_via_set_mode() {
+    // A run carrying mode=agent must send session/set_mode with modeId=agent
+    // before the first prompt; the fixture refuses the turn if it didn't.
+    let (controls, _steer, _token) = controls();
+    let mut req = request("scenario:set-mode");
+    req.mode = Some(hearth_proto::SessionMode::Agent);
+    let events = run_to_end(&harness(), req, controls).await;
+    assert!(
+        events.contains(&AgentEvent::TextDelta {
+            text: "mode set".into()
+        }),
+        "{events:?}"
+    );
+    assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)]);
+}
+
+#[tokio::test]
+async fn no_mode_means_no_set_mode_call() {
+    // A run without a mode must not send session/set_mode; the fixture's
+    // happy path (which asserts nothing about modes) still completes.
+    let (controls, _steer, _token) = controls();
+    let events = run_to_end(&harness(), request("scenario:happy"), controls).await;
+    assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)]);
+}
+
+#[tokio::test]
 async fn models_are_discovered_from_the_acp_session() {
     // ACP is the source of truth: the fixture advertises a model config
     // option, so the picker list comes from the wire, not the static catalog.
@@ -722,8 +749,7 @@ async fn grok_subagent_lifecycle_tails_the_disk_transcript_into_tagged_events() 
             .unwrap();
         writeln!(
             f,
-            "{}",
-            "{\"type\":\"assistant\",\"content\":\"two files\",\"model_id\":\"grok-4.6-build\"}"
+            "{{\"type\":\"assistant\",\"content\":\"two files\",\"model_id\":\"grok-4.6-build\"}}"
         )
         .unwrap();
     });

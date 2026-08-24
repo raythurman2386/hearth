@@ -29,6 +29,7 @@ fn harness() -> CursorHarness {
 
 fn request(prompt: &str) -> RunRequest {
     RunRequest {
+        mode: None,
         prompt: prompt.into(),
         harness: None,
         model: None,

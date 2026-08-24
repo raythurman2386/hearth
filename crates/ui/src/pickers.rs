@@ -22,7 +22,8 @@ use gpui::{
 
 use hearth_engine::registry::HarnessDescriptor;
 use hearth_proto::{
-    ChatConfig, FolderListing, HarnessId, Model, ReasoningLevel, RepoRef, SandboxLevel, Space,
+    ChatConfig, FolderListing, HarnessId, Model, ReasoningLevel, RepoRef, SandboxLevel,
+    SessionMode, Space,
 };
 use hearth_rpc::methods;
 
@@ -91,6 +92,8 @@ pub fn bump_harness_catalog(cx: &mut App) {
 pub struct DraftConfig {
     pub harness: Option<HarnessId>,
     pub model: Option<String>,
+    /// The session interaction mode (plan/agent/chat); `None` = harness default.
+    pub mode: Option<SessionMode>,
     pub reasoning: Option<ReasoningLevel>,
     /// option id → choice id (only non-defaults are meaningful).
     pub model_options: serde_json::Map<String, serde_json::Value>,
@@ -136,6 +139,8 @@ pub enum CheckoutPlan {
 pub struct ResolvedRunConfig {
     pub harness: Option<HarnessId>,
     pub model: Option<String>,
+    /// The session interaction mode (plan/agent/chat); `None` = harness default.
+    pub mode: Option<SessionMode>,
     pub reasoning: Option<ReasoningLevel>,
     pub model_options: serde_json::Map<String, serde_json::Value>,
 }
@@ -146,6 +151,7 @@ impl ResolvedRunConfig {
         Some(ChatConfig {
             harness: self.harness?,
             model: self.model.clone(),
+            mode: self.mode,
             reasoning: self.reasoning,
             model_options: self.model_options.clone(),
             sandbox: SandboxLevel::WorkspaceWrite,
@@ -207,6 +213,15 @@ pub fn reasoning_label(level: ReasoningLevel) -> &'static str {
         ReasoningLevel::Ultra => "Ultra",
         ReasoningLevel::Ultracode => "Ultracode",
         ReasoningLevel::Ultrathink => "Ultrathink",
+    }
+}
+
+/// Display label for a session interaction mode (the mode chip + popover).
+pub fn mode_label(mode: SessionMode) -> &'static str {
+    match mode {
+        SessionMode::Plan => "Plan",
+        SessionMode::Agent => "Agent",
+        SessionMode::Chat => "Chat",
     }
 }
 
@@ -462,6 +477,8 @@ pub enum PickerKind {
     Checkout,
     HarnessModel,
     Traits,
+    /// The interaction-mode picker (plan/agent/chat).
+    Mode,
     /// New-session canvas only: which project the session mints into. A pick
     /// re-keys everything project-derived (refs, harness/model catalogs) via
     /// the state observer.
@@ -781,6 +798,19 @@ impl Pickers {
         self.defaults.model_for(harness).map(|m| m.id.as_str())
     }
 
+    /// Effective interaction mode (plan/agent/chat): the draft pick, the
+    /// selected chat's config, or the remembered last-used mode. `None` means
+    /// the harness's own default applies.
+    fn effective_mode(&self, cx: &App) -> Option<SessionMode> {
+        self.config.mode.or_else(|| {
+            match self.state.read(cx).selected_chat_row() {
+                Some(chat) => chat.config.as_ref().and_then(|c| c.mode),
+                // New chat: the remembered last-used mode.
+                None => self.defaults.mode,
+            }
+        })
+    }
+
     /// Effective reasoning — always concrete once the model is known: the
     /// draft pick / chat config / remembered default, clamped to the selected
     /// model's ladder, falling back to the model's default level.
@@ -861,6 +891,7 @@ impl Pickers {
                 .map(|m| m.id.clone())
                 // Catalog not loaded (offline): still send the id we know.
                 .or_else(|| self.effective_model_id(cx).map(str::to_string)),
+            mode: self.effective_mode(cx),
             reasoning: self.effective_reasoning(cx),
             model_options: self.explicit_options(cx),
         }
@@ -945,6 +976,7 @@ impl Pickers {
             },
             PickerKind::Branch => self.selected_ref_index(cx),
             PickerKind::HarnessModel | PickerKind::Traits => self.selected_model_index(cx),
+            PickerKind::Mode => self.effective_mode_index(cx),
             PickerKind::Space => self.selected_space_index(cx),
             PickerKind::Device => self.selected_device_index(cx),
         };
@@ -1003,6 +1035,8 @@ impl Pickers {
                 // timeout/fallback result until the application restarts.
                 self.prefetch_models(true, cx);
             }
+            // Mode is a fixed three-row menu — nothing to load.
+            PickerKind::Mode => {}
             // Projects and devices are already synced state — nothing to load.
             PickerKind::Space | PickerKind::Device => {}
         }
@@ -1405,6 +1439,18 @@ impl Pickers {
         cx.notify();
     }
 
+    fn pick_mode(&mut self, mode: SessionMode, cx: &mut Context<Self>) {
+        // Always a concrete selection (no toggle-back-to-default).
+        if self.state.read(cx).selected_chat.is_some() {
+            self.update_chat_config(cx, move |config| config.mode = Some(mode));
+        } else {
+            self.config.mode = Some(mode);
+            self.defaults.mode = Some(mode);
+            self.save_defaults();
+        }
+        cx.notify();
+    }
+
     fn pick_option(
         &mut self,
         option_id: String,
@@ -1666,6 +1712,15 @@ impl Pickers {
             .unwrap_or(0)
     }
 
+    /// The mode popover's highlighted row: the effective mode's index in the
+    /// fixed plan/agent/chat list (0 when none is set).
+    fn effective_mode_index(&self, cx: &App) -> usize {
+        const MODES: [SessionMode; 3] = [SessionMode::Plan, SessionMode::Agent, SessionMode::Chat];
+        self.effective_mode(cx)
+            .and_then(|m| MODES.iter().position(|x| *x == m))
+            .unwrap_or(0)
+    }
+
     /// The picker's visible row count (keyboard nav bounds).
     fn model_rows_len(&self, cx: &App) -> usize {
         self.model_rows(cx).len()
@@ -1883,10 +1938,10 @@ impl Pickers {
             self.defaults.project = state.selected_space.clone();
             self.defaults.no_project = state.no_project;
         }
-        if let Some(dir) = &self.data_dir {
-            if let Err(err) = self.defaults.save(dir) {
-                tracing::warn!(error = %err, "composer-defaults save failed");
-            }
+        if let Some(dir) = &self.data_dir
+            && let Err(err) = self.defaults.save(dir)
+        {
+            tracing::warn!(error = %err, "composer-defaults save failed");
         }
     }
 
@@ -2163,6 +2218,7 @@ impl Pickers {
                     // mouse-only.
                     Some(PickerKind::HarnessModel) => self.model_rows_len(cx),
                     Some(PickerKind::Traits) => 0, // merged into HarnessModel
+                    Some(PickerKind::Mode) => 3,
                     Some(PickerKind::Space) => self.filtered_space_rows(cx).len(),
                     Some(PickerKind::Device) => self.filtered_device_rows(cx).len(),
                     None => 0,
@@ -2191,6 +2247,13 @@ impl Pickers {
                         CheckoutKind::NewWorktree
                     };
                     self.pick_checkout(kind, cx);
+                } else if self.open_kind() == Some(PickerKind::Mode) {
+                    const MODES: [SessionMode; 3] =
+                        [SessionMode::Plan, SessionMode::Agent, SessionMode::Chat];
+                    if let Some(mode) = MODES.get(self.active) {
+                        self.pick_mode(*mode, cx);
+                        self.animate_close(cx);
+                    }
                 } else {
                     self.on_search_submit(cx);
                 }
@@ -2207,7 +2270,6 @@ impl Pickers {
         label: SharedString,
         set: bool,
         chip_icon: Option<(&'static str, Option<gpui::Hsla>)>,
-        suffix: Option<(SharedString, Option<gpui::Hsla>)>,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
@@ -2216,6 +2278,7 @@ impl Pickers {
             PickerKind::Checkout => "picker-checkout",
             PickerKind::HarnessModel => "picker-model",
             PickerKind::Traits => "picker-traits",
+            PickerKind::Mode => "picker-mode",
             PickerKind::Space => "picker-space",
             PickerKind::Device => "picker-device",
         };
@@ -2279,17 +2342,6 @@ impl Pickers {
                     .px_0()
                     .justify_center()
                     .child(div().text_size(px(11.0)).child("•••"))
-            })
-            // The effort half of the combined model+effort chip (and the space
-            // chip's "@ device" tag): muted, no icon — one button, two tones.
-            // `tint` overrides the muted tone (the offline warning).
-            .when_some(suffix, |el, (suffix, tint)| {
-                el.child(
-                    div()
-                        .flex_none()
-                        .text_color(tint.unwrap_or(theme.text_muted.opacity(0.7)))
-                        .child(suffix),
-                )
             })
     }
 
@@ -2499,9 +2551,7 @@ impl Pickers {
             // Sessions never move: read-only checkout-kind + ref labels,
             // LEFT-aligned, only when the session's project has git. The
             // target (project @ device) lives in the titlebar now.
-            let Some(space) = space.as_ref().filter(|s| s.git_detected) else {
-                return None;
-            };
+            let space = space.as_ref().filter(|s| s.git_detected)?;
             let is_worktree = chat.cwd.as_deref().is_some_and(|cwd| cwd != space.path);
             let (icon_path, label) = if is_worktree {
                 (crate::icons::FOLDER_WITH_FILES, "Worktree")
@@ -2692,7 +2742,7 @@ impl Pickers {
                             this.ensure_harnesses(false, cx);
                         }
                         // Projects/devices load nothing; no retry surface exists.
-                        PickerKind::Space | PickerKind::Device => {}
+                        PickerKind::Space | PickerKind::Device | PickerKind::Mode => {}
                     }))
                     .child(SharedString::from("Retry")),
             )
@@ -3686,6 +3736,31 @@ impl Pickers {
             .children(sections)
             .into_any_element()
     }
+
+    /// The interaction-mode dropdown body (plan/agent/chat): one menu row per
+    /// mode with a trailing check on the active one. Selecting closes the
+    /// menu (a single choice, unlike the multi-adjust traits menu).
+    fn render_mode_popover(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let current = self.effective_mode(cx);
+        let modes = [SessionMode::Plan, SessionMode::Agent, SessionMode::Chat];
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .child(popover::menu_heading(&theme, "Mode"))
+            .children(modes.into_iter().enumerate().map(|(ix, mode)| {
+                let is_active = current == Some(mode);
+                popover::menu_row(&theme, is_active, format!("mode-row-{ix}"))
+                    .id(("mode-row", ix))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.pick_mode(mode, cx);
+                        this.animate_close(cx);
+                    }))
+                    .child(SharedString::from(mode_label(mode)))
+            }))
+            .into_any_element()
+    }
 }
 
 /// The "Default" marker beside a section's default choice: a ghost badge —
@@ -4079,6 +4154,13 @@ impl Render for Pickers {
                     self.popover_frame_flush(240.0, content, cx),
                 ))
             }
+            Some(PickerKind::Mode) => {
+                let content = self.render_mode_popover(cx);
+                Some((
+                    PickerKind::Mode,
+                    self.popover_frame_flush(200.0, content, cx),
+                ))
+            }
             None => None,
         };
 
@@ -4105,7 +4187,6 @@ impl Render for Pickers {
             model_label,
             true,
             Some(harness_icon),
-            None,
             &theme,
             cx,
         );
@@ -4119,11 +4200,26 @@ impl Render for Pickers {
                 traits_label,
                 traits_active,
                 None,
-                None,
                 &theme,
                 cx,
             )
         });
+        // Mode chip (plan/agent/chat): the trigger label is the current mode,
+        // brightening only when a non-default mode is active. Always shown —
+        // every harness has a mode (Raven's plan/agent/chat; others fall back
+        // to their own default when `None`).
+        let mode_label: SharedString = self
+            .effective_mode(cx)
+            .map(|m| SharedString::from(mode_label(m)))
+            .unwrap_or_else(|| SharedString::from("Mode"));
+        let mode_chip = self.trigger_chip(
+            PickerKind::Mode,
+            mode_label,
+            self.effective_mode(cx).is_some(),
+            None,
+            &theme,
+            cx,
+        );
         let right = div()
             .flex()
             .flex_row()
@@ -4132,6 +4228,13 @@ impl Render for Pickers {
             .gap(px(4.0))
             // End-anchored: the menu's right edge sits flush with the chip's
             // right edge (user request), same as the footer's ref popover.
+            .child(attach_overlay_end(
+                mode_chip,
+                &mut overlay,
+                PickerKind::Mode,
+                "mode-popover",
+                closing,
+            ))
             .child(attach_overlay_end(
                 model_chip,
                 &mut overlay,
