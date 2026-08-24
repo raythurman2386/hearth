@@ -1,0 +1,15 @@
+# cargo-audit configuration.
+#
+# The 4 audit failures are two quick-xml advisories (RUSTSEC-2026-0194,
+# RUSTSEC-2026-0195) each matching both locked versions (0.30.0 via `xcb`, and
+# 0.39.4 via `wayland-scanner`). Both are BUILD-TIME-ONLY transitive deps of
+# the pinned gpui fork (wingleeio/zed): xcb parses X11 protocol XML to
+# generate bindings, wayland-scanner is a proc-macro that parses wayland
+# protocol XML. Neither ships in the runtime binary, and neither is reachable
+# from runtime code. They cannot be bumped without bumping the gpui rev
+# (which pins them). Revisit when the gpui fork is upgraded.
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0194", # quick-xml quadratic duplicate-attr check (build-time only)
+    "RUSTSEC-2026-0195", # quick-xml unbounded NsReader allocation (build-time only)
+]

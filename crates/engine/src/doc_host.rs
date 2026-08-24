@@ -3346,7 +3346,7 @@ impl DocHost {
         };
         let config = chat.config;
         Some(hearth_proto::RunRequest {
-            mode: None,
+            mode: config.as_ref().and_then(|c| c.mode),
             prompt: prompt.to_string(),
             harness: config.as_ref().map(|c| c.harness),
             model: config.as_ref().and_then(|c| c.model.clone()),

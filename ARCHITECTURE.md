@@ -1,7 +1,9 @@
 # hearth — Architecture
 
-A ground-up native rewrite of [hearth](../hearth) — a multi-device controller for coding agents
-(Claude Code / Codex) — in Rust, with a gpui UI. Fresh app; no backwards compatibility required.
+User and contributor guides live under [`docs/`](docs/README.md) (usage, configuration, harnesses, troubleshooting). This file is the **system architecture** note for the engine/UI/optional-edge topology. Sync paths described below are **opt-in** in this fork; a bare install stays local-only.
+
+A ground-up native rewrite (Zeron/comet lineage) of a multi-device controller for coding agents
+— in Rust, with a gpui UI. Fresh app; no backwards compatibility required.
 
 **Pillars (from the goal):**
 - Optional sync uses Loro CRDT docs (loro-mirror model) through Cloudflare Durable Objects; the same docs persist locally when sync is disabled.
