@@ -20,9 +20,9 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 - A chat2 row that parks on missing causal deps no longer advances the persisted cursor past it. The client restores the cursor to its pre-row value and requests a backfill repair so the parked row materializes; the engine sink persists cursor-1 for a parked row so on-disk cursor and content stay in lockstep. Fixes the empty-doc/advanced-cursor wedge seen on the 2026-08-24 hub.
 - A GitHub CLI request timeout now kills the whole process group, preventing orphaned `mise` grandchildren from running forever at high CPU and accumulating across refresh cycles.
 - The Unix-only `process_group` child-launch call in `source_control` is gated under `cfg(unix)` so the codebase compiles on non-Unix targets.
-- The release workflow now builds only the base `x86_64-unknown-linux-gnu` binary (dropped Windows, macOS, and aarch64-linux cross builds to cut Actions billing); each release still publishes checksums and a stable `hearth`-named tarball for the ACP registry.
+- The Windows build warnings are fixed for real: `on_selection_mouse_up` renames its unix-only `Context` param to `_cx`, and the `run_checked` audio helper is gated under `cfg(not(windows))` (it is only referenced by the macos/unix `run_player` branches).
 - Fixed pre-existing clippy failures in `hearth-sync`/`hearth-doc` for real: `handle_conn`/`dispatch_http` take a shared `HubContext` (was `too_many_arguments`), the whois cache uses a `WhoisCacheEntry` struct (was `type_complexity`), and a `then(||…)` is `then_some(...)` (was `unnecessary_lazy_evaluations`). The lone remaining `result_large_err` allow on the tungstenite handshake callback is documented — `ErrorResponse` is a large type owned by the external crate.
-- Repaired the CI and release workflows (format, lint, single test, audit; free disk space before the test build) and removed Windows dead code.
+- The release workflow now builds the `x86_64-unknown-linux-gnu` and `x86_64-pc-windows-msvc` binaries (macOS and aarch64-linux cross builds were dropped to cut Actions billing); each release still publishes per-binary and archive checksums plus stable `hearth` / `hearth.exe`-named archives for the ACP registry. The Windows build now compiles end to end thanks to the `cfg` fixes above.
 
 ### Security
 

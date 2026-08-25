@@ -10,8 +10,17 @@ env:
 
 jobs:
   build:
-    name: Build
-    runs-on: ubuntu-latest
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
     steps:
       - uses: actions/checkout@v7
 
@@ -21,6 +30,7 @@ jobs:
           toolchain: "1.97"
 
       - name: Install Linux system deps
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -35,7 +45,7 @@ jobs:
             libcairo2-dev libgdk-pixbuf-2.0-dev libgtk-3-dev
 
       - name: Build
-        run: cargo build --release
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Prepare binary
         id: artifact
@@ -43,8 +53,13 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
-          BIN_NAME="hearth-${VERSION}-x86_64-unknown-linux-gnu"
-          cp "target/release/hearth" "${BIN_NAME}"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            BIN_NAME="hearth-${VERSION}-${{ matrix.target }}.exe"
+            cp "target/${{ matrix.target }}/release/hearth.exe" "${BIN_NAME}"
+          else
+            BIN_NAME="hearth-${VERSION}-${{ matrix.target }}"
+            cp "target/${{ matrix.target }}/release/hearth" "${BIN_NAME}"
+          fi
           echo "bin_name=${BIN_NAME}" >> $GITHUB_OUTPUT
 
       - name: Upload artifact
@@ -79,22 +94,28 @@ jobs:
           cat checksums.txt
 
       - name: Create archives
-        # Build a .tar.gz archive for the ACP registry's `binary`
-        # distribution. The archive contains a stable `hearth` name so the
-        # registry's `cmd` stays version-independent. The raw binary is kept
-        # alongside (the installers download it directly). Archive checksums
-        # are appended to checksums.txt so agent.json can pin them.
+        # Build archives for the ACP registry's `binary` distribution. Each
+        # archive contains a stable `hearth` / `hearth.exe` name so the
+        # registry's `cmd` stays version-independent. The raw binaries are
+        # kept alongside (the installers download them directly). Archive
+        # checksums are appended to checksums.txt so agent.json can pin them.
         working-directory: artifacts
         shell: bash
         run: |
           for f in hearth-*; do
             [[ "$f" == "checksums.txt" ]] && continue
             mkdir -p stage
-            cp "$f" stage/hearth
-            (cd stage && tar -czf "../${f}.tar.gz" hearth)
+            if [[ "$f" == *.exe ]]; then
+              cp "$f" stage/hearth.exe
+              (cd stage && zip -q "../${f}.zip" hearth.exe)
+            else
+              cp "$f" stage/hearth
+              (cd stage && tar -czf "../${f}.tar.gz" hearth)
+            fi
             rm -rf stage
           done
           sha256sum hearth-*.tar.gz >> checksums.txt 2>/dev/null || true
+          sha256sum hearth-*.zip >> checksums.txt 2>/dev/null || true
           echo "--- checksums.txt (raw + archives) ---"
           cat checksums.txt
 
