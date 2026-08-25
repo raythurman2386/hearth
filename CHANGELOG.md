@@ -4,6 +4,12 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-25
+
+### Fixed
+
+- Long silent tool calls (`cargo build`, lint, link) no longer look finished. ACP quiet-settle after an execute-kind tool waits at least 180s instead of synthesizing `Done` at 30s of no stdout, and a resume a few seconds after park keeps the normal 120s engine watchdog instead of the 20s self-continued window. That 20s path was oscillating Idle↔Working on the live hub and letting follow-up sends cancel the still-running tool.
+
 ## [0.2.1] - 2026-08-25
 
 ### Fixed
