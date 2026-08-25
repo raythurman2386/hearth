@@ -229,28 +229,38 @@ pub struct PeerIdentity {
 const WHOIS_OK_TTL: Duration = Duration::from_secs(60);
 const WHOIS_ERR_TTL: Duration = Duration::from_secs(2);
 
-#[allow(clippy::type_complexity)]
-fn whois_cache() -> &'static Mutex<HashMap<String, (Instant, Result<PeerIdentity, String>)>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, (Instant, Result<PeerIdentity, String>)>>> =
-        OnceLock::new();
+/// A cached `tailscale whois` result. The Ok arm carries a [`PeerIdentity`];
+/// the Err arm carries the stringified failure so a transient auth failure is
+/// not retried immediately (see `WHOIS_ERR_TTL`).
+#[derive(Debug, Clone)]
+struct WhoisCacheEntry {
+    at: Instant,
+    result: Result<PeerIdentity, String>,
+}
+
+/// Cache of `tailscale whois` outcomes keyed by tailnet IP. Resolving identity
+/// spawns a subprocess, so healthy peers are cached for `WHOIS_OK_TTL` and
+/// failures for `WHOIS_ERR_TTL`.
+fn whois_cache() -> &'static Mutex<HashMap<String, WhoisCacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, WhoisCacheEntry>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Resolve a peer's identity from its tailnet IP via `tailscale whois`.
 pub async fn whois(ip: &str) -> Result<PeerIdentity, SyncError> {
-    if let Some((at, cached)) = whois_cache()
+    if let Some(entry) = whois_cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(ip)
         .cloned()
     {
-        let ttl = if cached.is_ok() {
+        let ttl = if entry.result.is_ok() {
             WHOIS_OK_TTL
         } else {
             WHOIS_ERR_TTL
         };
-        if at.elapsed() < ttl {
-            return cached.map_err(SyncError::Tailnet);
+        if entry.at.elapsed() < ttl {
+            return entry.result.map_err(SyncError::Tailnet);
         }
     }
     let result = whois_uncached(ip).await;
@@ -259,13 +269,13 @@ pub async fn whois(ip: &str) -> Result<PeerIdentity, SyncError> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(
             ip.to_string(),
-            (
-                Instant::now(),
-                match &result {
+            WhoisCacheEntry {
+                at: Instant::now(),
+                result: match &result {
                     Ok(id) => Ok(id.clone()),
                     Err(err) => Err(err.to_string()),
                 },
-            ),
+            },
         );
     result
 }
@@ -323,15 +333,19 @@ impl PeerServer {
             .map_err(|e| SyncError::Tailnet(format!("accept: {e}")))?;
         let path_cell = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
         let path_cell_for_cb = path_cell.clone();
-        let ws = tokio_tungstenite::accept_hdr_async(stream, {
-            #[allow(clippy::result_large_err)]
-            move |req: &Request, resp: Response| {
+        // tungstenite's Callback trait fixes the closure return type to
+        // `Result<Response, ErrorResponse>`, and `ErrorResponse` is a ~136-byte
+        // type owned by the crate; we only ever observe the request path and
+        // never produce an error here, so the large `Err` variant is inherent
+        // to the external API and cannot be boxed away.
+        #[allow(clippy::result_large_err)]
+        let ws =
+            tokio_tungstenite::accept_hdr_async(stream, move |req: &Request, resp: Response| {
                 *path_cell_for_cb.lock().unwrap() = Some(req.uri().path().to_string());
                 Ok(resp)
-            }
-        })
-        .await
-        .map_err(|e| SyncError::Tailnet(format!("ws handshake: {e}")))?;
+            })
+            .await
+            .map_err(|e| SyncError::Tailnet(format!("ws handshake: {e}")))?;
         let path = path_cell.lock().unwrap().clone().unwrap_or_default();
         Ok((path, ws, peer))
     }

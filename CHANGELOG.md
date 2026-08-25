@@ -21,8 +21,7 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 - A GitHub CLI request timeout now kills the whole process group, preventing orphaned `mise` grandchildren from running forever at high CPU and accumulating across refresh cycles.
 - The Unix-only `process_group` child-launch call in `source_control` is gated under `cfg(unix)` so the codebase compiles on non-Unix targets.
 - The release workflow now builds only the base `x86_64-unknown-linux-gnu` binary (dropped Windows, macOS, and aarch64-linux cross builds to cut Actions billing); each release still publishes checksums and a stable `hearth`-named tarball for the ACP registry.
-- Silenced four pre-existing clippy lint failures in `hearth-sync`/`hearth-doc` (`too_many_arguments`, `type_complexity`, `result_large_err`, `unnecessary_lazy_evaluations`) so `cargo clippy --all-targets -- -D warnings` is clean.
-- Shell-env imports are gated under `cfg(unix)` too, fixing a Windows build break.
+- Fixed pre-existing clippy failures in `hearth-sync`/`hearth-doc` for real: `handle_conn`/`dispatch_http` take a shared `HubContext` (was `too_many_arguments`), the whois cache uses a `WhoisCacheEntry` struct (was `type_complexity`), and a `then(||…)` is `then_some(...)` (was `unnecessary_lazy_evaluations`). The lone remaining `result_large_err` allow on the tungstenite handshake callback is documented — `ErrorResponse` is a large type owned by the external crate.
 - Repaired the CI and release workflows (format, lint, single test, audit; free disk space before the test build) and removed Windows dead code.
 
 ### Security

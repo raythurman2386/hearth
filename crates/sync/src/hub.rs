@@ -91,25 +91,9 @@ impl Hub {
             loop {
                 match self.listener.accept().await {
                     Ok((stream, peer)) => {
-                        let chats = self.chats.clone();
-                        let registries = self.registries.clone();
-                        let on_rpc = self.config.on_rpc.clone();
-                        let serve_rooms = self.config.serve_rooms;
-                        let skip_whois = self.config.skip_whois;
-                        let releases = self.config.data_dir.join("releases");
+                        let ctx = HubContext::from_hub(&self);
                         tokio::spawn(async move {
-                            if let Err(err) = handle_conn(
-                                stream,
-                                peer,
-                                chats,
-                                registries,
-                                on_rpc,
-                                serve_rooms,
-                                skip_whois,
-                                releases,
-                            )
-                            .await
-                            {
+                            if let Err(err) = handle_conn(stream, peer, ctx).await {
                                 // Whois/auth failures reset the TCP socket from the
                                 // client's POV — keep them visible at warn.
                                 let msg = err.to_string();
@@ -131,18 +115,37 @@ impl Hub {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn handle_conn(
-    mut stream: TcpStream,
-    peer: SocketAddr,
+/// Per-connection state shared from the accept loop into [`handle_conn`].
+#[derive(Clone)]
+struct HubContext {
     chats: Arc<ChatRooms>,
     registries: Arc<RegistryRooms>,
     on_rpc: Option<RpcHandler>,
     serve_rooms: bool,
     skip_whois: bool,
     releases: PathBuf,
+}
+
+impl HubContext {
+    /// Capture the shared state from a bound [`Hub`].
+    fn from_hub(hub: &Hub) -> Self {
+        Self {
+            chats: hub.chats.clone(),
+            registries: hub.registries.clone(),
+            on_rpc: hub.config.on_rpc.clone(),
+            serve_rooms: hub.config.serve_rooms,
+            skip_whois: hub.config.skip_whois,
+            releases: hub.config.data_dir.join("releases"),
+        }
+    }
+}
+
+async fn handle_conn(
+    mut stream: TcpStream,
+    peer: SocketAddr,
+    ctx: HubContext,
 ) -> Result<(), SyncError> {
-    if !skip_whois && !peer.ip().is_loopback() {
+    if !ctx.skip_whois && !peer.ip().is_loopback() {
         whois(&peer.ip().to_string()).await?;
     }
 
@@ -173,31 +176,31 @@ async fn handle_conn(
         complete_ws_handshake(&mut stream, &req).await?;
         let ws = WebSocketStream::from_raw_socket(stream, Role::Server, None).await;
         if let Some(chat_id) = strip_prefix_suffix(&path, "/chat2/", "/ws") {
-            if !serve_rooms {
+            if !ctx.serve_rooms {
                 return Err(SyncError::Tailnet("this peer does not host rooms".into()));
             }
-            let room = chats.get(chat_id)?;
+            let room = ctx.chats.get(chat_id)?;
             room.serve_ws(ws).await;
             return Ok(());
         }
         if let Some(org) = strip_prefix_suffix(&path, "/registry/", "/ws") {
-            if !serve_rooms {
+            if !ctx.serve_rooms {
                 return Err(SyncError::Tailnet("this peer does not host rooms".into()));
             }
-            let room = registries.get(org)?;
+            let room = ctx.registries.get(org)?;
             room.serve_ws(ws).await;
             return Ok(());
         }
         if path == "/registry/ws" {
-            if !serve_rooms {
+            if !ctx.serve_rooms {
                 return Err(SyncError::Tailnet("this peer does not host rooms".into()));
             }
-            let room = registries.get("tailnet")?;
+            let room = ctx.registries.get("tailnet")?;
             room.serve_ws(ws).await;
             return Ok(());
         }
         if path == "/rpc" || path == "/rpc/" {
-            if let Some(on_rpc) = on_rpc {
+            if let Some(on_rpc) = ctx.on_rpc {
                 on_rpc(ws);
                 return Ok(());
             }
@@ -206,7 +209,7 @@ async fn handle_conn(
         return Err(SyncError::Tailnet(format!("unknown ws path {path}")));
     }
 
-    dispatch_http(&mut stream, &req, chats, registries, serve_rooms, releases).await
+    dispatch_http(&mut stream, &req, &ctx).await
 }
 
 struct HttpReq {
@@ -319,10 +322,7 @@ async fn complete_ws_handshake(stream: &mut TcpStream, req: &HttpReq) -> Result<
 async fn dispatch_http(
     stream: &mut TcpStream,
     req: &HttpReq,
-    chats: Arc<ChatRooms>,
-    _registries: Arc<RegistryRooms>,
-    serve_rooms: bool,
-    releases: PathBuf,
+    ctx: &HubContext,
 ) -> Result<(), SyncError> {
     if req.path == "/health" && req.method == "GET" {
         return write_http(
@@ -341,7 +341,7 @@ async fn dispatch_http(
         if rest.contains("..") || !is_safe_release_path(rest) {
             return write_http(stream, 400, "text/plain", b"bad path", &[]).await;
         }
-        let file = releases.join(rest);
+        let file = ctx.releases.join(rest);
         match std::fs::read(&file) {
             Ok(bytes) => {
                 return write_http(stream, 200, "application/octet-stream", &bytes, &[]).await;
@@ -350,12 +350,12 @@ async fn dispatch_http(
         }
     }
 
-    if !serve_rooms {
+    if !ctx.serve_rooms {
         return write_http(stream, 404, "text/plain", b"not found", &[]).await;
     }
 
     if let Some(chat_id) = strip_prefix_suffix(&req.path, "/chat2/", "/checkpoint") {
-        let room = chats.get(chat_id)?;
+        let room = ctx.chats.get(chat_id)?;
         if req.method == "GET" {
             let Some(bytes) = room.checkpoint_bytes()? else {
                 return write_http(
@@ -471,7 +471,7 @@ async fn dispatch_http(
     }
 
     if let Some(chat_id) = strip_prefix_suffix(&req.path, "/chat2/", "/rows") {
-        let room = chats.get(chat_id)?;
+        let room = ctx.chats.get(chat_id)?;
         if req.method == "GET" {
             let after = req
                 .query
