@@ -40,7 +40,8 @@ use tokio::sync::mpsc;
 
 use hearth_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ModelOption, ModelOptionChoice, ReasoningLevel,
-    RunRequest, SessionMode, SlashCommand, SteeringMode, UserInputAnswer, UserInputQuestion,
+    RunRequest, SessionMode, SlashCommand, SteeringMode, ToolCall, UserInputAnswer,
+    UserInputQuestion,
 };
 
 use crate::jsonrpc::{Incoming, RpcClient};
@@ -1682,12 +1683,16 @@ fn track_turn_signals(
     ev: &AgentEvent,
     content_seen: &mut bool,
     open_tools: &mut std::collections::HashSet<String>,
+    had_exec: &mut bool,
 ) {
     match ev {
         AgentEvent::TextDelta { text } if !text.is_empty() => *content_seen = true,
-        AgentEvent::ToolCall { id, .. } => {
+        AgentEvent::ToolCall { id, call, .. } => {
             *content_seen = true;
             open_tools.insert(id.clone());
+            if matches!(call, ToolCall::Exec { .. }) {
+                *had_exec = true;
+            }
         }
         AgentEvent::ToolResult { id, .. } => {
             open_tools.remove(id);
@@ -2069,6 +2074,20 @@ async fn run_session(session: Session) {
     let mut last_update_at = tokio::time::Instant::now();
     let mut turn_content_seen = false;
     let mut open_tools: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // An execute-kind tool this turn (even after it resolves) means silence
+    // is often a compile/link with no stdout — the 30s blanket settle was
+    // firing mid-`cargo build` on the live hub (2026-08-24), synthesizing
+    // Done, then more output resumed as self-continued. `0` disables the
+    // extension (tests that pin the generic 30s path).
+    let exec_quiet: Option<Duration> = match std::env::var("HEARTH_ACP_EXEC_QUIET_SETTLE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        Some(0) => None,
+        Some(ms) => Some(Duration::from_millis(ms)),
+        None => Some(Duration::from_secs(180)),
+    };
+    let mut had_exec = false;
     let open_questions = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     // PREVENTION, ahead of all the recovery above: never send a
     // `session/prompt` into a session that is visibly mid SELF-CONTINUED
@@ -2241,6 +2260,7 @@ async fn run_session(session: Session) {
                     done_current = false;
                     turn_content_seen = false;
                     open_tools.clear();
+                    had_exec = false;
                     last_update_at = tokio::time::Instant::now();
                     prompt_seq += 1;
                     current_prompt_id =
@@ -2328,7 +2348,12 @@ async fn run_session(session: Session) {
                     let events =
                         session_update_events(&method, &params, &session_id, &mut subagents);
                     for ev in events {
-                        track_turn_signals(&ev, &mut turn_content_seen, &mut open_tools);
+                        track_turn_signals(
+                            &ev,
+                            &mut turn_content_seen,
+                            &mut open_tools,
+                            &mut had_exec,
+                        );
                         if !send(&event_tx, ev).await {
                             break 'main;
                         }
@@ -2525,6 +2550,7 @@ async fn run_session(session: Session) {
                     done_current = false;
                     turn_content_seen = false;
                     open_tools.clear();
+                    had_exec = false;
                     last_update_at = tokio::time::Instant::now();
                     prompt_seq += 1;
                     current_prompt_id =
@@ -2575,6 +2601,7 @@ async fn run_session(session: Session) {
                     done_current = false;
                     turn_content_seen = false;
                     open_tools.clear();
+                    had_exec = false;
                     last_update_at = tokio::time::Instant::now();
                     prompt_seq += 1;
                     current_prompt_id =
@@ -2599,7 +2626,14 @@ async fn run_session(session: Session) {
             // unsettled. Feeds the recovery arm below by expiring its
             // deadline — one settle path for all three evidence sources.
             _ = tokio::time::sleep_until(
-                last_update_at + quiet_settle.unwrap_or_default()
+                last_update_at + {
+                    let base = quiet_settle.unwrap_or_default();
+                    if had_exec {
+                        exec_quiet.map(|d| d.max(base)).unwrap_or(base)
+                    } else {
+                        base
+                    }
+                }
             ), if quiet_settle.is_some()
                 && starve_deadline.is_none()
                 && turn.is_some()
@@ -2608,9 +2642,16 @@ async fn run_session(session: Session) {
                 && open_tools.is_empty()
                 && open_questions.load(std::sync::atomic::Ordering::SeqCst) == 0 =>
             {
+                let base = quiet_settle.unwrap_or_default();
+                let window = if had_exec {
+                    exec_quiet.map(|d| d.max(base)).unwrap_or(base)
+                } else {
+                    base
+                };
                 tracing::warn!(
                     target: "hearth_harness::acp",
-                    quiet_ms = quiet_settle.unwrap_or_default().as_millis() as u64,
+                    quiet_ms = window.as_millis() as u64,
+                    had_exec,
                     "turn quiet past the settle window with completed output; \
                      treating the prompt response as dropped"
                 );
@@ -2678,6 +2719,7 @@ async fn run_session(session: Session) {
                     done_current = false;
                     turn_content_seen = false;
                     open_tools.clear();
+                    had_exec = false;
                     last_update_at = tokio::time::Instant::now();
                     prompt_seq += 1;
                     current_prompt_id =
@@ -2750,6 +2792,7 @@ async fn run_session(session: Session) {
                         done_current = false;
                         turn_content_seen = false;
                         open_tools.clear();
+                        had_exec = false;
                         last_update_at = tokio::time::Instant::now();
                         prompt_seq += 1;
                     current_prompt_id =

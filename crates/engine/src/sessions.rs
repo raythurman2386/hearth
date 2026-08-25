@@ -1400,6 +1400,22 @@ async fn drive_run(
             Some(ms) => Some(std::time::Duration::from_millis(ms)),
             None => Some(std::time::Duration::from_secs(20)),
         };
+    // A resume sooner than this after park is the SAME turn continuing
+    // after a false settle (ACP quiet-settle, engine quiesce) — cargo /
+    // lint silence of a few seconds, then more output. Applying the short
+    // self-continued window there oscillated Idle↔Working every ~20s on
+    // the live hub (2026-08-24) and made follow-up sends cancel the still-
+    // running tool. A genuine background wake is a whole agent round-trip
+    // later (the 2026-08-13 incident was minutes). `0` = always short
+    // (tests that pin the 20s path).
+    let self_continued_short_after: std::time::Duration =
+        match std::env::var("HEARTH_SELF_CONTINUED_SHORT_AFTER_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            Some(ms) => std::time::Duration::from_millis(ms),
+            None => std::time::Duration::from_secs(30),
+        };
     let mut self_continued_turn = false;
     // Spawn chips that have SETTLED (tagged Done seen). Content events for a
     // settled chip with no live sink are dropped — a straggler frame after
@@ -1527,9 +1543,14 @@ async fn drive_run(
                     _ => false,
                 }) =>
             {
+                let mut window = quiesce_after.unwrap_or_default();
+                if self_continued_turn && let Some(short) = self_quiesce_after {
+                    window = window.min(short);
+                }
                 tracing::warn!(
                     chat = %chat_id,
-                    quiet_ms = quiesce_after.unwrap_or_default().as_millis() as u64,
+                    quiet_ms = window.as_millis() as u64,
+                    self_continued = self_continued_turn,
                     "turn quiesced: stream silent after completed output with no \
                      turn-end; parking (suspected missing harness Done)"
                 );
@@ -1778,12 +1799,18 @@ async fn drive_run(
                         if id == hearth_proto::LIVE_PLAN_TOOL_ID || !seen_tools.contains(id)
                 ));
             if self_continued {
+                let parked_for = idle_since.map(|at| at.elapsed()).unwrap_or_default();
+                // Brief parks are a false settle (same turn still running);
+                // only a long-gap resume is a genuine background wake that
+                // should use the short quiesce window.
+                self_continued_turn = parked_for >= self_continued_short_after;
                 tracing::info!(
                     chat = %chat_id,
+                    parked_ms = parked_for.as_millis() as u64,
+                    short_window = self_continued_turn,
                     "parked session resumed by self-continued agent output"
                 );
                 idle_since = None;
-                self_continued_turn = true;
                 // The park cleared the fold; rotate to a fresh entry and
                 // fall through — this event is the new segment's first part.
                 entry_id = new_id();
