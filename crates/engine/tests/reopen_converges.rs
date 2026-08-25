@@ -217,11 +217,7 @@ async fn viewer_reopen_converges_on_host_written_transcript() {
             },
         )
         .expect("queue first run");
-    wait_for(
-        || complete_assistant(&a) == 1,
-        "host first turn completes",
-    )
-    .await;
+    wait_for(|| complete_assistant(&a) == 1, "host first turn completes").await;
     // The viewer's snapshot converges (the room carries the row).
     wait_for(
         || complete_assistant(&b) == 1,

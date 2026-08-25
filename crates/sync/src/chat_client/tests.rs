@@ -1404,7 +1404,11 @@ async fn parked_row_holds_cursor_and_requests_repair() {
     // re-delivered it and absorbed it at the honest cursor 4. The decisive
     // check is the repair request above (`after=3`, not 4) and the final
     // converged cursor — both held the gap instead of stamping past it.
-    assert_eq!(lock(&sink.rows).len(), 5, "both the park and the repair apply");
+    assert_eq!(
+        lock(&sink.rows).len(),
+        5,
+        "both the park and the repair apply"
+    );
     assert_eq!(
         *lock(&sink.rows),
         vec![
@@ -1420,7 +1424,7 @@ async fn parked_row_holds_cursor_and_requests_repair() {
 }
 
 /// A GAP row (seq non-contiguous) that ALSO parks on missing deps must leave
-/// the already-held cursor untouched — clamping to `effective - 1` (the 
+/// the already-held cursor untouched — clamping to `effective - 1` (the
 /// row's predecessor) would decrement a cursor the gap already held, stepping
 /// backwards over rows the doc DID materialize. Both the pre-existing
 /// `live_row_gap_holds_cursor_and_repairs` and the parked-row rule must
@@ -1441,10 +1445,7 @@ async fn gap_row_that_parks_keeps_the_held_cursor() {
             serde_json::json!({"headSeq": 2, "seqFloor": 0, "checkpointSeq": 0,
                 "checkpointSize": 0, "rowCount": 2, "rowBytes": 64}),
             &[],
-            vec![
-                (1, "dev-b", vec![0x01]),
-                (2, "dev-b", vec![0x02]),
-            ],
+            vec![(1, "dev-b", vec![0x01]), (2, "dev-b", vec![0x02])],
             false,
         )
         .await;
