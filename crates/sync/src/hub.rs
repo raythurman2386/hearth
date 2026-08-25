@@ -131,6 +131,7 @@ impl Hub {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_conn(
     mut stream: TcpStream,
     peer: SocketAddr,

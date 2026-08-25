@@ -20,7 +20,9 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 - A chat2 row that parks on missing causal deps no longer advances the persisted cursor past it. The client restores the cursor to its pre-row value and requests a backfill repair so the parked row materializes; the engine sink persists cursor-1 for a parked row so on-disk cursor and content stay in lockstep. Fixes the empty-doc/advanced-cursor wedge seen on the 2026-08-24 hub.
 - A GitHub CLI request timeout now kills the whole process group, preventing orphaned `mise` grandchildren from running forever at high CPU and accumulating across refresh cycles.
 - The Unix-only `process_group` child-launch call in `source_control` is gated under `cfg(unix)`, fixing the Windows release build.
+- The Unix-only `process_group` child-launch call in `source_control` is gated under `cfg(unix)`, fixing the Windows release build.
 - The aarch64-linux cross build now pins the Ubuntu 24.04 cross image and installs the gpui system deps as multiarch `:arm64` packages, fixing the aarch64 release build.
+- Silenced four pre-existing clippy lint failures in `hearth-sync`/`hearth-doc` (`too_many_arguments`, `type_complexity`, `result_large_err`, `unnecessary_lazy_evaluations`) so `cargo clippy --all-targets -- -D warnings` is clean.
 - Shell-env imports are gated under `cfg(unix)` too, fixing a Windows build break.
 - Repaired the CI and release workflows (format, lint, single test, audit; free disk space before the test build) and removed Windows dead code.
 

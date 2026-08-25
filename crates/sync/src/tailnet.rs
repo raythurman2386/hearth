@@ -229,6 +229,7 @@ pub struct PeerIdentity {
 const WHOIS_OK_TTL: Duration = Duration::from_secs(60);
 const WHOIS_ERR_TTL: Duration = Duration::from_secs(2);
 
+#[allow(clippy::type_complexity)]
 fn whois_cache() -> &'static Mutex<HashMap<String, (Instant, Result<PeerIdentity, String>)>> {
     static CACHE: OnceLock<Mutex<HashMap<String, (Instant, Result<PeerIdentity, String>)>>> =
         OnceLock::new();
@@ -322,13 +323,15 @@ impl PeerServer {
             .map_err(|e| SyncError::Tailnet(format!("accept: {e}")))?;
         let path_cell = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
         let path_cell_for_cb = path_cell.clone();
-        let ws =
-            tokio_tungstenite::accept_hdr_async(stream, move |req: &Request, resp: Response| {
+        let ws = tokio_tungstenite::accept_hdr_async(stream, {
+            #[allow(clippy::result_large_err)]
+            move |req: &Request, resp: Response| {
                 *path_cell_for_cb.lock().unwrap() = Some(req.uri().path().to_string());
                 Ok(resp)
-            })
-            .await
-            .map_err(|e| SyncError::Tailnet(format!("ws handshake: {e}")))?;
+            }
+        })
+        .await
+        .map_err(|e| SyncError::Tailnet(format!("ws handshake: {e}")))?;
         let path = path_cell.lock().unwrap().clone().unwrap_or_default();
         Ok((path, ws, peer))
     }
