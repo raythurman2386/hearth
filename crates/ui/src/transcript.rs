@@ -2489,14 +2489,14 @@ impl Transcript {
         &mut self,
         _event: &MouseUpEvent,
         _window: &mut Window,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
         self.stop_selection_scroll();
         if let Some(_text) = crate::markdown::selection::end_active_drag() {
             // X11 middle-click paste parity, including the case where the
             // anchor row has virtualized away and cannot receive mouse-up.
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            cx.write_to_primary(ClipboardItem::new_string(_text));
+            _cx.write_to_primary(ClipboardItem::new_string(_text));
         }
     }
 
