@@ -796,14 +796,15 @@ impl ProcessRunner for SystemProcessRunner {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            // Run the child as its own process-group leader so that a timeout
-            // kill (or kill_on_drop) tears down the whole tree, not just the
-            // direct child. Without this, a wrapper like `~/.local/bin/gh`
-            // (which execs `mise use -g gh` then `mise x gh`) leaves its
-            // grandchildren orphaned and running forever when we kill the
-            // wrapper on timeout — accumulating runaway mise processes.
-            .process_group(0)
             .kill_on_drop(true);
+        // Run the child as its own process-group leader so that a timeout
+        // kill (or kill_on_drop) tears down the whole tree, not just the
+        // direct child. Without this, a wrapper like `~/.local/bin/gh`
+        // (which execs `mise use -g gh` then `mise x gh`) leaves its
+        // grandchildren orphaned and running forever when we kill the
+        // wrapper on timeout — accumulating runaway mise processes.
+        #[cfg(unix)]
+        command.process_group(0);
         let mut child = command
             .spawn()
             .map_err(|error| ProcessRunError::Spawn(error.kind()))?;
