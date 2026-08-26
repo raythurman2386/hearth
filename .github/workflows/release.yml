@@ -72,6 +72,8 @@ jobs:
           path: ${{ steps.linux_pkg.outputs.tarball }}
 
       - name: Prepare Windows binary
+        # Upload the raw .exe only — zip is created on ubuntu in the release job
+        # (windows-latest does not ship a `zip` binary; exit 127).
         if: matrix.kind == 'windows'
         id: win_pkg
         shell: bash
@@ -80,21 +82,14 @@ jobs:
           VERSION="${VERSION#v}"
           BIN_NAME="hearth-${VERSION}-x86_64-pc-windows-msvc.exe"
           cp "target/${{ matrix.target }}/release/hearth.exe" "${BIN_NAME}"
-          mkdir -p stage
-          cp "${BIN_NAME}" stage/hearth.exe
-          (cd stage && zip -q "../${BIN_NAME}.zip" hearth.exe)
-          rm -rf stage
           echo "bin_name=${BIN_NAME}" >> "$GITHUB_OUTPUT"
-          echo "zip_name=${BIN_NAME}.zip" >> "$GITHUB_OUTPUT"
 
-      - name: Upload Windows artifacts
+      - name: Upload Windows artifact
         if: matrix.kind == 'windows'
         uses: actions/upload-artifact@v7
         with:
-          name: windows-${{ github.ref_name }}
-          path: |
-            ${{ steps.win_pkg.outputs.bin_name }}
-            ${{ steps.win_pkg.outputs.zip_name }}
+          name: ${{ steps.win_pkg.outputs.bin_name }}
+          path: ${{ steps.win_pkg.outputs.bin_name }}
 
   release:
     name: Create Release
@@ -111,12 +106,20 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Generate checksums + updater manifest
+      - name: Package Windows zip + checksums + updater manifest
         working-directory: artifacts
         shell: bash
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
+          # ACP registry wants a stable hearth.exe inside a zip.
+          for exe in hearth-*-x86_64-pc-windows-msvc.exe; do
+            [[ -f "$exe" ]] || continue
+            mkdir -p stage
+            cp "$exe" stage/hearth.exe
+            (cd stage && zip -q "../${exe}.zip" hearth.exe)
+            rm -rf stage
+          done
           sha256sum * > checksums.txt
           cat checksums.txt
           chmod +x ../scripts/write-manifest.sh
