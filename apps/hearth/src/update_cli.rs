@@ -60,8 +60,10 @@ pub async fn update(edge_url: &str, check_only: bool) -> anyhow::Result<()> {
         InstallKind::Unmanaged => {
             bail!(
                 "this binary is not update-managed (source build or hand-copied).\n\
-                 Linux: curl -fsSL https://hearth.sh/install.sh | sh\n\
-                 macOS: download the new Hearth.app dmg, or rebuild from source."
+                 Linux: install the managed layout so updates work:\n\
+                   scripts/install.sh\n\
+                 or extract a release tarball and run its install.sh\n\
+                 (lands in ~/.hearth/app/<ver> + current symlink)."
             )
         }
     }

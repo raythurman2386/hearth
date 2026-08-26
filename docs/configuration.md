@@ -56,7 +56,17 @@ A bare run never dials a remote host. Multi-device sync requires Tailscale and a
 
 Auth is Tailscale: inbound connections are identified with `tailscale whois`. There is no WorkOS, no `session.json`, and `hearth login`/`logout` are no-ops when the tailnet host is set.
 
-On the hub, put release artifacts under `{data_dir}/releases/` (served at `/releases/*`) if you want `hearth update` to keep working. Attachments stay on the chat's host device and transfer over the same tailnet RPC link.
+On the hub, publish release artifacts into `{data_dir}/releases/` (served at `/releases/*`) so `hearth update` works:
+
+```bash
+# After CI finishes a v* tag (or with a local artifacts dir that has manifest.json):
+hearth release publish --from github           # latest GitHub Release
+hearth release publish --from github v0.2.3
+hearth release publish --from dir ./artifacts  # local / gh release download
+hearth release publish --from dir ./artifacts --check  # verify only
+```
+
+Override the GitHub repo with `HEARTH_RELEASE_REPO` (default `raythurman2386/hearth`). Attachments stay on the chat's host device and transfer over the same tailnet RPC link.
 
 ### Agent / adapter overrides
 
@@ -79,7 +89,8 @@ Harnesses that wrap CLIs also honor their own vendor env (for example Codex / Gr
 | `HEARTH_TURN_QUIESCE_MS` | Engine turn-quiesce watchdog; `0` disables |
 | `HEARTH_SELF_TURN_QUIESCE_MS` | Shorter quiesce for genuine background-wake turns (default `20000`); `0` uses the normal window |
 | `HEARTH_SELF_CONTINUED_SHORT_AFTER_MS` | Park duration before a resume uses the short self-continued window (default `30000`); `0` = always short |
-| `HEARTH_AUTO_UPDATE` | `1`/`true`/`yes` — headless may auto-apply updates |
+| `HEARTH_AUTO_UPDATE` | Managed installs auto-apply when idle by default; set `0`/`false`/`no`/`off` to opt out |
+| `HEARTH_RELEASE_REPO` | `owner/repo` for `hearth release publish --from github` (default `raythurman2386/hearth`) |
 | `HEARTH_OPEN_PICKER` | Dev: `model` \| `traits` \| `repo` \| `branch` — open a picker on boot |
 | `HEARTH_MOCK_*` | Mock harness scripting knobs (`DELAY_MS`, `QUESTION`, `REPEAT`, …) when `HEARTH_HARNESS=mock` |
 | `HEARTH_FRAME_STATS` / `HEARTH_NO_RENDER_CACHE` | UI render diagnostics |

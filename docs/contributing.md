@@ -20,13 +20,21 @@ cargo run -p hearth
 cargo run -p hearth -- headless
 ```
 
-Linux package tarball + `install.sh`:
+Linux package tarball + managed `install.sh`:
 
 ```bash
 scripts/package-linux.sh
+# → target/package/hearth-<ver>-linux-<arch>.tar.gz
+scripts/write-manifest.sh target/package <ver>   # manifest.json + latest.txt
 ```
 
-macOS DMG packaging is `scripts/package-macos.sh` (must run on macOS; see [dist/README.md](../dist/README.md)).
+Tag `v*` runs `.github/workflows/release.yml`, which builds the Linux updater tarball, Windows ACP binaries, `manifest.json`, and `latest.txt` onto the GitHub Release. On the hub:
+
+```bash
+hearth release publish --from github
+```
+
+macOS DMG packaging is `scripts/package-macos.sh` (must run on macOS; not in CI yet — see [dist/README.md](../dist/README.md)).
 
 ## Workspace layout
 

@@ -4,6 +4,7 @@
 
 mod auth_cli;
 mod daemon;
+mod release_cli;
 mod update_cli;
 
 use clap::{Parser, Subcommand};
@@ -39,6 +40,11 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Publish release artifacts onto this machine's hub releases dir.
+    Release {
+        #[command(subcommand)]
+        command: ReleaseCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -55,6 +61,25 @@ enum DaemonCommand {
     Restart,
     /// Show the service manager's view of the daemon.
     Status,
+}
+
+#[derive(Subcommand)]
+enum ReleaseCommand {
+    /// Verify artifacts and publish into `{data_dir}/releases/` (hub GET /releases/*).
+    Publish {
+        /// `github` (download a GitHub Release) or `dir` (local artifacts folder).
+        #[arg(long, default_value = "github")]
+        from: String,
+        /// Tag (`v0.2.3`) for `--from github`, or path for `--from dir`.
+        /// Omit with `--from github` to use the latest GitHub Release.
+        target: Option<String>,
+        /// Allow replacing an equal or newer hub version.
+        #[arg(long)]
+        force: bool,
+        /// Verify only — do not write into the releases dir.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 /// mimalloc: system malloc (macOS libmalloc especially) never returns the
@@ -142,13 +167,25 @@ fn main() -> anyhow::Result<()> {
             let base = cfg.tailnet_http_url().ok_or_else(|| {
                 anyhow::anyhow!(
                     "set HEARTH_TAILNET_HOST to the hub MagicDNS name (releases are served \
-                     from the hub at GET /releases/). See docs/configuration.md; on the hub \
-                     put artifacts under ~/.hearth/releases/ and re-run `hearth daemon install` \
-                     after editing ~/.hearth/env"
+                     from the hub at GET /releases/). On the hub run: \
+                     hearth release publish --from github. See docs/configuration.md"
                 )
             })?;
             runtime.block_on(update_cli::update(&base, check))
         }
+        Some(Command::Release { command }) => match command {
+            ReleaseCommand::Publish {
+                from,
+                target,
+                force,
+                check,
+            } => {
+                let runtime = tokio::runtime::Runtime::new()?;
+                let source = release_cli::parse_from(&from, target)?;
+                let data_dir = engine_config_from_env().data_dir;
+                runtime.block_on(release_cli::publish(source, data_dir, force, check))
+            }
+        },
         Some(Command::Daemon { command }) => match command {
             DaemonCommand::Install => daemon::install(&engine_config_from_env().data_dir),
             DaemonCommand::Uninstall => daemon::uninstall(),

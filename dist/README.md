@@ -26,9 +26,10 @@ scripts/package-macos.sh    # → target/package/hearth-<version>-macos-<arch>.d
 Builds the release binary, assembles `Hearth.app` (Info.plist + icns), ad-hoc
 signs it (set `CODESIGN_IDENTITY` for a real Developer ID), and wraps it in a
 dmg. The auto-update tarball retains an internal `Hearth.app` path so older
-installed builds can update into Hearth. CI runs this on tags
-(`.github/workflows/release.yml`). The manual steps it automates, for reference
-(run on a macOS host — gpui needs Metal; no cross-build from Linux):
+installed builds can update into Hearth. **CI does not currently build macOS**
+(Linux + Windows only in `.github/workflows/release.yml`); run this on a Mac
+when you need desktop artifacts. Manual steps for reference
+(gpui needs Metal; no cross-build from Linux):
 
 1. Build the universal (or per-arch) binary:
    ```sh

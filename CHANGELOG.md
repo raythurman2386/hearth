@@ -4,6 +4,18 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-25
+
+### Changed
+
+- Release + update loop is closed for Linux: CI tags now publish
+  `hearth-<ver>-linux-x86_64.tar.gz` plus `manifest.json` / `latest.txt` (required
+  sha256s). On the hub, `hearth release publish --from github|dir` verifies and
+  installs those into `{data_dir}/releases/`. Managed installs auto-update when
+  idle by default (`HEARTH_AUTO_UPDATE=0` to opt out); the UI update strip applies
+  managed Linux updates in-app; `scripts/install.sh` verifies checksums and can
+  bootstrap from GitHub Releases when `HEARTH_BASE_URL` is unset.
+
 ## [0.2.2] - 2026-08-25
 
 ### Fixed

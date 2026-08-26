@@ -230,7 +230,10 @@ The always-on host (`HEARTH_TAILNET_HUB=1`, typically minis) binds one TCP port 
 1. Chat2 rooms (`/chat2/{id}/ws` plus HTTP checkpoint/rows) — the dumb log relay, no Loro in the server.
 2. Registry rooms (`/registry/{org}/ws`) — current-state LWW rows, same merge as the client.
 3. Direct RPC (`/rpc`) on every device so `targetDeviceId` dials MagicDNS instead of a DeviceRoom DO.
-4. Static releases (`GET /releases/*` from `{data_dir}/releases/`).
+4. Static releases (`GET /releases/*` from `{data_dir}/releases/`). Populate with
+   `hearth release publish --from github` (or `--from dir`) after a `v*` GitHub
+   Release; clients expect `manifest.json` (version + per-file sha256) plus the
+   `hearth-<ver>-linux-<arch>.tar.gz` updater tarball.
 
 Loopback is allowed without whois (tests). Other peers must resolve through `tailscale whois`.
 

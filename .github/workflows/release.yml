@@ -18,8 +18,10 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+            kind: linux
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            kind: windows
 
     steps:
       - uses: actions/checkout@v7
@@ -45,28 +47,54 @@ jobs:
             libcairo2-dev libgdk-pixbuf-2.0-dev libgtk-3-dev
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} -p hearth
 
-      - name: Prepare binary
-        id: artifact
+      - name: Package Linux updater tarball
+        if: matrix.kind == 'linux'
+        id: linux_pkg
         shell: bash
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
-          if [[ "${{ matrix.target }}" == *windows* ]]; then
-            BIN_NAME="hearth-${VERSION}-${{ matrix.target }}.exe"
-            cp "target/${{ matrix.target }}/release/hearth.exe" "${BIN_NAME}"
-          else
-            BIN_NAME="hearth-${VERSION}-${{ matrix.target }}"
-            cp "target/${{ matrix.target }}/release/hearth" "${BIN_NAME}"
-          fi
-          echo "bin_name=${BIN_NAME}" >> $GITHUB_OUTPUT
+          chmod +x scripts/package-linux.sh
+          VERSION="$VERSION" PREBUILT_BIN="target/${{ matrix.target }}/release/hearth" \
+            scripts/package-linux.sh
+          TARBALL="target/package/hearth-${VERSION}-linux-x86_64.tar.gz"
+          test -f "$TARBALL"
+          echo "tarball=${TARBALL}" >> "$GITHUB_OUTPUT"
+          echo "asset=$(basename "$TARBALL")" >> "$GITHUB_OUTPUT"
 
-      - name: Upload artifact
+      - name: Upload Linux artifact
+        if: matrix.kind == 'linux'
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.artifact.outputs.bin_name }}
-          path: ${{ steps.artifact.outputs.bin_name }}
+          name: ${{ steps.linux_pkg.outputs.asset }}
+          path: ${{ steps.linux_pkg.outputs.tarball }}
+
+      - name: Prepare Windows binary
+        if: matrix.kind == 'windows'
+        id: win_pkg
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          BIN_NAME="hearth-${VERSION}-x86_64-pc-windows-msvc.exe"
+          cp "target/${{ matrix.target }}/release/hearth.exe" "${BIN_NAME}"
+          mkdir -p stage
+          cp "${BIN_NAME}" stage/hearth.exe
+          (cd stage && zip -q "../${BIN_NAME}.zip" hearth.exe)
+          rm -rf stage
+          echo "bin_name=${BIN_NAME}" >> "$GITHUB_OUTPUT"
+          echo "zip_name=${BIN_NAME}.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Windows artifacts
+        if: matrix.kind == 'windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-${{ github.ref_name }}
+          path: |
+            ${{ steps.win_pkg.outputs.bin_name }}
+            ${{ steps.win_pkg.outputs.zip_name }}
 
   release:
     name: Create Release
@@ -83,41 +111,20 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Generate checksums
-        # Compute SHA-256 over every built binary so the installers can verify
-        # integrity. Written into the artifacts dir so it's uploaded alongside
-        # the binaries and the installers find it as checksums.txt.
+      - name: Generate checksums + updater manifest
         working-directory: artifacts
         shell: bash
         run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
           sha256sum * > checksums.txt
           cat checksums.txt
-
-      - name: Create archives
-        # Build archives for the ACP registry's `binary` distribution. Each
-        # archive contains a stable `hearth` / `hearth.exe` name so the
-        # registry's `cmd` stays version-independent. The raw binaries are
-        # kept alongside (the installers download them directly). Archive
-        # checksums are appended to checksums.txt so agent.json can pin them.
-        working-directory: artifacts
-        shell: bash
-        run: |
-          for f in hearth-*; do
-            [[ "$f" == "checksums.txt" ]] && continue
-            mkdir -p stage
-            if [[ "$f" == *.exe ]]; then
-              cp "$f" stage/hearth.exe
-              (cd stage && zip -q "../${f}.zip" hearth.exe)
-            else
-              cp "$f" stage/hearth
-              (cd stage && tar -czf "../${f}.tar.gz" hearth)
-            fi
-            rm -rf stage
-          done
-          sha256sum hearth-*.tar.gz >> checksums.txt 2>/dev/null || true
-          sha256sum hearth-*.zip >> checksums.txt 2>/dev/null || true
-          echo "--- checksums.txt (raw + archives) ---"
-          cat checksums.txt
+          chmod +x ../scripts/write-manifest.sh
+          ../scripts/write-manifest.sh . "$VERSION"
+          echo "--- manifest.json ---"
+          cat manifest.json
+          echo "--- latest.txt ---"
+          cat latest.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3

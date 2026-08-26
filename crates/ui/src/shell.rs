@@ -596,11 +596,12 @@ struct RenameChatDialog {
     _events: Subscription,
 }
 
-/// In-app update lifecycle (macOS bundle installs; see `render_update_strip`).
+/// In-app update lifecycle (macOS bundle + managed Linux; see `render_update_strip`).
 enum UpdateFlow {
     Idle,
     Downloading,
-    /// Staged bundle ready to swap in — one click restarts into it.
+    /// Staged payload ready — one click restarts into it (macOS bundle path, or
+    /// managed `current/hearth` exe path).
     Ready(PathBuf),
     Failed(SharedString),
 }
@@ -4143,10 +4144,9 @@ impl Shell {
     }
 
     /// Update strip: shown above the user menu whenever the engine's
-    /// UpdateStatus stream reports a newer release. On a macOS bundle install
-    /// it drives the whole flow — click to download, then click to restart into
-    /// the staged bundle. Elsewhere (managed/source installs) it is advisory
-    /// (`hearth update`); click dismisses it for that version.
+    /// UpdateStatus stream reports a newer release. Managed + macOS bundle
+    /// installs drive download/apply in-app; unmanaged (source builds) is
+    /// advisory — click dismisses for that version.
     fn render_update_strip(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
         let status = self.state.read(cx).update.clone()?;
         if !status.update_available {
@@ -4156,9 +4156,13 @@ impl Shell {
         if self.update_dismissed.as_deref() == Some(latest.as_str()) {
             return None;
         }
-        let mac_app = matches!(self.install, hearth_update::InstallKind::MacApp { .. });
+        let interactive = matches!(
+            self.install,
+            hearth_update::InstallKind::MacApp { .. }
+                | hearth_update::InstallKind::Managed { .. }
+        );
 
-        let (label, clickable): (SharedString, bool) = if mac_app {
+        let (label, clickable): (SharedString, bool) = if interactive {
             match &self.update_flow {
                 UpdateFlow::Idle => (format!("Update available — v{latest}").into(), true),
                 UpdateFlow::Downloading => (format!("Downloading v{latest}…").into(), false),
@@ -4167,7 +4171,10 @@ impl Shell {
             }
         } else {
             (
-                format!("Update available — v{latest} · run `hearth update`").into(),
+                format!(
+                    "Update available — v{latest} · reinstall via install.sh to enable updates"
+                )
+                .into(),
                 true,
             )
         };
@@ -4217,35 +4224,53 @@ impl Shell {
         Some(strip.into_any_element())
     }
 
-    /// Idle → download; Ready → swap + relaunch; Failed → retry; advisory
-    /// installs → dismiss for this version.
+    /// Idle → download; Ready → swap/relaunch; Failed → retry; unmanaged →
+    /// dismiss for this version.
     fn on_update_strip_click(&mut self, cx: &mut Context<Self>) {
-        if !matches!(self.install, hearth_update::InstallKind::MacApp { .. }) {
-            self.update_dismissed = self
-                .state
-                .read(cx)
-                .update
-                .as_ref()
-                .and_then(|s| s.latest_version.clone());
-            cx.notify();
-            return;
-        }
-        match std::mem::replace(&mut self.update_flow, UpdateFlow::Idle) {
-            UpdateFlow::Idle | UpdateFlow::Failed(_) => self.begin_update_download(cx),
-            UpdateFlow::Downloading => self.update_flow = UpdateFlow::Downloading,
-            UpdateFlow::Ready(staged) => self.apply_staged_update(staged, cx),
+        match &self.install {
+            hearth_update::InstallKind::Unmanaged => {
+                self.update_dismissed = self
+                    .state
+                    .read(cx)
+                    .update
+                    .as_ref()
+                    .and_then(|s| s.latest_version.clone());
+                cx.notify();
+            }
+            hearth_update::InstallKind::MacApp { .. }
+            | hearth_update::InstallKind::Managed { .. } => {
+                match std::mem::replace(&mut self.update_flow, UpdateFlow::Idle) {
+                    UpdateFlow::Idle | UpdateFlow::Failed(_) => self.begin_update_download(cx),
+                    UpdateFlow::Downloading => self.update_flow = UpdateFlow::Downloading,
+                    UpdateFlow::Ready(staged) => self.apply_staged_update(staged, cx),
+                }
+            }
         }
     }
 
-    /// Fetch the manifest and stage the new Hearth desktop bundle under the data dir
-    /// (tokio — reqwest); the strip flips to "restart to apply" when done.
+    /// Fetch the manifest and stage the update payload (macOS app tarball or
+    /// managed headless tarball). Strip flips to "restart to apply" when done.
     fn begin_update_download(&mut self, cx: &mut Context<Self>) {
         let edge_url = self.boot.edge_url.clone();
         let data_dir = self.data_dir.clone();
+        let install = self.install.clone();
         self.update_flow = UpdateFlow::Downloading;
         let download = Tokio::spawn(cx, async move {
             let manifest = hearth_update::fetch_latest(&edge_url).await?;
-            hearth_update::stage_mac_app(&edge_url, &manifest, &data_dir).await
+            match install {
+                hearth_update::InstallKind::MacApp { .. } => {
+                    hearth_update::stage_mac_app(&edge_url, &manifest, &data_dir).await
+                }
+                hearth_update::InstallKind::Managed { app_root } => {
+                    hearth_update::stage_headless(&edge_url, &manifest, &app_root).await?;
+                    hearth_update::apply_headless(&app_root, &manifest.version)?;
+                    let _ = hearth_update::restart_service();
+                    Ok(app_root.join("current").join("hearth"))
+                }
+                hearth_update::InstallKind::Unmanaged => {
+                    anyhow::bail!("this install is not update-managed")
+                }
+            }
         });
         self.update_task = Some(cx.spawn(async move |this, cx| {
             let outcome = match download.await {
@@ -4268,23 +4293,29 @@ impl Shell {
         cx.notify();
     }
 
-    /// Swap the staged bundle over the installed one, arm the detached
-    /// relauncher, and quit — the relauncher `open`s the new bundle once this
-    /// process (and its engine lock / IPC port) is gone.
+    /// Apply a staged update and relaunch: macOS swaps the `.app` bundle;
+    /// managed Linux already flipped `current` during download and just
+    /// relaunches the new exe.
     fn apply_staged_update(&mut self, staged: PathBuf, cx: &mut Context<Self>) {
-        let hearth_update::InstallKind::MacApp { bundle } = self.install.clone() else {
-            return;
-        };
-        match hearth_update::apply_mac_app(&staged, &bundle) {
-            Ok(()) => {
-                hearth_update::relaunch_app_after_exit(&bundle);
+        match self.install.clone() {
+            hearth_update::InstallKind::MacApp { bundle } => {
+                match hearth_update::apply_mac_app(&staged, &bundle) {
+                    Ok(()) => {
+                        hearth_update::relaunch_app_after_exit(&bundle);
+                        cx.quit();
+                    }
+                    Err(err) => {
+                        tracing::error!(error = %err, "update apply failed");
+                        self.update_flow = UpdateFlow::Failed(format!("{err:#}").into());
+                        cx.notify();
+                    }
+                }
+            }
+            hearth_update::InstallKind::Managed { .. } => {
+                hearth_update::relaunch_exe_after_exit(&staged);
                 cx.quit();
             }
-            Err(err) => {
-                tracing::error!(error = %err, "update apply failed");
-                self.update_flow = UpdateFlow::Failed(format!("{err:#}").into());
-                cx.notify();
-            }
+            hearth_update::InstallKind::Unmanaged => {}
         }
     }
 

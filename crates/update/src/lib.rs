@@ -1,12 +1,17 @@
 //! hearth-update — release checking and self-update, shared by the engine (the
-//! background checker + `ApplyUpdate`), the CLI (`hearth update`), and the UI
-//! (the sidebar update strip + macOS bundle swap).
+//! background checker + `ApplyUpdate`), the CLI (`hearth update` /
+//! `hearth release publish`), and the UI (the sidebar update strip + macOS
+//! bundle swap).
 //!
 //! Release layout (see `.github/workflows/release.yml` and `scripts/install.sh`):
 //! artifacts live on the tailnet hub at `{hub}/releases/*` (files under
 //! `{data_dir}/releases/`). `manifest.json` carries the latest version plus a
-//! sha256 per artifact; `latest.txt` (version only) remains as the fallback for
-//! releases published before the manifest existed.
+//! **required** sha256 per artifact. `latest.txt` (version only) remains as a
+//! human/install hint and as a fallback for discovering the version string when
+//! `manifest.json` is missing — downloads still refuse to proceed without hashes.
+//!
+//! Operator loop: tag `v*` → CI uploads GitHub Release assets → on the hub run
+//! `hearth release publish --from github` → peers pick up updates.
 //!
 //! Install kinds and their update paths:
 //! - **Managed** (`~/.hearth/app/<ver>` + `current` symlink — the curl|sh
@@ -16,6 +21,13 @@
 //! - **MacApp** (running out of an app bundle): download the app tarball, swap the
 //!   bundle directory, relaunch. Driven by the UI.
 //! - **Unmanaged** (source builds, hand-copied binaries): report only.
+
+mod publish;
+
+pub use publish::{
+    DEFAULT_RELEASE_REPO, fetch_github_release, load_release_dir, publish_to_hub, release_repo,
+    verify_dir_checksums,
+};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -109,8 +121,10 @@ pub fn version_newer(latest: &str, current: &str) -> bool {
     }
 }
 
-/// Fetch the newest release metadata: `manifest.json`, falling back to
-/// `latest.txt` (version only, no checksums) for pre-manifest releases.
+/// Fetch the newest release metadata: prefer `manifest.json`. Falls back to
+/// `latest.txt` only for the version string when the manifest is missing — the
+/// returned manifest then has an empty `files` map, and downloads will refuse
+/// to proceed without checksums.
 pub async fn fetch_latest(edge_url: &str) -> anyhow::Result<Manifest> {
     let base = edge_url.trim_end_matches('/');
     let client = http_client()?;
@@ -123,31 +137,46 @@ pub async fn fetch_latest(edge_url: &str) -> anyhow::Result<Manifest> {
             }
             return Ok(manifest);
         }
+        Ok(resp) if resp.status().as_u16() == 404 => {
+            tracing::debug!("manifest.json missing on hub; trying latest.txt");
+        }
         Ok(resp) => {
             tracing::debug!(status = %resp.status(), "manifest.json unavailable; trying latest.txt")
         }
         Err(err) => tracing::debug!(error = %err, "manifest.json fetch failed; trying latest.txt"),
     }
     let latest_url = format!("{base}/releases/latest.txt");
-    let version = client
-        .get(&latest_url)
-        .send()
-        .await
-        .context("fetching latest.txt")?
-        .error_for_status()
-        .context("fetching latest.txt")?
-        .text()
-        .await
-        .context("reading latest.txt")?
-        .trim()
-        .to_string();
-    if version.is_empty() {
-        bail!("latest.txt is empty");
+    match client.get(&latest_url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let version = resp
+                .text()
+                .await
+                .context("reading latest.txt")?
+                .trim()
+                .to_string();
+            if version.is_empty() {
+                bail!("latest.txt is empty");
+            }
+            Ok(Manifest {
+                version,
+                files: BTreeMap::new(),
+            })
+        }
+        Ok(resp) if resp.status().as_u16() == 404 => {
+            bail!(
+                "hub has no releases at {base}/releases/ \
+                 (missing manifest.json and latest.txt). On the hub run: \
+                 hearth release publish --from github"
+            );
+        }
+        Ok(resp) => {
+            bail!(
+                "fetching latest.txt failed ({}) — is the hub serving /releases/*?",
+                resp.status()
+            );
+        }
+        Err(err) => Err(err).context("fetching latest.txt"),
     }
-    Ok(Manifest {
-        version,
-        files: BTreeMap::new(),
-    })
 }
 
 fn http_client() -> anyhow::Result<reqwest::Client> {
@@ -205,9 +234,10 @@ fn detect_install_from(exe: &Path, home: Option<&Path>) -> InstallKind {
 // Download + verify
 // ---------------------------------------------------------------------------
 
-/// Stream `{edge}/releases/<file>` to `dest`, verifying the manifest sha256 when
-/// present. Writes through a `.partial` sidecar so an interrupted download never
-/// leaves a plausible-looking artifact behind.
+/// Stream `{edge}/releases/<file>` to `dest`, verifying the manifest sha256.
+/// Refuses to install when the manifest has no hash for `file`. Writes through
+/// a `.partial` sidecar so an interrupted download never leaves a
+/// plausible-looking artifact behind.
 pub async fn download_release_file(
     edge_url: &str,
     manifest: &Manifest,
@@ -215,13 +245,18 @@ pub async fn download_release_file(
     dest: &Path,
 ) -> anyhow::Result<()> {
     let url = format!("{}/releases/{file}", edge_url.trim_end_matches('/'));
-    let expected = manifest.files.get(file).and_then(|m| m.sha256.as_deref());
-    if expected.is_none() {
-        tracing::warn!(
-            file,
-            "no checksum in release metadata; skipping verification"
-        );
-    }
+    let expected = manifest
+        .files
+        .get(file)
+        .and_then(|m| m.sha256.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .with_context(|| {
+            format!(
+                "no sha256 in release manifest for {file} — refusing to install an unverified \
+                 artifact. On the hub run: hearth release publish --from github"
+            )
+        })?;
     let partial = dest.with_extension("partial");
     let resp = http_client()?
         .get(&url)
@@ -242,12 +277,10 @@ pub async fn download_release_file(
     }
     out.flush().await.ok();
     drop(out);
-    if let Some(expected) = expected {
-        let actual = format!("{:x}", hasher.finalize());
-        if !actual.eq_ignore_ascii_case(expected.trim()) {
-            tokio::fs::remove_file(&partial).await.ok();
-            bail!("checksum mismatch for {file}: expected {expected}, got {actual}");
-        }
+    let actual = format!("{:x}", hasher.finalize());
+    if !actual.eq_ignore_ascii_case(expected) {
+        tokio::fs::remove_file(&partial).await.ok();
+        bail!("checksum mismatch for {file}: expected {expected}, got {actual}");
     }
     tokio::fs::rename(&partial, dest)
         .await
@@ -458,6 +491,32 @@ pub fn relaunch_app_after_exit(bundle: &Path) {
     let _ = bundle;
 }
 
+/// Detached relauncher for managed/Linux installs: wait for THIS process to
+/// exit, then exec `exe` (typically `~/.hearth/app/current/hearth`).
+pub fn relaunch_exe_after_exit(exe: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        let pid = std::process::id();
+        let script = format!(
+            "while /bin/kill -0 {pid} 2>/dev/null; do sleep 0.2; done; exec \"{}\"",
+            exe.display()
+        );
+        let mut command = std::process::Command::new("/bin/sh");
+        command
+            .args(["-c", &script])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0);
+        if let Err(err) = command.spawn() {
+            tracing::error!(error = %err, "failed to spawn the relauncher");
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = exe;
+}
+
 // ---------------------------------------------------------------------------
 // Engine-side checker
 // ---------------------------------------------------------------------------
@@ -491,11 +550,18 @@ impl UpdateStatus {
     }
 }
 
-/// `HEARTH_AUTO_UPDATE=1|true|yes` — headless daemons apply updates themselves.
+/// Auto-apply for managed installs. Default **on**; set
+/// `HEARTH_AUTO_UPDATE=0|false|no|off` to opt out.
 fn auto_update_enabled() -> bool {
-    std::env::var("HEARTH_AUTO_UPDATE")
-        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
-        .unwrap_or(false)
+    match std::env::var("HEARTH_AUTO_UPDATE") {
+        Ok(v) => {
+            !matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        }
+        Err(_) => true,
+    }
 }
 
 /// "Nothing would be interrupted by a restart right now" — wired by the engine
@@ -504,8 +570,8 @@ pub type QuiescentCheck = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// Background release checker: polls `{edge}/releases` on a 6h cadence and
 /// publishes [`UpdateStatus`] over a watch channel (the `UpdateStatus` RPC
-/// stream). Managed installs with `HEARTH_AUTO_UPDATE` set stage + apply + service
-/// restart on their own — but only in a quiet window: while `quiescent` reports
+/// stream). Managed installs auto-apply by default (opt out with
+/// `HEARTH_AUTO_UPDATE=0`) — but only in a quiet window: while `quiescent` reports
 /// activity, the apply defers and re-probes every [`IDLE_RECHECK`].
 #[derive(Clone)]
 pub struct Updater {

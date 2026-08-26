@@ -18,7 +18,8 @@ Hearth’s CLI has **no** one-shot `-p` / `--mode` task flags. Those belong to a
 | `hearth sync` | Live sync room introspection (needs a running engine). Useful only when sync is enabled. |
 | `hearth login` / `hearth logout` | Opt into / out of sync for the **next** engine start (see [configuration](configuration.md#sync-opt-in)). |
 | `hearth daemon …` | Install/start/stop a user service for `hearth headless` (systemd `--user` / launchd). |
-| `hearth update` / `hearth update --check` | Apply or check a newer release. |
+| `hearth update` / `hearth update --check` | Apply or check a newer release (needs `HEARTH_TAILNET_HOST`; hub must serve `/releases/*`). |
+| `hearth release publish` | On the hub: verify + publish release artifacts into `{data_dir}/releases/`. |
 
 Default IPC port: **27654** (`HEARTH_IPC_PORT`).
 

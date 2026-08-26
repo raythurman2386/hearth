@@ -50,6 +50,7 @@ hearth sync         # sync room introspection (only useful if sync is enabled)
 hearth login|logout # opt into / out of sync for the next engine start
 hearth daemon …     # install/start/stop user service for headless
 hearth update       # apply release update (--check to report only)
+hearth release publish  # on the hub: publish GitHub/local artifacts to /releases
 ```
 
 There is **no** `hearth -p` / `hearth --mode` one-shot interface. For agent CLI flags, use the agent itself (for example `raven --mode agent -p "…"`).

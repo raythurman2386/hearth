@@ -30,6 +30,7 @@ const CAPTURED_ENV: &[&str] = &[
     "HEARTH_IPC_PORT",
     "HEARTH_HARNESS",
     "HEARTH_DEVICE_NAME",
+    "HEARTH_AUTO_UPDATE",
     "RUST_LOG",
 ];
 
