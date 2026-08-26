@@ -36,8 +36,7 @@ pub fn load_release_dir(dir: &Path) -> anyhow::Result<(Manifest, PathBuf)> {
             manifest_path.display()
         )
     })?;
-    let manifest: Manifest =
-        serde_json::from_str(&raw).context("parsing manifest.json")?;
+    let manifest: Manifest = serde_json::from_str(&raw).context("parsing manifest.json")?;
     if manifest.version.trim().is_empty() {
         bail!("manifest.json has an empty version");
     }
@@ -51,28 +50,28 @@ pub fn load_release_dir(dir: &Path) -> anyhow::Result<(Manifest, PathBuf)> {
 /// sha256 every `manifest.files` entry against bytes on disk.
 pub fn verify_dir_checksums(dir: &Path, manifest: &Manifest) -> anyhow::Result<()> {
     for (name, meta) in &manifest.files {
-        let Some(expected) = meta.sha256.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        let Some(expected) = meta
+            .sha256
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
         else {
             bail!("manifest entry {name} is missing sha256");
         };
         let path = dir.join(name);
-        let actual = file_sha256(&path)
-            .with_context(|| format!("hashing {}", path.display()))?;
+        let actual = file_sha256(&path).with_context(|| format!("hashing {}", path.display()))?;
         if !actual.eq_ignore_ascii_case(expected) {
-            bail!(
-                "checksum mismatch for {name}: manifest={expected}, disk={actual}"
-            );
+            bail!("checksum mismatch for {name}: manifest={expected}, disk={actual}");
         }
     }
     Ok(())
 }
 
 pub fn file_sha256(path: &Path) -> anyhow::Result<String> {
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("opening {}", path.display()))?;
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher)
-        .with_context(|| format!("reading {}", path.display()))?;
+    std::io::copy(&mut file, &mut hasher).with_context(|| format!("reading {}", path.display()))?;
     Ok(format!("{:x}", hasher.finalize()))
 }
 
@@ -82,10 +81,9 @@ pub fn read_hub_manifest(releases_dir: &Path) -> anyhow::Result<Option<Manifest>
     if !path.is_file() {
         return Ok(None);
     }
-    let raw = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading {}", path.display()))?;
-    let manifest: Manifest =
-        serde_json::from_str(&raw).context("parsing hub manifest.json")?;
+    let raw =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let manifest: Manifest = serde_json::from_str(&raw).context("parsing hub manifest.json")?;
     Ok(Some(manifest))
 }
 
@@ -101,8 +99,8 @@ pub fn publish_to_hub(
     let (manifest, _) = load_release_dir(source_dir)?;
     if let Some(existing) = read_hub_manifest(releases_dir)? {
         let newer = version_newer(&manifest.version, &existing.version);
-        let same = manifest.version.trim_start_matches('v')
-            == existing.version.trim_start_matches('v');
+        let same =
+            manifest.version.trim_start_matches('v') == existing.version.trim_start_matches('v');
         if !force && !newer {
             if same {
                 bail!(
@@ -139,16 +137,14 @@ pub fn publish_to_hub(
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&stage);
-    std::fs::create_dir_all(&stage)
-        .with_context(|| format!("creating {}", stage.display()))?;
+    std::fs::create_dir_all(&stage).with_context(|| format!("creating {}", stage.display()))?;
 
     let result = (|| {
         for name in manifest.files.keys() {
             let src = source_dir.join(name);
             let dst = stage.join(name);
-            std::fs::copy(&src, &dst).with_context(|| {
-                format!("copying {} → {}", src.display(), dst.display())
-            })?;
+            std::fs::copy(&src, &dst)
+                .with_context(|| format!("copying {} → {}", src.display(), dst.display()))?;
         }
         // Re-verify staged bytes before promoting.
         verify_dir_checksums(&stage, &manifest)?;
@@ -164,11 +160,13 @@ pub fn publish_to_hub(
         for name in manifest.files.keys() {
             let from = stage.join(name);
             let to = releases_dir.join(name);
-            std::fs::rename(&from, &to).with_context(|| {
-                format!("promoting {} → {}", from.display(), to.display())
-            })?;
+            std::fs::rename(&from, &to)
+                .with_context(|| format!("promoting {} → {}", from.display(), to.display()))?;
         }
-        atomic_replace(&stage.join("manifest.json"), &releases_dir.join("manifest.json"))?;
+        atomic_replace(
+            &stage.join("manifest.json"),
+            &releases_dir.join("manifest.json"),
+        )?;
         atomic_replace(&stage.join("latest.txt"), &releases_dir.join("latest.txt"))?;
         Ok(manifest.version.clone())
     })();
@@ -178,16 +176,10 @@ pub fn publish_to_hub(
 }
 
 fn atomic_replace(from: &Path, to: &Path) -> anyhow::Result<()> {
-    let tmp = to.with_extension(format!(
-        "tmp-{}",
-        std::process::id()
-    ));
-    std::fs::rename(from, &tmp).with_context(|| {
-        format!("moving {} → {}", from.display(), tmp.display())
-    })?;
-    std::fs::rename(&tmp, to).with_context(|| {
-        format!("replacing {}", to.display())
-    })?;
+    let tmp = to.with_extension(format!("tmp-{}", std::process::id()));
+    std::fs::rename(from, &tmp)
+        .with_context(|| format!("moving {} → {}", from.display(), tmp.display()))?;
+    std::fs::rename(&tmp, to).with_context(|| format!("replacing {}", to.display()))?;
     Ok(())
 }
 
@@ -267,12 +259,10 @@ pub async fn fetch_github_release(
 }
 
 fn github_client() -> anyhow::Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder()
-        .user_agent(concat!("hearth/", env!("CARGO_PKG_VERSION")));
+    let mut builder =
+        reqwest::Client::builder().user_agent(concat!("hearth/", env!("CARGO_PKG_VERSION")));
     // Optional token for private repos / higher rate limits.
-    if let Ok(token) = std::env::var("GITHUB_TOKEN")
-        .or_else(|_| std::env::var("GH_TOKEN"))
-    {
+    if let Ok(token) = std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN")) {
         let token = token.trim().to_string();
         if !token.is_empty() {
             let mut headers = reqwest::header::HeaderMap::new();
@@ -306,8 +296,7 @@ async fn download_asset(
         .error_for_status()
         .with_context(|| format!("downloading {url}"))?;
     let bytes = resp.bytes().await.context("reading asset body")?;
-    std::fs::write(dest, &bytes)
-        .with_context(|| format!("writing {}", dest.display()))?;
+    std::fs::write(dest, &bytes).with_context(|| format!("writing {}", dest.display()))?;
     Ok(())
 }
 
@@ -334,12 +323,7 @@ mod tests {
     ) -> Manifest {
         let mut map = BTreeMap::new();
         for (name, sha) in files {
-            map.insert(
-                name,
-                FileMeta {
-                    sha256: Some(sha),
-                },
-            );
+            map.insert(name, FileMeta { sha256: Some(sha) });
         }
         Manifest {
             version: version.to_string(),
@@ -354,13 +338,8 @@ mod tests {
         let tarball = src.path().join("hearth-0.2.3-linux-x86_64.tar.gz");
         std::fs::write(&tarball, b"fake-tarball-bytes").unwrap();
         let sha = file_sha256(&tarball).unwrap();
-        let manifest = manifest_for_files(
-            "0.2.3",
-            [(
-                "hearth-0.2.3-linux-x86_64.tar.gz".into(),
-                sha,
-            )],
-        );
+        let manifest =
+            manifest_for_files("0.2.3", [("hearth-0.2.3-linux-x86_64.tar.gz".into(), sha)]);
         std::fs::write(
             src.path().join("manifest.json"),
             serde_json::to_string_pretty(&manifest).unwrap(),
@@ -372,10 +351,11 @@ mod tests {
         assert_eq!(ver, "0.2.3");
         assert!(hub.path().join("manifest.json").is_file());
         assert!(hub.path().join("latest.txt").is_file());
-        assert!(hub
-            .path()
-            .join("hearth-0.2.3-linux-x86_64.tar.gz")
-            .is_file());
+        assert!(
+            hub.path()
+                .join("hearth-0.2.3-linux-x86_64.tar.gz")
+                .is_file()
+        );
 
         // Same version without --force fails.
         assert!(publish_to_hub(src.path(), hub.path(), false, false).is_err());

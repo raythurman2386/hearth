@@ -554,12 +554,10 @@ impl UpdateStatus {
 /// `HEARTH_AUTO_UPDATE=0|false|no|off` to opt out.
 fn auto_update_enabled() -> bool {
     match std::env::var("HEARTH_AUTO_UPDATE") {
-        Ok(v) => {
-            !matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "0" | "false" | "no" | "off"
-            )
-        }
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        ),
         Err(_) => true,
     }
 }

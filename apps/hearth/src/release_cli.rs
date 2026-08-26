@@ -35,12 +35,8 @@ pub async fn publish(
                 "fetching GitHub release {} from {repo}…",
                 tag.as_deref().unwrap_or("latest")
             );
-            let (manifest, dir) = hearth_update::fetch_github_release(
-                &repo,
-                tag.as_deref(),
-                &tmp,
-            )
-            .await?;
+            let (manifest, dir) =
+                hearth_update::fetch_github_release(&repo, tag.as_deref(), &tmp).await?;
             println!(
                 "downloaded {} ({} file(s))",
                 manifest.version,
@@ -50,18 +46,14 @@ pub async fn publish(
         }
     };
 
-    let version =
-        hearth_update::publish_to_hub(&source_dir, &releases_dir, force, check_only)?;
+    let version = hearth_update::publish_to_hub(&source_dir, &releases_dir, force, check_only)?;
     if let Some(tmp) = cleanup {
         let _ = std::fs::remove_dir_all(tmp);
     }
     if check_only {
         return Ok(());
     }
-    println!(
-        "published hearth {version} → {}",
-        releases_dir.display()
-    );
+    println!("published hearth {version} → {}", releases_dir.display());
     println!("  {}/manifest.json", releases_dir.display());
     println!("  {}/latest.txt", releases_dir.display());
     if let Ok(host) = std::env::var("HEARTH_TAILNET_HOST") {
@@ -76,9 +68,7 @@ pub async fn publish(
             );
         }
     } else {
-        println!(
-            "tip: set HEARTH_TAILNET_HOST so peers can reach this hub's /releases/*"
-        );
+        println!("tip: set HEARTH_TAILNET_HOST so peers can reach this hub's /releases/*");
     }
     Ok(())
 }
@@ -92,8 +82,7 @@ fn tempfile_dir() -> anyhow::Result<PathBuf> {
             .map(|d| d.as_millis())
             .unwrap_or(0)
     ));
-    std::fs::create_dir_all(&base)
-        .with_context(|| format!("creating {}", base.display()))?;
+    std::fs::create_dir_all(&base).with_context(|| format!("creating {}", base.display()))?;
     Ok(base)
 }
 

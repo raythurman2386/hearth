@@ -4158,8 +4158,7 @@ impl Shell {
         }
         let interactive = matches!(
             self.install,
-            hearth_update::InstallKind::MacApp { .. }
-                | hearth_update::InstallKind::Managed { .. }
+            hearth_update::InstallKind::MacApp { .. } | hearth_update::InstallKind::Managed { .. }
         );
 
         let (label, clickable): (SharedString, bool) = if interactive {
