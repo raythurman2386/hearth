@@ -16,27 +16,25 @@ Hearth is **not** the agent. Agents such as Raven own tools, sandboxes, and mode
 
 ## Install / run
 
-Build from source (Rust stable; agents need their own model endpoints, for example local Ollama for Raven):
+One-line install (Linux, prebuilt binary — no build, no root):
 
 ```bash
-cargo build --release -p hearth
-./target/release/hearth          # headed UI
-./target/release/hearth headless # engine only
+curl -fsSL https://raw.githubusercontent.com/raythurman2386/hearth/main/scripts/install.sh | sh
 ```
 
-Linux packaging into `~/.local`:
+This installs `hearth` into `~/.local/bin`. Then:
 
 ```bash
-scripts/package-linux.sh
-# extract the tarball under target/package/, then:
-./install.sh
+hearth          # headed UI
+hearth headless # engine only
 ```
 
-Or copy the binary:
+Make sure `~/.local/bin` is on your `PATH`. The background engine service is
+opt-in: `hearth daemon install` (see [docs/configuration.md](docs/configuration.md)).
 
-```bash
-install -Dm755 target/release/hearth ~/.local/bin/hearth
-```
+Build from source is a contributor path — see
+[docs/contributing.md](docs/contributing.md). Agents need their own model
+endpoints (for example local Ollama for Raven).
 
 Data directory: `~/.hearth` (override with `HEARTH_DATA_DIR`).
 

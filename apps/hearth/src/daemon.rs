@@ -13,8 +13,8 @@ use std::process::Command;
 use anyhow::{Context, bail};
 
 const LAUNCHD_LABEL: &str = "sh.hearth.app";
-/// Same unit name the curl|sh installer (`scripts/install.sh`) writes, so
-/// `hearth daemon …` manages that installation rather than a competing copy.
+/// The systemd user unit name. The one-line installer no longer writes a unit;
+/// `hearth daemon install` is the single owner of this service.
 const SYSTEMD_UNIT: &str = "hearth.service";
 
 /// Environment captured into the unit file. `PATH` is always included (the
@@ -401,13 +401,15 @@ mod tests {
     }
 
     #[test]
-    fn curl_installer_always_starts_the_local_capable_service() {
+    fn curl_installer_installs_without_a_background_service() {
         let installer = include_str!("../../../scripts/install.sh");
         assert!(!installer.contains("session.json"));
-        assert!(installer.contains("StartLimitIntervalSec=60\n"));
-        assert!(installer.contains("StartLimitBurst=5\n"));
-        assert!(installer.contains("systemctl --user enable hearth"));
-        assert!(installer.contains("systemctl --user restart hearth"));
+        // The one-line installer is minimal: download + verify + symlink, no
+        // systemd unit. The daemon stays opt-in via `hearth daemon install`.
+        assert!(!installer.contains("systemctl"));
+        assert!(!installer.contains("StartLimitIntervalSec"));
+        assert!(installer.contains("$HOME/.local/bin/hearth"));
+        assert!(installer.contains("hearth daemon install"));
     }
 
     #[test]

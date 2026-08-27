@@ -64,12 +64,10 @@ Bare Hearth **does not** dial the tailnet. If you never set `HEARTH_TAILNET_HOST
 
 ## Package install / desktop entry
 
-Linux:
+Linux (one-line, prebuilt):
 
 ```bash
-cargo build --release -p hearth
-install -Dm755 target/release/hearth ~/.local/bin/hearth
-# or: scripts/package-linux.sh && tar extract && ./install.sh
+curl -fsSL https://raw.githubusercontent.com/raythurman2386/hearth/main/scripts/install.sh | sh
 ```
 
 Ensure `~/.local/bin` is on PATH. After replacing the binary, **fully quit** any running Hearth (including a headless daemon) so the new file is what launches next — Linux can refuse to overwrite a running text image (`ETXTBSY`).
