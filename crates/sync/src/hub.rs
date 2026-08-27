@@ -9,7 +9,7 @@
 //! - `WS  /registry/{org}/ws`
 //! - `WS  /rpc` — handed to the engine via [`HubConfig::on_rpc`]
 //! - `GET /health`
-//! - `GET /releases/*` — static files from `{data_dir}/releases/`
+//! - `GET /releases/*` — static files from [`HubConfig::releases_dir`]
 //!
 //! Auth is the tailnet: loopback is allowed (tests); other peers are checked
 //! with `tailscale whois`. No `?token=` required.
@@ -46,6 +46,9 @@ pub type RpcHandler = Arc<dyn Fn(WebSocketStream<TcpStream>) + Send + Sync>;
 
 pub struct HubConfig {
     pub data_dir: PathBuf,
+    /// Device-level releases dir for `GET /releases/*` — the hub's
+    /// `{data_dir}/releases`, not the per-profile rooms root under `data_dir`.
+    pub releases_dir: PathBuf,
     /// When false, only `/rpc` (and `/health`) are served — spoke devices.
     pub serve_rooms: bool,
     pub on_rpc: Option<RpcHandler>,
@@ -135,7 +138,7 @@ impl HubContext {
             on_rpc: hub.config.on_rpc.clone(),
             serve_rooms: hub.config.serve_rooms,
             skip_whois: hub.config.skip_whois,
-            releases: hub.config.data_dir.join("releases"),
+            releases: hub.config.releases_dir.clone(),
         }
     }
 }
@@ -559,7 +562,10 @@ fn strip_prefix_suffix<'a>(path: &'a str, prefix: &str, suffix: &str) -> Option<
 }
 
 fn is_safe_release_path(path: &str) -> bool {
-    !path.is_empty()
+    // A leading '/' (or Windows-style drive prefix) would make `PathBuf::join`
+    // replace the releases base entirely — only relative subpaths are served.
+    !path.starts_with('/')
+        && !path.is_empty()
         && path
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '/')
@@ -628,6 +634,7 @@ mod tests {
             "127.0.0.1:0",
             HubConfig {
                 data_dir: dir.path().to_path_buf(),
+                releases_dir: dir.path().join("releases"),
                 serve_rooms: true,
                 on_rpc: None,
                 skip_whois: true,

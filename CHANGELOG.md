@@ -4,6 +4,21 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-08-27
+
+### Fixed
+
+- The hub now serves `GET /releases/*` from the device-level `{data_dir}/releases` —
+  where `hearth release publish` writes — instead of the per-profile store root, so
+  `hearth update` on peers (and the hub itself) no longer 404s with "hub has no
+  releases" after a successful publish.
+- Hardened the hub's `/releases/*` handler against absolute-path traversal
+  (`GET /releases//etc/passwd` previously escaped the releases dir via
+  `PathBuf::join` base replacement); such requests are now rejected with 400.
+- Documented that `~/.hearth/env` is only read by the daemon unit: shells must
+  source it for hand-run commands (`hearth update --check`) to see
+  `HEARTH_TAILNET_HOST`.
+
 ## [0.2.4] - 2026-08-26
 
 ### Changed

@@ -60,6 +60,12 @@ no engine listening on 127.0.0.1:27654
 
 Bare Hearth **does not** dial the tailnet. If you never set `HEARTH_TAILNET_HOST`, `hearth login` is not required for normal local use. `hearth sync` will not show useful rooms without an opted-in, running engine that can reach the hub.
 
+## `hearth update --check` says HEARTH_TAILNET_HOST is not set (on the hub)
+
+`~/.hearth/env` is read by the daemon unit (`EnvironmentFile=`), not by your shell. Source it from your shell profile (`[ -f "$HOME/.hearth/env" ] && . "$HOME/.hearth/env"` in `~/.bashrc`/`~/.zshrc`), or export the variable per command.
+
+If the variable is set but you instead get `hub has no releases`, the hub daemon predates the device-level `/releases/` fix — `hearth daemon restart` with a current build, and confirm `~/.hearth/releases/` holds `manifest.json` + `latest.txt` (`hearth release publish --from github`). Check with: `curl -fsS http://<hub-host>:27655/releases/latest.txt`.
+
 ---
 
 ## Package install / desktop entry

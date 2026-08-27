@@ -861,6 +861,9 @@ impl Engine {
                 listen,
                 hearth_sync::HubConfig {
                     data_dir: rooms_dir,
+                    // Device-level releases dir: `hearth release publish`
+                    // writes {data_dir}/releases, not the per-profile root.
+                    releases_dir: config.data_dir.join("releases"),
                     serve_rooms,
                     on_rpc: Some(on_rpc),
                     skip_whois: false,

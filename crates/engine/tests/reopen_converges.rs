@@ -157,6 +157,7 @@ async fn viewer_reopen_converges_on_host_written_transcript() {
         "127.0.0.1:0",
         HubConfig {
             data_dir: rooms.path().to_path_buf(),
+            releases_dir: rooms.path().join("releases"),
             serve_rooms: true,
             on_rpc: None,
             skip_whois: true,

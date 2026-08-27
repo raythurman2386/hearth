@@ -35,10 +35,20 @@ async fn wait_until(mut condition: impl FnMut() -> bool) {
 }
 
 async fn start_hub(dir: &std::path::Path) -> (Hub, SocketAddr) {
+    start_hub_with_releases(dir, dir.join("releases")).await
+}
+
+/// `releases_dir` is device-level (`{data_dir}/releases`) while room storage
+/// nests under the profile root — pin the split so /releases never 404s again.
+async fn start_hub_with_releases(
+    dir: &std::path::Path,
+    releases_dir: std::path::PathBuf,
+) -> (Hub, SocketAddr) {
     let hub = Hub::bind(
         "127.0.0.1:0",
         HubConfig {
             data_dir: dir.to_path_buf(),
+            releases_dir,
             serve_rooms: true,
             on_rpc: None,
             skip_whois: true,
@@ -308,6 +318,23 @@ async fn two_registry_clients_converge_and_survive_reopen() {
 }
 
 #[tokio::test]
+async fn releases_are_served_from_the_device_root_not_the_rooms_root() {
+    // Production topology: rooms live under a profile store root
+    // ({data_dir}/orgs/<org>/<user>), releases at {data_dir}/releases.
+    let dir = tempfile::tempdir().unwrap();
+    let rooms_root = dir.path().join("orgs").join("dev-org").join("dev-user");
+    std::fs::create_dir_all(&rooms_root).unwrap();
+    std::fs::create_dir_all(dir.path().join("releases")).unwrap();
+    std::fs::write(dir.path().join("releases/latest.txt"), b"0.2.5\n").unwrap();
+    let (hub, addr) = start_hub_with_releases(&rooms_root, dir.path().join("releases")).await;
+    let _task = hub.spawn();
+
+    let (status, _, body) = http(addr, "GET", "/releases/latest.txt", &[], &[]).await;
+    assert_eq!(status, 200);
+    assert_eq!(body, b"0.2.5\n");
+}
+
+#[tokio::test]
 async fn http_checkpoint_range_rows_and_releases() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("releases")).unwrap();
@@ -324,6 +351,11 @@ async fn http_checkpoint_range_rows_and_releases() {
     assert_eq!(body, b"hi");
 
     let (status, _, _) = http(addr, "GET", "/releases/../secret", &[], &[]).await;
+    assert_eq!(status, 400);
+
+    // Absolute-path join replaces the base entirely — must be rejected, not
+    // resolved against the filesystem root.
+    let (status, _, _) = http(addr, "GET", "/releases//etc/passwd", &[], &[]).await;
     assert_eq!(status, 400);
 
     let (status, _, _) = http(

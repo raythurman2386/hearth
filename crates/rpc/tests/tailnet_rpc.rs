@@ -37,6 +37,7 @@ async fn hub_rpc_echo_and_idle_ping() {
         "127.0.0.1:0",
         HubConfig {
             data_dir: dir.path().to_path_buf(),
+            releases_dir: dir.path().join("releases"),
             serve_rooms: false,
             on_rpc: Some(on_rpc),
             skip_whois: true,

@@ -44,6 +44,7 @@ async fn two_engines_converge_through_the_hub_registry() {
         "127.0.0.1:0",
         HubConfig {
             data_dir: rooms.path().to_path_buf(),
+            releases_dir: rooms.path().join("releases"),
             serve_rooms: true,
             on_rpc: None,
             skip_whois: true,

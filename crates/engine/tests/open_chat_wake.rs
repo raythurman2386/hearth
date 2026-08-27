@@ -104,6 +104,7 @@ async fn remote_host_wakes_via_peer_open_chat_without_device_room() {
         "127.0.0.1:0",
         HubConfig {
             data_dir: rooms.path().to_path_buf(),
+            releases_dir: rooms.path().join("releases"),
             serve_rooms: true,
             on_rpc: None,
             skip_whois: true,
@@ -128,6 +129,7 @@ async fn remote_host_wakes_via_peer_open_chat_without_device_room() {
         "127.0.0.1:0",
         HubConfig {
             data_dir: dirs.path().join("b-rpc-rooms"),
+            releases_dir: dirs.path().join("releases"),
             serve_rooms: false,
             on_rpc: Some(on_rpc),
             skip_whois: true,
