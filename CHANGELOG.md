@@ -4,6 +4,16 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-08-26
+
+### Changed
+
+- First-time install is a single prebuilt-binary step: the README now leads with
+  `curl -fsSL …/scripts/install.sh | sh` instead of a source build, and the
+  installer no longer auto-installs a systemd user service, enables linger, or
+  probes for agent CLIs. The background engine stays opt-in via
+  `hearth daemon install`.
+
 ## [0.2.3] - 2026-08-25
 
 ### Changed
