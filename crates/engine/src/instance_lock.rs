@@ -17,6 +17,9 @@ use crate::EngineError;
 /// Is `pid` a live process, and (on Linux) does its cmdline name hearth?
 /// `/proc/<pid>/cmdline` is the only reliable check: a recycled pid belonging
 /// to some other program must NOT let a second engine steal the lock.
+/// Unix-only: `libc::kill` (the existence probe) has no Windows equivalent,
+/// and this is only ever consulted by the `flock`-based lock path.
+#[cfg(unix)]
 pub(crate) fn process_is_hearth(pid: u32) -> bool {
     // Signal 0 = existence probe, no delivery.
     if unsafe { libc::kill(pid as i32, 0) } != 0 {

@@ -4,6 +4,16 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-08-28
+
+### Fixed
+
+- **Windows builds again.** The instance-lock liveness probe called the
+  Unix-only `libc::kill` unconditionally, so the `x86_64-pc-windows-msvc`
+  build failed to compile `hearth-engine`. The probe is now gated to Unix
+  (it is only ever consulted by the `flock`-based lock path), restoring the
+  Windows release build.
+
 ## [0.2.7] - 2026-08-28
 
 ### Fixed
