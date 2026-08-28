@@ -4,6 +4,18 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-08-28
+
+### Fixed
+
+- **ACP mid-turn agent deaths are now diagnosable.** When an ACP agent
+  process exits mid-turn, the surfaced error carried only the RPC-side
+  "app-server exited before responding" while the child's exit status and
+  stderr tail — already in hand — were dropped in a race between the EOF
+  arm and the terminal bookkeeping. The EOF arm now reads the child and
+  emits the Done with both attached (in-flight interrupts excluded: the
+  escalation path keeps its single Done{Interrupted}).
+
 ## [0.2.6] - 2026-08-27
 
 ### Fixed
