@@ -2383,34 +2383,79 @@ async fn run_session(session: Session) {
                     // Only a RESOLVED response is a clean finish; a request
                     // failed by the reader's EOF cleanup falls through to the
                     // crash-message bookkeeping below (stderr tail intact).
-                    if let Some(mut fut) = turn.take()
-                        && let Ok(res @ Ok(_)) =
-                            tokio::time::timeout(Duration::from_millis(50), &mut fut).await
-                    {
-                        let (prev, _next) = rotate(&mut assistant_message_id);
-                        let _ = send(
-                            &event_tx,
-                            AgentEvent::AssistantMessageCompleted { assistant_message_id: prev },
-                        )
-                        .await;
-                        if let Some(usage) = usage_from_response(&res) {
-                            let _ = send(&event_tx, usage).await;
+                    if let Some(mut fut) = turn.take() {
+                        match tokio::time::timeout(Duration::from_millis(50), &mut fut).await {
+                            Ok(Ok(res)) => {
+                                let (prev, _next) = rotate(&mut assistant_message_id);
+                                let _ = send(
+                                    &event_tx,
+                                    AgentEvent::AssistantMessageCompleted { assistant_message_id: prev },
+                                )
+                                .await;
+                                if let Some(usage) = usage_from_response(&Ok(res.clone())) {
+                                    let _ = send(&event_tx, usage).await;
+                                }
+                                let (status, error) = stop_outcome(&Ok(res), interrupted);
+                                done_current = true;
+                                if interrupted {
+                                    done_after_interrupt = true;
+                                }
+                                let _ = send(
+                                    &event_tx,
+                                    AgentEvent::Done {
+                                        status,
+                                        result: None,
+                                        error,
+                                        session_id: Some(session_id.clone()),
+                                    },
+                                )
+                                .await;
+                            }
+                            // EOF failed the pending prompt: the RPC-side
+                            // message ("app-server exited before responding")
+                            // hides the real evidence already in hand — the
+                            // child's exit status and stderr tail. Re-read the
+                            // child here so the surfaced Done carries both.
+                            // An in-flight interrupt is excluded: the child
+                            // died because we killed it, and the terminal
+                            // bookkeeping below already ends that as
+                            // Done{Interrupted}.
+                            Ok(Err(rpc_err)) if !interrupted => {
+                                done_current = true;
+                                let status = child.try_wait().ok().flatten();
+                                let detail =
+                                    crate::crash_message(agent_name, status, &stderr_tail);
+                                let _ = send(
+                                    &event_tx,
+                                    AgentEvent::Done {
+                                        status: DoneStatus::Errored,
+                                        result: None,
+                                        error: Some(format!("{rpc_err}; {detail}")),
+                                        session_id: Some(session_id.clone()),
+                                    },
+                                )
+                                .await;
+                            }
+                            Err(_) if !interrupted => {
+                                done_current = true;
+                                let status = child.try_wait().ok().flatten();
+                                let detail =
+                                    crate::crash_message(agent_name, status, &stderr_tail);
+                                let _ = send(
+                                    &event_tx,
+                                    AgentEvent::Done {
+                                        status: DoneStatus::Errored,
+                                        result: None,
+                                        error: Some(format!(
+                                            "{agent_name} exited mid-turn; {detail}"
+                                        )),
+                                        session_id: Some(session_id.clone()),
+                                    },
+                                )
+                                .await;
+                            }
+                            _ => {}
                         }
-                        let (status, error) = stop_outcome(&res, interrupted);
-                        done_current = true;
-                        if interrupted {
-                            done_after_interrupt = true;
-                        }
-                        let _ = send(
-                            &event_tx,
-                            AgentEvent::Done {
-                                status,
-                                result: None,
-                                error,
-                                session_id: Some(session_id.clone()),
-                            },
-                        )
-                        .await;
                     }
                     break 'main;
                 }
