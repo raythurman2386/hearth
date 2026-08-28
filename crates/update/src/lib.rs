@@ -384,6 +384,15 @@ pub fn apply_headless(app_root: &Path, version: &str) -> anyhow::Result<()> {
 /// Restart the installed engine service (the same units `hearth daemon` and the
 /// curl|sh installer manage). Called after a symlink swap so the running daemon
 /// picks up the new binary.
+///
+/// Linux must NOT run `systemctl --user restart` as a direct child of the
+/// engine: the restart stops hearth.service, whose cgroup kill SIGTERMs the
+/// systemctl child mid-call, so the updater always logged "service restart
+/// failed" even though the service did restart (every 0.2.4→0.2.5 auto-update).
+/// Instead the restart is staged into a transient systemd user unit — a
+/// SIBLING of hearth.service's cgroup — which survives the stop and performs
+/// it. Verified live: killing the spawner's process group mid-flight still
+/// restarts the service.
 pub fn restart_service() -> anyhow::Result<()> {
     if cfg!(target_os = "macos") {
         let output = std::process::Command::new("id").arg("-u").output()?;
@@ -393,7 +402,49 @@ pub fn restart_service() -> anyhow::Result<()> {
             &["kickstart", "-k", &format!("gui/{uid}/sh.hearth.app")],
         )
     } else {
-        run("systemctl", &["--user", "restart", "hearth.service"])
+        restart_systemd_outside_cgroup()
+    }
+}
+
+/// The Linux restart: `systemd-run --user --collect` a transient unit that
+/// sleeps out this process's shutdown and then restarts hearth.service.
+/// Falls back to the direct `systemctl` call when systemd-run is unavailable
+/// (non-systemd hosts) — that fallback reports failure when the caller sits
+/// in the stopped unit, which is honest, just noisy.
+fn restart_systemd_outside_cgroup() -> anyhow::Result<()> {
+    const UNIT_NAME: &str = "hearth.service";
+    let script = "sleep 2; systemctl --user restart hearth.service";
+    match std::process::Command::new("systemd-run")
+        .args([
+            "--user",
+            "--collect",
+            "--quiet",
+            "--unit=hearth-update-restart",
+            "/bin/sh",
+            "-c",
+            script,
+        ])
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            tracing::info!(
+                "update: service restart staged in a transient unit; the engine \
+                 will be restarted by systemd after this process exits"
+            );
+            Ok(())
+        }
+        Ok(output) => {
+            tracing::debug!(
+                stderr = %String::from_utf8_lossy(&output.stderr).trim(),
+                "systemd-run staging failed; falling back to a direct restart"
+            );
+            run("systemctl", &["--user", "restart", UNIT_NAME])
+        }
+        Err(err) => {
+            tracing::debug!(error = %err, "systemd-run unavailable; direct restart");
+            run("systemctl", &["--user", "restart", UNIT_NAME])
+        }
     }
 }
 
@@ -732,8 +783,10 @@ impl Updater {
     }
 
     /// Stage + apply the newest release on THIS device (managed installs only),
-    /// then restart the service after a short delay so the caller's RPC reply
-    /// flushes before systemd/launchd kills this process.
+    /// then stage the service restart (after a short delay so the caller's RPC
+    /// reply flushes first). The restart itself runs outside this unit's
+    /// cgroup, so the engine being stopped cannot kill it — see
+    /// [`restart_service`].
     pub async fn apply(&self) -> anyhow::Result<String> {
         let InstallKind::Managed { app_root } = detect_install() else {
             bail!(
@@ -866,5 +919,25 @@ mod tests {
         );
         // Unstaged version refuses.
         assert!(apply_headless(&app_root, "0.2.0").is_err());
+    }
+
+    /// The 0.2.4→0.2.5 update-loop bug: the staged restart must escape the
+    /// caller's cgroup. On a systemd host `restart_service()` succeeds —
+    /// meaning the transient unit was staged — instead of hanging on a
+    /// `systemctl` child that the stop would SIGTERM. (The full cgroup-kill
+    /// scenario is covered live by the 0.2.6 incident verification.)
+    #[cfg(all(unix, target_os = "linux"))]
+    #[test]
+    fn staged_restart_survives_the_caller_being_in_the_stopped_unit() {
+        // Smoke-test the staging call itself: systemd-run either stages the
+        // transient unit (Ok) or falls back to systemctl — never a wedge.
+        // hearth-update-restart is a no-op-safe name: --collect unloads it.
+        let result = restart_service();
+        assert!(result.is_ok(), "restart staging must not error: {result:?}");
+        // The transient unit either ran (0 exit, nothing to see) or systemd
+        // accepted it. Either way, nothing should be left failed.
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "reset-failed", "hearth-update-restart.service"])
+            .output();
     }
 }

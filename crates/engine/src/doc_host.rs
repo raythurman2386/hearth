@@ -233,6 +233,9 @@ struct DocHostInner {
     /// deferred on in-transit attachment bytes re-checks on a cadence, and
     /// each deferral must not stack another timer.
     drain_waiting: Mutex<HashSet<String>>,
+    /// chat id → last doc-rebuild instant (GapUnrepairable heal cooldown,
+    /// see `spawn_chat2_doc_rebuild`).
+    rebuilds: Mutex<HashMap<String, std::time::Instant>>,
     /// Uploads store (engine assembly) — resolves `pending://` attachment
     /// refs and jails transfer reads to the uploads dir.
     uploads: OnceLock<crate::uploads::Uploads>,
@@ -585,6 +588,8 @@ impl DocHost {
                 seeding: Mutex::new(HashSet::new()),
                 seed_waiting: Mutex::new(HashSet::new()),
                 drain_waiting: Mutex::new(HashSet::new()),
+                // GapUnrepairable heal cooldown (see spawn_chat2_doc_rebuild).
+                rebuilds: Mutex::new(HashMap::new()),
                 uploads: OnceLock::new(),
                 connectivity: OnceLock::new(),
                 connectivity_started: AtomicBool::new(false),
@@ -1317,6 +1322,17 @@ impl DocHost {
                                             tracing::warn!(chat = %chat, "chat2 push rejected; compensating via checkpoint");
                                             host.spawn_chat2_checkpoint(&handle, "push-rejected");
                                         }
+                                        Ok(ChatEvent::GapUnrepairable { cursor }) => {
+                                            let Some(handle) = weak.upgrade() else { return };
+                                            tracing::error!(
+                                                chat = %chat,
+                                                cursor,
+                                                "chat2 rows parked on deps the room \
+                                                 cannot deliver; rebuilding the doc \
+                                                 from the checkpoint"
+                                            );
+                                            host.spawn_chat2_doc_rebuild(&handle, cursor);
+                                        }
                                         Ok(_) => {}
                                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                                         Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
@@ -1798,6 +1814,62 @@ impl DocHost {
             }
             in_flight.store(false, Ordering::Release);
         });
+    }
+
+    /// Rebuild a chat's doc after [`ChatEvent::GapUnrepairable`]: the doc's
+    /// pending buffer holds ops whose causal deps the room can no longer
+    /// deliver (a founding op the checkpoint never covered — the 2026-08-27
+    /// macpro wedge, chat 2bcb8778). Backfilling loops forever; the only heal
+    /// is a FRESH doc re-imported from the room's checkpoint + rows. Drop the
+    /// live handle (retiring it so it never persists its parked doc again) —
+    /// the next open rebuilds from the stored snapshot + room catch-up, and
+    /// its chat2 join refetches the checkpoint into a clean oplog.
+    ///
+    /// Bounded: at most one rebuild per [`REBUILD_COOLDOWN`] per chat, so a
+    /// genuinely-broken room cannot hot-loop retire/reopen.
+    fn spawn_chat2_doc_rebuild(&self, handle: &Arc<ChatDocHandle>, cursor: u64) {
+        const REBUILD_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(30);
+        let chat_id = handle.chat_id.clone();
+        {
+            let mut last = lock(&self.inner.rebuilds);
+            if let Some(at) = last.get(&chat_id)
+                && at.elapsed() < REBUILD_COOLDOWN
+            {
+                tracing::warn!(
+                    chat = %chat_id,
+                    "chat2 doc rebuild skipped (cooldown); transcript stays degraded"
+                );
+                return;
+            }
+            last.insert(chat_id.clone(), std::time::Instant::now());
+        }
+        // Retire + drop unless a live writer holds the doc (a run streaming
+        // into it keeps its doc; the rebuild lands when the handle closes —
+        // same contract as the chat2 seed's retire path).
+        let dropped = {
+            let mut handles = lock(&self.inner.handles);
+            if let Some(existing) = handles.get(&chat_id) {
+                existing.retired.store(true, Ordering::Relaxed);
+                if Arc::strong_count(&existing.doc) == 1 {
+                    handles.remove(&chat_id);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        tracing::info!(
+            chat = %chat_id,
+            cursor,
+            handle_dropped = dropped,
+            "chat2 doc rebuild: handle retired; the next open re-catches-up \
+             from the checkpoint"
+        );
+        // Nudge any watchers: dropping the handle ends their transcript
+        // streams; a UI resubscribe (or the next user action) reopens and
+        // repopulates. Nothing else to drive from here.
     }
 
     /// LRU eviction: while the warm set exceeds [`WARM_DOC_CAP`] or the
@@ -3459,6 +3531,29 @@ impl DocHost {
         let handles: Vec<_> = lock(&self.inner.handles).values().cloned().collect();
         for handle in handles {
             self.save_snapshot(&handle);
+        }
+    }
+
+    /// [`Self::flush_all`] bounded: every snapshot save runs off the async
+    /// path and the whole loop races `budget`, so a wedged export/store costs
+    /// its slice of the budget and never the stop itself. Docs whose save
+    /// lost the race are logged and skipped — the next start's crash-recovery
+    /// handles the gap.
+    pub async fn flush_all_bounded(&self, budget: std::time::Duration) {
+        let handles: Vec<_> = lock(&self.inner.handles).values().cloned().collect();
+        let deadline = std::time::Instant::now() + budget;
+        for handle in handles {
+            let chat_id = handle.chat_id.clone();
+            let this = self.clone();
+            let save = tokio::task::spawn_blocking(move || this.save_snapshot(&handle));
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if tokio::time::timeout(remaining.max(std::time::Duration::from_millis(100)), save)
+                .await
+                .is_err()
+            {
+                tracing::warn!(chat = %chat_id, "snapshot flush skipped (over budget)");
+                break;
+            }
         }
     }
 

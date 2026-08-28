@@ -102,6 +102,14 @@ pub enum ChatEvent {
     /// next posts a checkpoint — the C3 host should treat this event as a
     /// checkpoint trigger, not a shrug.
     PushRejected,
+    /// The same row gap failed repair MAX_GAP_REPAIRS_PER_SESSION times in a
+    /// row: the parked row's causal deps are unobtainable from this room
+    /// (the 2026-08-27 macpro wedge — a founding op the checkpoint never
+    /// covered). Backfilling cannot heal it; the HOST must rebuild the doc
+    /// from the checkpoint (fresh doc → checkpoint → rows) or the transcript
+    /// stays frozen below the parked row forever. The event carries the
+    /// parked row seq and cursor for diagnostics.
+    GapUnrepairable { cursor: u64 },
 }
 
 // ── engine-facing traits ────────────────────────────────────────────────────
@@ -545,6 +553,7 @@ impl ChatClient {
             presence_rx,
             flags: flags.clone(),
             resumed: false,
+            last_gap_after: 0,
             cursor_amnesty_done: std::sync::atomic::AtomicBool::new(false),
             transport,
             sync_busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -722,6 +731,9 @@ struct Actor {
     /// continuity and skip them (the reconnect-after-offline-work path the
     /// spec optimizes).
     resumed: bool,
+    /// The cursor the last gap repair backfilled from — same-gap detection
+    /// for [`ChatEvent::GapUnrepairable`]. Session-scoped.
+    last_gap_after: u64,
 }
 
 enum SessionEnd {
@@ -764,7 +776,12 @@ impl Actor {
                 .dial_seq
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                 + 1;
-            let dial = tokio::time::timeout(CONNECT_TIMEOUT, self.connector.connect()).await;
+            // Shutdown cuts through the dial itself: a 20s CONNECT_TIMEOUT
+            // must not outrun engine teardown (0.2.4's stop hang).
+            let dial = tokio::select! {
+                dial = tokio::time::timeout(CONNECT_TIMEOUT, self.connector.connect()) => dial,
+                _ = self.shutdown.changed() => return,
+            };
             let pipe = match dial {
                 Ok(Ok(pipe)) => pipe,
                 Ok(Err(err)) => {
@@ -845,6 +862,12 @@ impl Actor {
         // or our own last dial would cut every wait to zero.
         while wake.try_recv().is_ok() {}
         while online.try_recv().is_ok() {}
+        // Shutdown preempts even a fresh flag: the actor must not sit out a
+        // full backoff (capped at 16s, longer parked offline) after `shutdown()`
+        // fired — the engine's teardown joins this task.
+        if *self.shutdown.borrow() {
+            return Waited::Shutdown;
+        }
         let wait = if crate::wake::path_is_offline() {
             wait.max(OFFLINE_PARK_RECHECK)
         } else {
@@ -1403,7 +1426,17 @@ impl Actor {
     /// cursor. Bounded per session: a gap the server can't fill (should be
     /// impossible below the checkpoint floor) forces a redial, whose full
     /// catch-up is the stronger repair.
-    async fn maybe_repair_gap(&self, pipe: &mut BinPipe, repairs: &mut u32) -> bool {
+    ///
+    /// The bound is per GAP, not per session: three repairs over the SAME
+    /// cursor mean the deps are unobtainable (the server answers every
+    /// backfill with the same rows — the missing op is not in the room), and
+    /// redialing alone loops forever. That fires [`ChatEvent::GapUnrepairable`]
+    /// once, then reports `false` so the session re-catches-up from scratch.
+    async fn maybe_repair_gap(
+        &mut self,
+        pipe: &mut BinPipe,
+        repairs: &mut u32,
+    ) -> bool {
         const MAX_GAP_REPAIRS_PER_SESSION: u32 = 3;
         let (repair, after) = {
             let mut shared = lock(&self.shared);
@@ -1412,9 +1445,21 @@ impl Actor {
         if !repair {
             return true;
         }
+        // Same-gap bookkeeping: a repair at a NEW cursor resets the streak.
+        if after != self.last_gap_after {
+            self.last_gap_after = after;
+            *repairs = 0;
+        }
         *repairs += 1;
         if *repairs > MAX_GAP_REPAIRS_PER_SESSION {
-            tracing::warn!("chat2: gap repairs exhausted; redialing for a full catch-up");
+            tracing::error!(
+                cursor = after,
+                repairs = *repairs - 1,
+                "chat2: gap repair exhausted for the same cursor — deps are \
+                 unobtainable from this room; asking the host to rebuild the \
+                 doc from the checkpoint"
+            );
+            let _ = self.events.send(ChatEvent::GapUnrepairable { cursor: after });
             return false;
         }
         tracing::info!(
@@ -1500,9 +1545,15 @@ impl Actor {
                     let mut shared = lock(&self.shared);
                     shared.cursor = shared.cursor.min(before);
                     shared.gap_repair = true;
+                    // Park diagnostics: the sink's own doc holds the pending
+                    // range, but the client can log the row identity so an
+                    // unobtainable gap (deps the room will never deliver) is
+                    // traceable from logs alone.
                     tracing::warn!(
                         seq = effective,
                         cursor = shared.cursor,
+                        batch = %row.batch_id,
+                        device = %row.device,
                         "chat2: row parked on missing deps; holding cursor and requesting backfill"
                     );
                 }

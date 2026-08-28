@@ -14,6 +14,30 @@ use std::path::Path;
 
 use crate::EngineError;
 
+/// Is `pid` a live process, and (on Linux) does its cmdline name hearth?
+/// `/proc/<pid>/cmdline` is the only reliable check: a recycled pid belonging
+/// to some other program must NOT let a second engine steal the lock.
+pub(crate) fn process_is_hearth(pid: u32) -> bool {
+    // Signal 0 = existence probe, no delivery.
+    if unsafe { libc::kill(pid as i32, 0) } != 0 {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        match std::fs::read_to_string(format!("/proc/{pid}/cmdline")) {
+            Ok(cmdline) => cmdline.contains("hearth"),
+            // A live pid we cannot read (permission or race): be conservative
+            // and treat it as a holder.
+            Err(_) => true,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // No cmdline source on this platform: a live pid is a holder.
+        true
+    }
+}
+
 /// Held lock on the data dir. Dropping it (engine shutdown / process exit)
 /// releases the advisory lock; a crash releases it too (kernel-owned).
 #[derive(Debug)]
@@ -44,6 +68,7 @@ impl InstanceLock {
             // real second engine holds it forever; transient artifacts clear
             // well within the budget.
             let mut retries = 40u32; // × 25ms = 1s budget
+            let mut stole_once = false;
             loop {
                 let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
                 if rc == 0 {
@@ -59,6 +84,28 @@ impl InstanceLock {
                     Some(libc::EWOULDBLOCK) => {
                         let holder = std::fs::read_to_string(&path).unwrap_or_default();
                         let holder = holder.trim();
+                        // The stamped pid is advisory: verify it names a live
+                        // hearth before reporting it. A wedged engine that the
+                        // service manager SIGKILLed (the 2026-08-27 wedge)
+                        // leaves the stamp behind; the kernel has released its
+                        // flock, so reaching HERE with a dead/non-hearth pid
+                        // means the retry budget above only saw the
+                        // fork-inherit window — steal the lock.
+                        let stale = match holder.parse::<u32>() {
+                            Ok(pid) => !process_is_hearth(pid),
+                            Err(_) => holder.is_empty(),
+                        };
+                        if stale && !stole_once {
+                            stole_once = true;
+                            tracing::warn!(
+                                holder = %holder,
+                                "instance lock stamp points at a dead or \
+                                 non-hearth process; stealing the lock"
+                            );
+                            retries = 40u32; // one fresh budget for the steal
+                            std::thread::sleep(std::time::Duration::from_millis(25));
+                            continue;
+                        }
                         return Err(EngineError::Other(format!(
                             "another hearth engine is already running on {} (pid {}); \
                              stop it or use a different data dir (HEARTH_DATA_DIR)",

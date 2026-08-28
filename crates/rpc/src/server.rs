@@ -15,6 +15,12 @@ use tokio_tungstenite::tungstenite::http::StatusCode;
 
 use crate::{ClientFrame, RpcError, RpcReply, RpcService, ServerFrame};
 
+/// Budget for one server-side WebSocket handshake (read the request, run the
+/// origin check, write the 101). A client that connects and stalls — or sends
+/// bytes that never parse — used to be able to pin this await arbitrarily;
+/// today it just fails the connection and the accept loop moves on.
+const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Serve one connection: read client frames from `inbound`, write server frames to `out`.
 /// Returns when `inbound` closes; all in-flight request tasks are aborted on exit.
 pub async fn serve_connection(
@@ -137,6 +143,13 @@ async fn handle_request(
 }
 
 /// Accept WebSocket connections forever, serving each with `service`.
+///
+/// The accept loop never awaits a handshake: every accepted TCP stream goes to
+/// a detached task bounded by [`HANDSHAKE_TIMEOUT`], so a client that connects
+/// and stalls mid-handshake (or a slow start on a wedged peer) costs one task,
+/// never the listener. This is the regression that left 0.2.5's IPC port with
+/// a listen-queue backlog and zero successful handshakes after one wedged
+/// client dialed it.
 pub async fn serve_ws_listener(listener: TcpListener, service: Arc<dyn RpcService>) {
     loop {
         match listener.accept().await {
@@ -175,10 +188,22 @@ async fn serve_ws_socket(stream: TcpStream, service: Arc<dyn RpcService>) {
         }
         Ok(resp)
     };
-    let ws = match tokio_tungstenite::accept_hdr_async(stream, reject_cross_origin).await {
-        Ok(ws) => ws,
-        Err(err) => {
+    let ws = match tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        tokio_tungstenite::accept_hdr_async(stream, reject_cross_origin),
+    )
+    .await
+    {
+        Ok(Ok(ws)) => ws,
+        Ok(Err(err)) => {
             tracing::warn!(error = %err, "rpc: websocket handshake failed");
+            return;
+        }
+        Err(_) => {
+            tracing::warn!(
+                timeout_secs = HANDSHAKE_TIMEOUT.as_secs(),
+                "rpc: websocket handshake timed out; dropping the client"
+            );
             return;
         }
     };

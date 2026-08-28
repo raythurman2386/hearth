@@ -233,7 +233,7 @@ fn render_systemd_unit(exe: &Path, env: &[(String, String)]) -> String {
         unit.push_str(&format!("Environment=\"{key}={value}\"\n"));
     }
     unit.push_str(&format!(
-        "ExecStart={} headless\nRestart=on-failure\nRestartSec=5\nEnvironmentFile=-%h/.hearth/env\n\n[Install]\nWantedBy=default.target\n",
+        "ExecStart={} headless\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=15\nEnvironmentFile=-%h/.hearth/env\n\n[Install]\nWantedBy=default.target\n",
         systemd_exec_path(exe)
     ));
     unit
@@ -394,6 +394,9 @@ mod tests {
         assert!(unit.contains("StartLimitIntervalSec=60\n"));
         assert!(unit.contains("StartLimitBurst=5\n"));
         assert!(unit.contains("Restart=on-failure"));
+        // SIGKILL escalation in 15s, not the ~90s default: a hung shutdown
+        // must not stretch a service restart past a minute.
+        assert!(unit.contains("TimeoutStopSec=15\n"));
         assert!(!unit.contains("session.json"));
         assert!(!unit.contains("ConditionPathExists"));
         assert!(unit.contains("EnvironmentFile=-%h/.hearth/env"));

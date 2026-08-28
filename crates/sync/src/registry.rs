@@ -611,7 +611,12 @@ impl Actor {
                 .dial_seq
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                 + 1;
-            let dial = tokio::time::timeout(CONNECT_TIMEOUT, self.connector.connect()).await;
+            // Shutdown cuts through the dial itself: a 20s CONNECT_TIMEOUT
+            // must not outrun engine teardown (0.2.4's stop hang).
+            let dial = tokio::select! {
+                dial = tokio::time::timeout(CONNECT_TIMEOUT, self.connector.connect()) => dial,
+                _ = self.shutdown.changed() => return,
+            };
             let pipe = match dial {
                 Ok(Ok(pipe)) => pipe,
                 Ok(Err(err)) => {
@@ -714,6 +719,12 @@ impl Actor {
         while wake.try_recv().is_ok() {}
         while online.try_recv().is_ok() {}
         use std::sync::atomic::Ordering::Relaxed;
+        // Shutdown preempts even a fresh flag: the actor must not sit out a
+        // full backoff (capped at 16s, longer parked offline) after
+        // `shutdown()` fired — the engine's teardown joins this task.
+        if *self.shutdown.borrow() {
+            return Waited::Shutdown;
+        }
         let wait = if crate::wake::path_is_offline() {
             wait.max(OFFLINE_PARK_RECHECK)
         } else {

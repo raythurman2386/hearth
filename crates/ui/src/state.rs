@@ -263,19 +263,36 @@ impl EngineHandle {
         // the lock, not the port bind, is the ownership decision. A failed
         // acquire means an out-of-process engine holds the dir but was not
         // serving IPC at probe time (a daemon mid-start): wait for its
-        // listener, re-trying the lock in case it dies instead.
+        // listener, re-trying the lock in case it dies instead. When the
+        // deadline expires while a dial ALSO timed out this turn, the holder
+        // is very likely wedged (accepting TCP, never completing handshakes)
+        // — say so instead of the bare bootstrap error.
         std::fs::create_dir_all(&engine_config.data_dir)?;
         let lock_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut dial_timed_out = false;
         let lock = loop {
             match InstanceLock::acquire(&engine_config.data_dir) {
                 Ok(lock) => break lock,
                 Err(err) => {
                     if std::time::Instant::now() >= lock_deadline {
+                        if dial_timed_out
+                            && let Some(pid) = InstanceLock::holder(&engine_config.data_dir)
+                        {
+                            return Err(anyhow::anyhow!(
+                                "engine (pid {pid}) appears wedged — it holds the data dir \
+                                 and is not completing IPC handshakes. Run: \
+                                 systemctl --user restart hearth"
+                            ));
+                        }
                         return Err(err.into());
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                    if let Some(handle) = Self::attach_to_daemon(engine_config.ipc_port).await {
-                        return Ok(handle);
+                    match Self::attach_to_daemon(engine_config.ipc_port).await {
+                        Some(handle) => return Ok(handle),
+                        // Distinguish "nothing there" from "dial timed out":
+                        // only the latter implicates a wedged holder.
+                        None if listener_refused(engine_config.ipc_port) => {}
+                        None => dial_timed_out = true,
                     }
                 }
             }
@@ -477,6 +494,17 @@ impl EngineHandle {
     pub async fn shutdown(&self) {
         self.inner.shutdown().await;
     }
+}
+
+/// Distinguish "the engine refused to be attached" from "a listener is there
+/// but the engine is not completing handshakes." Used to surface a wedged
+/// engine instead of a bare bootstrap failure.
+fn listener_refused(ipc_port: u16) -> bool {
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], ipc_port)),
+        std::time::Duration::from_millis(300),
+    )
+    .is_err()
 }
 
 /// Query the current protocol first, with a conservative fallback for daemons

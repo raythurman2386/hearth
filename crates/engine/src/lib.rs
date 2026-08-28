@@ -92,6 +92,16 @@ pub(crate) fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Whole-shutdown budget: every graceful-teardown stage (session settle,
+/// updater stop, sync-graph joins) races this clock. 0.2.4's stop hung 90s
+/// waiting on sync actors whose reconnect backoff ignored the shutdown flag;
+/// the packaged unit gives 15s (TimeoutStopSec) and this budget must land
+/// comfortably inside it.
+const SHUTDOWN_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+/// The snapshot flush runs after the stage budget with its own bound — a
+/// stuck store costs the budget, never the stop itself.
+const FLUSH_BUDGET: std::time::Duration = std::time::Duration::from_secs(4);
+
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
     /// Data directory (default `~/.hearth`, dev `~/.hearth-dev`).
@@ -477,8 +487,53 @@ impl EngineCore {
     /// Graceful teardown: settle live runs (streaming entries stamped `aborted`),
     /// kill live PTYs, stamp our workspace `lastSeenAt`, and flush every open doc
     /// snapshot.
+    ///
+    /// The whole path is bounded by [`SHUTDOWN_BUDGET`]: each stage waits for
+    /// its workers only within the remaining budget, and the snapshot flush —
+    /// the one step whose work must not be half-abandoned — runs last, off the
+    /// budget, but strictly bounded. 0.2.4's stop hung 90s here (the sync
+    /// actors' reconnect backoff outran the join), and systemd escalated to
+    /// SIGKILL, which is the crash-recovery path for every open store.
     pub async fn shutdown(&self) {
-        self.sessions.shutdown().await;
+        use tokio_util::sync::CancellationToken;
+        let deadline = CancellationToken::new();
+        let deadline_for_stage = deadline.clone();
+        let budget = tokio::spawn(async move {
+            tokio::time::sleep(SHUTDOWN_BUDGET).await;
+            deadline_for_stage.cancel();
+        });
+        tokio::select! {
+            _ = self.shutdown_within(&deadline) => {}
+            _ = deadline.cancelled() => {
+                tracing::warn!(
+                    budget_secs = SHUTDOWN_BUDGET.as_secs(),
+                    "graceful shutdown exceeded its budget; proceeding with the flush"
+                );
+            }
+        }
+        budget.abort();
+        // Persist every open doc — this is why we shut down gracefully at all.
+        // Bounded on its own: a stuck store must cost the budget, not the stop.
+        tokio::time::timeout(
+            FLUSH_BUDGET,
+            async { self.doc_host.flush_all_bounded(FLUSH_BUDGET).await },
+        )
+        .await
+        .unwrap_or_else(|_| {
+            tracing::warn!("snapshot flush exceeded its budget");
+        });
+        self.workspace.shutdown();
+        // Break the sessions ⇄ doc-host retain cycle so the replaced graph can
+        // actually be freed once the last handle drops.
+        self.sessions.clear_doc_host();
+    }
+
+    /// The stages of graceful teardown, all racing the shared deadline.
+    async fn shutdown_within(&self, deadline: &tokio_util::sync::CancellationToken) {
+        tokio::select! {
+            _ = deadline.cancelled() => return,
+            _ = self.sessions.shutdown() => {}
+        }
         self.terminals.shutdown();
         self.agent_accounts.shutdown();
         self.change_requests.shutdown();
@@ -492,7 +547,6 @@ impl EngineCore {
             .take();
         if let Some(wake) = wake {
             wake.abort();
-            let _ = wake.await;
         }
         let updater = self
             .updater
@@ -500,16 +554,23 @@ impl EngineCore {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         if let Some(updater) = updater {
-            updater.shutdown().await;
+            tokio::select! {
+                _ = deadline.cancelled() => {}
+                _ = updater.shutdown() => {}
+            }
         }
-        self.diff_sync.shutdown().await;
-        self.spaces_sync.shutdown().await;
-        self.doc_host.shutdown_workers().await;
-        self.doc_host.flush_all();
-        self.workspace.shutdown();
-        // Break the sessions ⇄ doc-host retain cycle so the replaced graph can
-        // actually be freed once the last handle drops.
-        self.sessions.clear_doc_host();
+        tokio::select! {
+            _ = deadline.cancelled() => {}
+            _ = self.diff_sync.shutdown() => {}
+        }
+        tokio::select! {
+            _ = deadline.cancelled() => {}
+            _ = self.spaces_sync.shutdown() => {}
+        }
+        tokio::select! {
+            _ = deadline.cancelled() => {}
+            _ = self.doc_host.shutdown_workers() => {}
+        }
     }
 }
 

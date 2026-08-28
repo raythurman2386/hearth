@@ -55,6 +55,10 @@ struct RecordingSink {
     /// them — the 2026-08-24 empty-doc/advanced-cursor wedge, where the
     /// cursor advanced over rows the doc never materialized.
     park_payloads: Mutex<std::collections::HashSet<Vec<u8>>>,
+    /// When true, marked payloads park on EVERY apply, not just the first —
+    /// the unobtainable-deps shape (the deps are not in the room, so no
+    /// re-delivery can ever absorb the row).
+    park_always: bool,
     /// Global apply order across rows and checkpoints — the overlap test
     /// pins "checkpoint imports before any row that buffered during it".
     ops: Mutex<Vec<String>>,
@@ -64,6 +68,9 @@ impl ChatDocSink for RecordingSink {
     fn apply_row(&self, bytes: &[u8], cursor: u64) -> bool {
         lock(&self.rows).push((bytes.to_vec(), cursor));
         lock(&self.ops).push(format!("row@{cursor}"));
+        if self.park_always {
+            return !lock(&self.park_payloads).contains(bytes);
+        }
         // Park only the FIRST apply of a marked payload; a repair re-delivery
         // of the same bytes (now with deps present) is absorbed.
         !lock(&self.park_payloads).remove(bytes)
@@ -1546,6 +1553,200 @@ async fn checkpointless_amnesty_refetches_from_zero() {
         "all rows re-imported from zero"
     );
     assert_eq!(client.stats().cursor, 3);
+    drop(end);
+    client.shutdown().await;
+}
+
+/// The 2026-08-27 shutdown wedge: after a session teardown, the actor parked
+/// inside `wait_backoff` (and could sit through a whole dial timeout), and the
+/// caller's `shutdown()` join hung past systemd's stop window. Shutdown must
+/// preempt both the dial and the backoff, in (virtual) wall time.
+#[tokio::test(start_paused = true)]
+async fn shutdown_cuts_through_backoff_and_dial_promptly() {
+    // A connector that NEVER resolves its dial: the actor's first join attempt
+    // sits inside the 20s CONNECT_TIMEOUT unless shutdown cuts it.
+    struct NeverConnector;
+    impl BinConnector for NeverConnector {
+        fn connect(&self) -> BoxFuture<'static, Result<BinPipe, SyncError>> {
+            Box::pin(async { std::future::pending().await })
+        }
+    }
+
+    let sink = Arc::new(RecordingSink::default());
+    let (fetch, _) = fetcher(b"");
+    let outcome = ChatClient::connect_with_tuned(
+        Arc::new(NeverConnector),
+        sink,
+        fetch,
+        "dev-a",
+        0,
+        ChatTuning::default(),
+    )
+    .await;
+    assert!(
+        outcome.is_err(),
+        "the first join fails fast when the dial never resolves (caller owns the retry)"
+    );
+
+    // Second shape: a JOINED actor whose socket died — the reconnect path
+    // parks in wait_backoff (capped at 16s, 30s parked offline). shutdown()
+    // must return promptly instead of waiting out the backoff.
+    let (pipe, mut end) = pipe_pair();
+    let sink = Arc::new(RecordingSink::default());
+    let (fetch, _) = fetcher(b"");
+    let server = tokio::spawn(async move {
+        serve_join(
+            &mut end,
+            serde_json::json!({"headSeq": 1, "seqFloor": 0, "checkpointSeq": 1,
+                "checkpointSize": 2, "rowCount": 0, "rowBytes": 0}),
+            &[1, 2],
+            vec![],
+            false,
+        )
+        .await;
+        // Socket dies right after join: the actor redials — the connector has
+        // no more pipes, so it parks in the backoff wait.
+        end
+    });
+    let client = ChatClient::connect_with_tuned(
+        connector(vec![pipe]),
+        sink,
+        fetch,
+        "dev-a",
+        0,
+        ChatTuning::default(),
+    )
+    .await
+    .expect("first join succeeds");
+    let end = server.await.unwrap();
+    drop(end);
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), client.shutdown())
+        .await
+        .expect("shutdown must not wait out the reconnect backoff");
+}
+
+/// The 2026-08-27 macpro wedge: a row parks on deps the room will NEVER
+/// deliver (its founding op is not in the room — the checkpoint didn't cover
+/// it). Every backfill returns the same rows, the same row parks again, and
+/// the transcript freezes below it forever. After MAX_GAP_REPAIRS_PER_SESSION
+/// repairs over the SAME cursor, the client must fire `GapUnrepairable` (the
+/// host's doc-rebuild signal) instead of looping.
+#[tokio::test(start_paused = true)]
+async fn same_gap_exhaustion_fires_gap_unrepairable() {
+    let (pipe, mut end) = pipe_pair();
+    let sink = Arc::new(RecordingSink {
+        // Row 4 ALWAYS parks (its deps are unobtainable — the founding op
+        // is not in the room, so no re-delivery can absorb it).
+        park_always: true,
+        park_payloads: std::sync::Mutex::new(std::collections::HashSet::from([vec![0x04u8]])),
+        ..Default::default()
+    });
+    let (fetch, _) = fetcher(b"");
+    // The live row 4 is gated: the server sends it only once the test has
+    // subscribed to the event stream (broadcast events are not retroactive).
+    let go = Arc::new(tokio::sync::Notify::new());
+    let go_for_server = go.clone();
+
+    let server = tokio::spawn(async move {
+        // Join backfills rows 1..3 cleanly (cursor 3).
+        let after = serve_join(
+            &mut end,
+            serde_json::json!({"headSeq": 3, "seqFloor": 0, "checkpointSeq": 0,
+                "checkpointSize": 0, "rowCount": 3, "rowBytes": 96}),
+            &[],
+            vec![
+                (1, "dev-b", vec![0x01]),
+                (2, "dev-b", vec![0x02]),
+                (3, "dev-b", vec![0x03]),
+            ],
+            false,
+        )
+        .await;
+        assert_eq!(after, 0);
+        // Wait until the test has subscribed, then send row 4 live.
+        go_for_server.notified().await;
+        // Row 4 arrives live and parks on unobtainable deps.
+        send(
+            &end,
+            frame_type::ROW,
+            serde_json::json!({"seq": 4, "device": "dev-b", "batchId": "b4"}),
+            &[0x04],
+        )
+        .await;
+        // Every repair backfill re-delivers the SAME rows — the room has
+        // nothing else — so the park repeats at the same cursor. Probes and
+        // presence beats interleave; skip frames that aren't backfill
+        // requests. Serve 6 repair rounds: three repairs at cursor 3, the
+        // 4th park exhausts the budget and fires GapUnrepairable — extra
+        // rounds are inert (the session ends; recv sees the hangup).
+        for _ in 0..6 {
+            let req = match end.rx.recv().await {
+                Some(bytes) => {
+                    let frame = decode(&bytes).expect("undecodable frame");
+                    if frame.kind != frame_type::ROWS_REQ {
+                        continue;
+                    }
+                    assert_eq!(frame.header["after"].as_u64().unwrap(), 3);
+                    frame
+                }
+                None => break, // client ended the session
+            };
+            let _ = req;
+            for (seq, bytes) in [(2u64, vec![0x02u8]), (3, vec![0x03]), (4, vec![0x04])] {
+                send(
+                    &end,
+                    frame_type::ROW,
+                    serde_json::json!({"seq": seq, "device": "dev-b", "batchId": format!("b{seq}")}),
+                    &bytes,
+                )
+                .await;
+            }
+            send(
+                &end,
+                frame_type::ROWS_DONE,
+                serde_json::json!({"headSeq": 4}),
+                &[],
+            )
+            .await;
+        }
+        end
+    });
+
+    let client = ChatClient::connect_with_tuned(
+        connector(vec![pipe]),
+        sink.clone(),
+        fetch,
+        "dev-a",
+        0,
+        ChatTuning::default(),
+    )
+    .await
+    .expect("join succeeds");
+    // Subscribe BEFORE unblocking the live row: the GapUnrepairable event
+    // fires during the repair rounds; a broadcast subscriber attached later
+    // would never see it.
+    let mut events = client.events();
+    go.notify_waiters();
+
+    let end = server.await.unwrap();
+
+    // The client must fire exactly one GapUnrepairable at cursor 3 (then the
+    // session ends and re-catches-up).
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let event = tokio::time::timeout_at(deadline, events.recv())
+            .await
+            .expect("timed out waiting for GapUnrepairable");
+        match event {
+            Ok(ChatEvent::GapUnrepairable { cursor }) => {
+                assert_eq!(cursor, 3, "the unrepairable gap is at the held cursor");
+                break;
+            }
+            Ok(_) => continue,
+            Err(_) => panic!("event stream closed before GapUnrepairable"),
+        }
+    }
     drop(end);
     client.shutdown().await;
 }

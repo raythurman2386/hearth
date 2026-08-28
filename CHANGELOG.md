@@ -4,6 +4,53 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-08-27
+
+### Fixed
+
+- **The IPC accept loop can no longer be wedged by a stalled client.** Every
+  accepted TCP connection now runs its WebSocket handshake in a detached task
+  with a 10s timeout; the listener itself never awaits a handshake. This is
+  the 0.2.5 wedge: one client that connected and stalled mid-handshake left
+  the IPC port with a listen-queue backlog and zero successful handshakes, and
+  every headed launch failed with "not an engine; embedding instead" → the
+  instance-lock rejection → app exit. Regression tests pin both properties
+  (`crates/rpc/tests/handshake_stall.rs`).
+- **Engine shutdown is bounded and exits cleanly.** The whole teardown races a
+  5s budget (snapshot flush gets its own 4s bound, off the stage budget), and
+  the chat2/registry sync actors now honor shutdown *during* a dial or
+  reconnect backoff instead of after it — the 0.2.4 stop that hung 90s waiting
+  on sync actors and died to systemd's SIGKILL is gone. Verified live: SIGTERM
+  → exit in 0.10s, lock released, immediate relaunch succeeds.
+- **Self-update restarts survive the cgroup kill.** The updater staged
+  `systemctl --user restart hearth.service` as a child of the very unit being
+  restarted, so the stop's SIGTERM killed the systemctl child and every
+  auto-update logged "service restart failed" even though the service did
+  restart. The restart is now staged into a transient systemd user unit
+  (sibling cgroup) that performs it after this process exits; the direct call
+  remains as a non-systemd fallback, and the macOS launchctl path is
+  unchanged.
+- **A dead engine's instance lock is stolen, not worshipped.** When the pid
+  stamped on the lock is gone (or `/proc/<pid>/cmdline` is not a hearth
+  process), `InstanceLock::acquire` now steals the lock instead of refusing to
+  start. When the holder is genuinely alive but wedged (dial times out AND the
+  lock is held), the UI now says so: "engine (pid N) appears wedged — run:
+  systemctl --user restart hearth" instead of a bare bootstrap failure.
+- **The packaged systemd unit stops in 15s, not ~90s** (`TimeoutStopSec=15`),
+  so a hung shutdown escalates to SIGKILL inside the unit's own stop window.
+- **Unobtainable chat2 row gaps now heal instead of freezing the transcript.**
+  A row parked on causal deps the room can no longer deliver (the macpro
+  chat-load stall: 2033-row checkpoint fetched, then rows parked forever at
+  the same gap) exhausted the repair budget without end. Gap repair is now
+  bounded *per gap*: after three failed repairs over the same cursor the
+  client fires `GapUnrepairable` and the host rebuilds the doc from the
+  checkpoint (retire + fresh open → checkpoint + rows re-import), cooled down
+  to one attempt per 30s per chat. Parked rows now log seq, batch id, and
+  device so dead gaps are diagnosable from logs alone.
+- The Raven harness icon (agent pickers/settings) is the official mark from
+  the raven repo — the previous hand-drawn 16px glyph rendered as an
+  unrecognizable blob at icon sizes.
+
 ## [0.2.5] - 2026-08-27
 
 ### Fixed
