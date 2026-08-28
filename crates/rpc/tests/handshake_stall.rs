@@ -11,14 +11,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use hearth_rpc::{RpcError, RpcReply, RpcService, connect_ws, serve_ws_listener};
+use hearth_rpc::{RpcError, RpcService, connect_ws, serve_ws_listener};
 use tokio::io::AsyncWriteExt;
 
 struct Echo;
 
 #[async_trait]
 impl RpcService for Echo {
-    async fn handle(&self, method: &str, params: serde_json::Value) -> Result<hearth_rpc::RpcReply, RpcError> {
+    async fn handle(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<hearth_rpc::RpcReply, RpcError> {
         match method {
             "Echo" => Ok(hearth_rpc::RpcReply::Value(params)),
             other => Err(RpcError::UnknownMethod(other.into())),
@@ -86,13 +90,10 @@ async fn silent_dial_times_out_and_the_listener_survives() {
         .unwrap();
     // Connect and send nothing: the handshake stays pending server-side.
 
-    let honest = tokio::time::timeout(
-        Duration::from_secs(5),
-        async {
-            let client = connect_ws(&format!("ws://127.0.0.1:{port}")).await?;
-            client.call("Echo", serde_json::json!(1)).await
-        },
-    )
+    let honest = tokio::time::timeout(Duration::from_secs(5), async {
+        let client = connect_ws(&format!("ws://127.0.0.1:{port}")).await?;
+        client.call("Echo", serde_json::json!(1)).await
+    })
     .await
     .expect("listener still serving while one dial idles")
     .expect("rpc round trip");

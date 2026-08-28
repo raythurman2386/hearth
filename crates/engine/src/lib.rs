@@ -514,10 +514,9 @@ impl EngineCore {
         budget.abort();
         // Persist every open doc — this is why we shut down gracefully at all.
         // Bounded on its own: a stuck store must cost the budget, not the stop.
-        tokio::time::timeout(
-            FLUSH_BUDGET,
-            async { self.doc_host.flush_all_bounded(FLUSH_BUDGET).await },
-        )
+        tokio::time::timeout(FLUSH_BUDGET, async {
+            self.doc_host.flush_all_bounded(FLUSH_BUDGET).await
+        })
         .await
         .unwrap_or_else(|_| {
             tracing::warn!("snapshot flush exceeded its budget");

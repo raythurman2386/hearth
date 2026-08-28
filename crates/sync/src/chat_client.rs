@@ -1432,11 +1432,7 @@ impl Actor {
     /// backfill with the same rows — the missing op is not in the room), and
     /// redialing alone loops forever. That fires [`ChatEvent::GapUnrepairable`]
     /// once, then reports `false` so the session re-catches-up from scratch.
-    async fn maybe_repair_gap(
-        &mut self,
-        pipe: &mut BinPipe,
-        repairs: &mut u32,
-    ) -> bool {
+    async fn maybe_repair_gap(&mut self, pipe: &mut BinPipe, repairs: &mut u32) -> bool {
         const MAX_GAP_REPAIRS_PER_SESSION: u32 = 3;
         let (repair, after) = {
             let mut shared = lock(&self.shared);
@@ -1459,7 +1455,9 @@ impl Actor {
                  unobtainable from this room; asking the host to rebuild the \
                  doc from the checkpoint"
             );
-            let _ = self.events.send(ChatEvent::GapUnrepairable { cursor: after });
+            let _ = self
+                .events
+                .send(ChatEvent::GapUnrepairable { cursor: after });
             return false;
         }
         tracing::info!(
