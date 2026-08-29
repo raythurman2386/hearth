@@ -4,6 +4,19 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-08-29
+
+### Fixed
+
+- **aarch64-linux cross build runs in CI.** The re-added `cross` build failed
+  on the runner: the cross aarch64 image is an amd64 container, and its
+  pre-build installs `:arm64` dev packages — `libglib2.0-dev` pulls in
+  `python3:arm64`, whose postinst runs the arm64 `python3.12` binary. Without
+  arm64 binfmt on the runner that postinst died with "Exec format error" and
+  aborted the whole `apt-get install`. The workflow now registers arm64
+  binfmt (`tonistiigi/binfmt`) before the cross build, so the postinst runs
+  under qemu and the `hearth-<ver>-linux-aarch64.tar.gz` artifact builds.
+
 ## [0.2.9] - 2026-08-29
 
 ### Fixed

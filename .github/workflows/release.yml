@@ -56,6 +56,16 @@ jobs:
         if: matrix.use-cross
         uses: taiki-e/install-action@cross
 
+      - name: Register arm64 binfmt for cross
+        # The cross aarch64 image is an amd64 container that cross-compiles via
+        # qemu. Its pre-build installs :arm64 dev packages, and libglib2.0-dev
+        # pulls in python3:arm64 whose postinst runs the arm64 python3.12 binary.
+        # ubuntu-latest does not ship arm64 binfmt, so that postinst dies with
+        # "Exec format error" and aborts the whole apt install. Register arm64
+        # binfmt on the runner first so the postinst runs under qemu.
+        if: matrix.use-cross
+        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
+
       - name: Build (native)
         if: ${{ !matrix.use-cross }}
         run: cargo build --release --target ${{ matrix.target }} -p hearth
