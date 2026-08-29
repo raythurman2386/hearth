@@ -4,6 +4,20 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-08-29
+
+### Fixed
+
+- **aarch64-linux releases are back.** The release workflow dropped the
+  `aarch64-unknown-linux-gnu` cross build to cut Actions billing, so Raspberry
+  Pi / Apple-Silicon-Linux users had no `hearth-<ver>-linux-aarch64.tar.gz` to
+  install or self-update to. The build is re-added via `cross` (the
+  `Cross.toml` config already existed), and `scripts/package-linux.sh` now
+  takes an `ARCH` override so the packaging step emits the correct
+  `linux-aarch64` tarball name on an x86_64 runner. `scripts/install.sh` and
+  `scripts/write-manifest.sh` already handled aarch64, so `hearth update` on
+  aarch64 Linux now works end to end.
+
 ## [0.2.8] - 2026-08-28
 
 ### Fixed

@@ -10,13 +10,16 @@
 #   PROFILE=debug     — fast unoptimized package (CI smoke); default release.
 #   PREBUILT_BIN=path — skip cargo build; package this binary instead (CI).
 #   VERSION=x.y.z     — override version (default: Cargo.toml workspace version).
+#   ARCH=x86_64|aarch64 — override the target arch (default: uname -m). Use
+#                         when cross-compiling (e.g. CI builds an aarch64 binary
+#                         on an x86_64 runner via cross).
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 command -v cargo >/dev/null 2>&1 || PATH="$HOME/.cargo/bin:$PATH"
 PROFILE="${PROFILE:-release}"
-ARCH="$(uname -m)"
+ARCH="${ARCH:-$(uname -m)}"
 case "$ARCH" in
   x86_64 | amd64) ARCH=x86_64 ;;
   aarch64 | arm64) ARCH=aarch64 ;;
