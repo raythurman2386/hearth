@@ -468,7 +468,6 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message as WsMessage;
 
     #[test]
-    #[test]
     fn canonical_ip_unwraps_mapped_v4_and_loopback() {
         use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
         let mapped = IpAddr::V6(Ipv4Addr::new(100, 64, 0, 2).to_ipv6_mapped());
@@ -487,6 +486,7 @@ mod tests {
         assert_eq!(canonical_ip(native_v6), native_v6);
     }
 
+    #[test]
     fn dns_host_strips_trailing_dot() {
         let p = Peer {
             id: "x".into(),
