@@ -422,54 +422,62 @@ impl EngineHandle {
             return None;
         }
         tracing::info!(%url, "engine daemon detected; connecting");
-        match connect_ws(&url).await {
-            Ok(client) => match query_engine_info(&client).await {
-                Ok(engine_info) => {
-                    let client = Arc::new(client);
-                    let (state_tx, state_rx) =
-                        tokio::sync::watch::channel(DeferredEngineState::Waiting);
-                    let lifecycle_client = client.clone();
-                    let lifecycle_task = tokio::spawn(async move {
-                        let state = match lifecycle_client
-                            .call(methods::ENGINE_READY, serde_json::json!({}))
-                            .await
-                        {
-                            Ok(_) => DeferredEngineState::Ready,
-                            // EngineReady was added after EngineInfo. An older daemon
-                            // that does not expose the barrier is already assembled.
-                            Err(RpcError::UnknownMethod(method))
-                                if method == methods::ENGINE_READY =>
-                            {
-                                DeferredEngineState::Ready
-                            }
-                            Err(err) => DeferredEngineState::Failed(err.to_string()),
-                        };
-                        state_tx.send_replace(state);
-                    });
-                    Some(EngineHandle {
-                        inner: Arc::new(RemoteEngine {
-                            client,
-                            url,
-                            lifecycle_task: tokio::sync::Mutex::new(Some(lifecycle_task)),
-                        }),
-                        engine_info,
-                        deferred_state: Some(state_rx),
-                    })
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        %url,
-                        error = %err,
-                        "listener did not provide engine identity; embedding instead"
-                    );
-                    None
-                }
-            },
-            // Something is on the port but it is not an engine (or it is
-            // wedged). Fall through and embed: a stranger holding 27654
-            // should cost other viewports, not this window.
-            Err(err) => {
+        // Bound the upgrade: a daemon that accepts TCP but never finishes the
+        // WebSocket handshake used to leave the splash up forever. 8s matches
+        // the IPC handshake timeout with slack for a busy host.
+        let handshake =
+            tokio::time::timeout(std::time::Duration::from_secs(8), connect_ws(&url)).await;
+        let client = match handshake {
+            Ok(Ok(client)) => client,
+            Ok(Err(err)) => {
                 tracing::warn!(%url, error = %err, "not an engine; embedding instead");
+                return None;
+            }
+            Err(_) => {
+                tracing::warn!(
+                    %url,
+                    "engine handshake timed out; treating the listener as wedged"
+                );
+                return None;
+            }
+        };
+        match query_engine_info(&client).await {
+            Ok(engine_info) => {
+                let client = Arc::new(client);
+                let (state_tx, state_rx) =
+                    tokio::sync::watch::channel(DeferredEngineState::Waiting);
+                let lifecycle_client = client.clone();
+                let lifecycle_task = tokio::spawn(async move {
+                    let state = match lifecycle_client
+                        .call(methods::ENGINE_READY, serde_json::json!({}))
+                        .await
+                    {
+                        Ok(_) => DeferredEngineState::Ready,
+                        // EngineReady was added after EngineInfo. An older daemon
+                        // that does not expose the barrier is already assembled.
+                        Err(RpcError::UnknownMethod(method)) if method == methods::ENGINE_READY => {
+                            DeferredEngineState::Ready
+                        }
+                        Err(err) => DeferredEngineState::Failed(err.to_string()),
+                    };
+                    state_tx.send_replace(state);
+                });
+                Some(EngineHandle {
+                    inner: Arc::new(RemoteEngine {
+                        client,
+                        url,
+                        lifecycle_task: tokio::sync::Mutex::new(Some(lifecycle_task)),
+                    }),
+                    engine_info,
+                    deferred_state: Some(state_rx),
+                })
+            }
+            Err(err) => {
+                tracing::warn!(
+                    %url,
+                    error = %err,
+                    "listener did not provide engine identity; embedding instead"
+                );
                 None
             }
         }

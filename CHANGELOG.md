@@ -4,6 +4,15 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-09-05
+
+### Fixed
+
+- The tailnet hub now binds dual-stack (`[::]:port` with `IPV6_V6ONLY=0`, IPv4 fallback) so MagicDNS AAAA / Tailscale IPv6 reaches rooms and `/rpc`. IPv4-mapped peer addresses are canonicalized before `tailscale whois` and the loopback skip, so a dual-stack listener does not reset macOS or IPv6-preferring spokes.
+- Headed GUI and CLI load `~/.hearth/env` at process start (existing env wins). A laptop launched from the desktop entry no longer stays local-only while the daemon unit had the hub host.
+- `tailscale` is resolved from well-known paths (including the macOS app bundle) so a GUI-launched engine can still `whois` / `status` when PATH is empty.
+- Attaching the viewport to a local daemon bounds the WebSocket handshake at 8s. A listener that accepts TCP but never upgrades no longer leaves the splash up forever; the existing wedged-engine error path runs instead.
+
 ## [0.2.10] - 2026-08-29
 
 ### Fixed

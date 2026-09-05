@@ -116,7 +116,7 @@ hearth daemon uninstall
 
 Install records the `hearth` binary path and a fixed allowlist of `HEARTH_*` / logging variables from the install-time environment. Changing env later requires reinstall (or editing the unit) and a restart.
 
-On Linux, the unit also reads `~/.hearth/env` at start (`EnvironmentFile=`), so you can edit that file and `hearth daemon restart` instead of reinstalling. It is not read by interactive shells — `hearth update --check` and other hand-run commands only see `HEARTH_TAILNET_HOST` if your shell profile sources it:
+On Linux, the unit also reads `~/.hearth/env` at start (`EnvironmentFile=`), so you can edit that file and `hearth daemon restart` instead of reinstalling. The `hearth` binary itself loads the same file at process start (without overriding variables already in the environment), so a headed GUI launched from the desktop entry and one-shot CLI commands (`hearth update --check`, `hearth status`) see `HEARTH_TAILNET_HOST` without a shell profile. You can still source it from `~/.bashrc` / `~/.zshrc` if other tools need the same variables:
 
 ```bash
 # ~/.bashrc / ~/.zshrc

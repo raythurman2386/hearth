@@ -60,9 +60,22 @@ no engine listening on 127.0.0.1:27654
 
 Bare Hearth **does not** dial the tailnet. If you never set `HEARTH_TAILNET_HOST`, `hearth login` is not required for normal local use. `hearth sync` will not show useful rooms without an opted-in, running engine that can reach the hub.
 
+## GUI stays on the splash / “locked” and never loads (spoke laptop)
+
+The headed app attaches to a local daemon on `127.0.0.1:27654`. If that process accepts TCP but never finishes the WebSocket handshake, the splash used to wait forever. Current builds time the handshake out and then either embed or fail with “engine appears wedged”.
+
+On the stuck device:
+
+1. `hearth status` — if it hangs or says another engine holds the data dir, `hearth daemon restart` (or `systemctl --user restart hearth` / `launchctl kickstart -k gui/$UID/sh.hearth.app`).
+2. Confirm `~/.hearth/env` has `HEARTH_TAILNET_HOST=<hub MagicDNS>` (and **not** `HEARTH_TAILNET_HUB=1` on a spoke). Headed launches now read that file; a missing host means the GUI is local-only and will not join the hub.
+3. Device **name** in Settings → Devices must match the Tailscale hostname (or MagicDNS first label). `HEARTH_DEVICE_NAME=macbook` if the computer name is “Joe’s MacBook Pro” but Tailscale calls it `macbook`.
+4. There is no macOS prebuilt in GitHub Releases (`install.sh` exits on Darwin). A Mac running macOS needs a source build (`scripts/package-macos.sh`); Linux-on-Mac (macpro) uses the linux tarball.
+
+Hub-side checks from `minis`: `curl -fsS http://minis.<tailnet>.ts.net:27655/health` and `ss -tn sport = :27655` should show the spoke’s tailnet IPv4. Direct IPv6 to the hub used to be refused (IPv4-only bind); current builds listen dual-stack.
+
 ## `hearth update --check` says HEARTH_TAILNET_HOST is not set (on the hub)
 
-`~/.hearth/env` is read by the daemon unit (`EnvironmentFile=`), not by your shell. Source it from your shell profile (`[ -f "$HOME/.hearth/env" ] && . "$HOME/.hearth/env"` in `~/.bashrc`/`~/.zshrc`), or export the variable per command.
+`~/.hearth/env` is read by the daemon unit (`EnvironmentFile=`) **and** by the `hearth` binary at process start (headed GUI, CLI, headless). Process env still wins, so a systemd `Environment=` line or a shell export overrides the file. If a hand-run command still cannot see the host, the file is missing or the key is commented out.
 
 If the variable is set but you instead get `hub has no releases`, the hub daemon predates the device-level `/releases/` fix — `hearth daemon restart` with a current build, and confirm `~/.hearth/releases/` holds `manifest.json` + `latest.txt` (`hearth release publish --from github`). Check with: `curl -fsS http://<hub-host>:27655/releases/latest.txt`.
 

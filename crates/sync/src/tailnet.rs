@@ -16,7 +16,8 @@
 //! they ride these WS streams exactly as they rode the DO sockets.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -354,7 +355,7 @@ impl PeerServer {
     /// return the request path, stream, and identity.
     pub async fn accept(&self) -> Result<(String, WsStream, PeerIdentity), SyncError> {
         let (path, ws, peer) = self.accept_ws().await?;
-        let identity = whois(&peer.ip().to_string()).await?;
+        let identity = whois(&canonical_ip(peer.ip()).to_string()).await?;
         Ok((path, ws, identity))
     }
 }
@@ -396,10 +397,55 @@ pub async fn connect_peer(
 
 // ── tailscale subprocess helper ────────────────────────────────────────────
 
+/// Unwrap IPv4-mapped IPv6 (`::ffff:100.x.x.x`) so `whois` and loopback
+/// checks see the same address Tailscale / the client used. Dual-stack
+/// `[::]` listeners report mapped v4 this way; `Ipv6Addr::is_loopback` is
+/// false for `::ffff:127.0.0.1`.
+pub fn canonical_ip(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(ip),
+        v4 => v4,
+    }
+}
+
+/// True for IPv4 loopback, IPv6 loopback, and IPv4-mapped loopback.
+pub fn is_trusted_loopback(ip: IpAddr) -> bool {
+    canonical_ip(ip).is_loopback()
+}
+
+fn tailscale_bin() -> PathBuf {
+    static BIN: OnceLock<PathBuf> = OnceLock::new();
+    BIN.get_or_init(|| {
+        // GUI-launched apps (macOS .app, Linux .desktop) often have a PATH
+        // that does not include the Tailscale CLI. Probe well-known locations
+        // before falling back to `tailscale` on PATH.
+        const CANDIDATES: &[&str] = &[
+            "/usr/bin/tailscale",
+            "/usr/local/bin/tailscale",
+            "/opt/homebrew/bin/tailscale",
+            "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+        ];
+        if let Ok(path) = std::env::var("TAILSCALE") {
+            let p = PathBuf::from(path);
+            if !p.as_os_str().is_empty() {
+                return p;
+            }
+        }
+        for candidate in CANDIDATES {
+            let p = Path::new(candidate);
+            if p.is_file() {
+                return p.to_path_buf();
+            }
+        }
+        PathBuf::from("tailscale")
+    })
+    .clone()
+}
+
 async fn run_tailscale(args: &[&str]) -> Result<String, SyncError> {
     let output = tokio::time::timeout(
         TAILSCALE_TIMEOUT,
-        Command::new("tailscale").args(args).output(),
+        Command::new(tailscale_bin()).args(args).output(),
     )
     .await
     .map_err(|_| SyncError::Tailnet("tailscale timed out".into()))?
@@ -422,6 +468,25 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message as WsMessage;
 
     #[test]
+    #[test]
+    fn canonical_ip_unwraps_mapped_v4_and_loopback() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+        let mapped = IpAddr::V6(Ipv4Addr::new(100, 64, 0, 2).to_ipv6_mapped());
+        assert_eq!(
+            canonical_ip(mapped),
+            IpAddr::V4(Ipv4Addr::new(100, 64, 0, 2))
+        );
+        let mapped_loop = IpAddr::V6(Ipv4Addr::LOCALHOST.to_ipv6_mapped());
+        assert!(is_trusted_loopback(mapped_loop));
+        assert!(is_trusted_loopback(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        assert!(is_trusted_loopback(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+        assert!(!is_trusted_loopback(IpAddr::V4(Ipv4Addr::new(
+            100, 64, 0, 2
+        ))));
+        let native_v6: IpAddr = "fd7a:115c:a1e0::1".parse().unwrap();
+        assert_eq!(canonical_ip(native_v6), native_v6);
+    }
+
     fn dns_host_strips_trailing_dot() {
         let p = Peer {
             id: "x".into(),

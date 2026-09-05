@@ -916,9 +916,8 @@ impl Engine {
                 let service = service.clone();
                 tokio::spawn(hearth_rpc::serve_websocket(ws, service));
             });
-            let listen = format!("0.0.0.0:{port}");
-            match hearth_sync::Hub::bind(
-                listen,
+            match hearth_sync::Hub::bind_port(
+                port,
                 hearth_sync::HubConfig {
                     data_dir: rooms_dir,
                     // Device-level releases dir: `hearth release publish`
@@ -1348,14 +1347,9 @@ async fn resolve_tailnet_host(workspace: &WorkspaceHost, device_id: &str) -> Opt
         .ok()
         .and_then(|devs| devs.into_iter().find(|d| d.id == device_id).map(|d| d.name))?;
     let peers = hearth_sync::tailnet::discover_peers().await.ok()?;
-    let want = name.to_ascii_lowercase();
     peers
         .iter()
-        .find(|p| {
-            p.host_name.eq_ignore_ascii_case(&want)
-                || p.dns_host().eq_ignore_ascii_case(&want)
-                || dns_first_label(&p.dns_host().to_ascii_lowercase()) == want
-        })
+        .find(|p| host_matches(p, &name))
         .map(|p| p.dns_host().to_string())
 }
 

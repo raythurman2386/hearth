@@ -89,6 +89,12 @@ enum ReleaseCommand {
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> anyhow::Result<()> {
+    // Headed launches from a .desktop file (and macOS .app) do not inherit
+    // the daemon unit's EnvironmentFile. Load `~/.hearth/env` first so a
+    // spoke GUI sees HEARTH_TAILNET_HOST and can dial the hub. Existing
+    // process env wins, so systemd Environment= / a user's export still
+    // override the file.
+    apply_hearth_env_file();
     let cli = Cli::parse();
     // Long-running modes log at info, one-shot CLI commands at warn (RUST_LOG
     // overrides either).
@@ -269,6 +275,57 @@ fn harness_from_env() -> hearth_engine::HarnessId {
         Ok("raven") => hearth_engine::HarnessId::Raven,
         _ => hearth_engine::HarnessId::Raven,
     }
+}
+
+/// systemd `EnvironmentFile=` shape: `KEY=VALUE`, optional `export `,
+/// `#` comments, quoted values. Does not override variables already set.
+fn apply_hearth_env_file() {
+    let data_dir = std::env::var_os("HEARTH_DATA_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+            home.map(|h| h.join(".hearth"))
+                .unwrap_or_else(|| std::path::PathBuf::from(".hearth"))
+        });
+    let path = data_dir.join("env");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    for (key, value) in parse_hearth_env_file(&text) {
+        if std::env::var_os(&key).is_none() {
+            // SAFETY: called from `main` before any threads (tokio/gpui) start.
+            unsafe { std::env::set_var(&key, value) };
+        }
+    }
+}
+
+fn parse_hearth_env_file(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line).trim();
+        let Some((key, rest)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() || key.contains(char::is_whitespace) {
+            continue;
+        }
+        let mut value = rest.trim().to_string();
+        if value.len() >= 2 {
+            let bytes = value.as_bytes();
+            if (bytes[0] == b'"' && *bytes.last().unwrap() == b'"')
+                || (bytes[0] == b'\'' && *bytes.last().unwrap() == b'\'')
+            {
+                value = value[1..value.len() - 1].to_string();
+            }
+        }
+        out.push((key.to_string(), value));
+    }
+    out
 }
 
 fn dirs_data_dir() -> std::path::PathBuf {
@@ -536,5 +593,34 @@ fn sweep_stale_pid_logs(dir: &std::path::Path, mode: &str) {
         if stale {
             let _ = std::fs::remove_file(entry.path());
         }
+    }
+}
+
+#[cfg(test)]
+mod env_file_tests {
+    use super::parse_hearth_env_file;
+
+    #[test]
+    fn parses_systemd_environment_file_shape() {
+        let parsed = parse_hearth_env_file(
+            "# Hearth tailnet sync\n\
+             HEARTH_TAILNET_HOST=minis.tailc2d479.ts.net\n\
+             export HEARTH_TAILNET_HUB=1\n\
+             HEARTH_DEVICE_NAME=\"Studio Mac\"\n\
+             \n\
+             not-a-line\n\
+             =emptykey\n",
+        );
+        assert_eq!(
+            parsed,
+            vec![
+                (
+                    "HEARTH_TAILNET_HOST".into(),
+                    "minis.tailc2d479.ts.net".into()
+                ),
+                ("HEARTH_TAILNET_HUB".into(), "1".into()),
+                ("HEARTH_DEVICE_NAME".into(), "Studio Mac".into()),
+            ]
+        );
     }
 }

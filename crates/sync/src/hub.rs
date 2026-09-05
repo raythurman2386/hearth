@@ -31,8 +31,23 @@ use crate::chat_room::{
     AppendOutcome, ChatRooms, CheckpointOutcome, checkpoint_too_large, is_safe_id,
 };
 use crate::registry_room::RegistryRooms;
-use crate::tailnet::whois;
+use crate::tailnet::{is_trusted_loopback, whois};
 use crate::types::SyncError;
+
+fn dual_stack_listener(port: u16) -> std::io::Result<TcpListener> {
+    let addr = SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port));
+    let socket = socket2::Socket::new(
+        socket2::Domain::IPV6,
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )?;
+    socket.set_reuse_address(true)?;
+    socket.set_only_v6(false)?;
+    socket.bind(&addr.into())?;
+    socket.listen(128)?;
+    socket.set_nonblocking(true)?;
+    TcpListener::from_std(std::net::TcpListener::from(socket))
+}
 
 const WS_MAGIC: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const MAX_HEADER_BYTES: usize = 64 * 1024;
@@ -72,6 +87,27 @@ impl Hub {
         let listener = TcpListener::bind(addr)
             .await
             .map_err(|e| SyncError::Tailnet(format!("hub bind: {e}")))?;
+        Self::from_listener(listener, config)
+    }
+
+    /// Bind TCP `port` on IPv6 and IPv4 (IPV6_V6ONLY=0). macOS clients often
+    /// prefer MagicDNS AAAA; an IPv4-only `0.0.0.0` listener refused those
+    /// connects. Falls back to IPv4-only when the host has no IPv6 stack.
+    pub async fn bind_port(port: u16, config: HubConfig) -> Result<Self, SyncError> {
+        match dual_stack_listener(port) {
+            Ok(listener) => Self::from_listener(listener, config),
+            Err(err) => {
+                tracing::debug!(
+                    error = %err,
+                    port,
+                    "dual-stack [::] bind failed; falling back to IPv4"
+                );
+                Self::bind(("0.0.0.0", port), config).await
+            }
+        }
+    }
+
+    fn from_listener(listener: TcpListener, config: HubConfig) -> Result<Self, SyncError> {
         let addr = listener
             .local_addr()
             .map_err(|e| SyncError::Tailnet(format!("hub local_addr: {e}")))?;
@@ -148,8 +184,8 @@ async fn handle_conn(
     peer: SocketAddr,
     ctx: HubContext,
 ) -> Result<(), SyncError> {
-    if !ctx.skip_whois && !peer.ip().is_loopback() {
-        whois(&peer.ip().to_string()).await?;
+    if !ctx.skip_whois && !is_trusted_loopback(peer.ip()) {
+        whois(&crate::tailnet::canonical_ip(peer.ip()).to_string()).await?;
     }
 
     let req = read_request(&mut stream).await?;
@@ -671,5 +707,39 @@ mod tests {
         let decoded = wire::decode(&bytes).unwrap();
         assert_eq!(decoded.kind, frame_type::STATE);
         assert_eq!(decoded.header["headSeq"], 0);
+    }
+
+    #[tokio::test]
+    async fn bind_port_accepts_ipv4_loopback() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = Hub::bind_port(
+            0,
+            HubConfig {
+                data_dir: dir.path().to_path_buf(),
+                releases_dir: dir.path().join("releases"),
+                serve_rooms: true,
+                on_rpc: None,
+                skip_whois: true,
+            },
+        )
+        .await
+        .unwrap();
+        let port = hub.local_addr().port();
+        let _task = hub.spawn();
+
+        let mut health = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("IPv4 loopback must reach a dual-stack hub");
+        health
+            .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = Vec::new();
+        health.read_to_end(&mut buf).await.unwrap();
+        assert!(
+            String::from_utf8_lossy(&buf).contains("tailnet"),
+            "{}",
+            String::from_utf8_lossy(&buf)
+        );
     }
 }
