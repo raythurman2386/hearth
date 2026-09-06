@@ -67,7 +67,7 @@ gpui_platform = { git = "https://github.com/wingleeio/zed", rev = "e2ddcc6805f8c
 gpui_tokio = { git = "https://github.com/wingleeio/zed", rev = "e2ddcc6805f8c5088e62a60dfe517abcccd61a9a" }
 
 # diffs
-similar = "2"
+similar = "3"
 
 # async / net
 tokio = { version = "1", features = ["full"] }
