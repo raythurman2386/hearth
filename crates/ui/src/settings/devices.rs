@@ -293,15 +293,17 @@ impl DevicesPage {
         &mut self,
         ix: usize,
         device: hearth_proto::Device,
-        local_id: Option<&str>,
-        workspace_scope: Option<WorkspaceScope>,
         now: DateTime<Utc>,
-        theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         use crate::settings::widgets;
+        let theme = Theme::of(cx).clone();
+        let (local_id, workspace_scope) = {
+            let state = self.state.read(cx);
+            (state.local_device_id.clone(), state.workspace_scope)
+        };
         let online = device_online(device.last_seen_at, now);
-        let is_local = local_id == Some(device.id.as_str());
+        let is_local = local_id.as_deref() == Some(device.id.as_str());
         let id_copied = self.copied.as_deref() == Some(device.id.as_str());
         let copy_id = device.id.clone();
         let rename_id = device.id.clone();
@@ -319,7 +321,7 @@ impl DevicesPage {
         // "cuts" the tile — hearth settings.devices.tsx
         // `border-2 border-[var(--card)]` +
         // `shadow-[0_0_6px_rgba(52,211,153,0.55)]`.
-        let tile = widgets::row_tile(theme, platform_icon).relative().child(
+        let tile = widgets::row_tile(&theme, platform_icon).relative().child(
             div()
                 .absolute()
                 .bottom(px(-3.0))
@@ -398,7 +400,7 @@ impl DevicesPage {
                 .into_any_element(),
         );
 
-        widgets::card_row(theme, ix == 0)
+        widgets::card_row(&theme, ix == 0)
             .child(tile)
             .child(
                 div()
@@ -406,8 +408,8 @@ impl DevicesPage {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .child(widgets::row_title(theme, device.name.clone()))
-                    .child(widgets::meta_line(theme, meta)),
+                    .child(widgets::row_title(&theme, device.name.clone()))
+                    .child(widgets::meta_line(&theme, meta)),
             )
             .when(is_local, |el| {
                 el.child(
@@ -426,7 +428,7 @@ impl DevicesPage {
                 // `opacity-70 hover:opacity-100` (hearth: also rises on row
                 // hover — gpui has no group-hover, so the button's own hover
                 // carries the reveal).
-                widgets::ghost_action(theme)
+                widgets::ghost_action(&theme)
                     .id(("device-rename", ix))
                     .opacity(0.7)
                     .hover(|s| {
@@ -446,7 +448,7 @@ impl DevicesPage {
             )
             .when(!is_local, |el| {
                 el.child(
-                    widgets::ghost_action(theme)
+                    widgets::ghost_action(&theme)
                         .id(("device-remove", ix))
                         .opacity(0.7)
                         .hover(|s| {
@@ -475,13 +477,9 @@ impl Render for DevicesPage {
         use crate::settings::widgets;
         let theme = Theme::of(cx).clone();
         let now = Utc::now();
-        let (devices, local_id, workspace_scope) = {
+        let (devices, workspace_scope) = {
             let state = self.state.read(cx);
-            (
-                state.devices.clone(),
-                state.local_device_id.clone(),
-                state.workspace_scope,
-            )
+            (state.devices.clone(), state.workspace_scope)
         };
         let rename_dialog = self.render_rename_dialog(window.viewport_size(), cx);
         let delete_dialog = self.render_delete_dialog(window.viewport_size(), cx);
@@ -490,17 +488,7 @@ impl Render for DevicesPage {
         let rows: Vec<AnyElement> = devices
             .into_iter()
             .enumerate()
-            .map(|(ix, device)| {
-                self.render_device_row(
-                    ix,
-                    device,
-                    local_id.as_deref(),
-                    workspace_scope,
-                    now,
-                    &theme,
-                    cx,
-                )
-            })
+            .map(|(ix, device)| self.render_device_row(ix, device, now, cx))
             .collect();
 
         let card = widgets::section_card(&theme);
