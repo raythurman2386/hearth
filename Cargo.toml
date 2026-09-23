@@ -84,7 +84,7 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 # storage
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # misc
 # Global allocator for the binaries: returns freed pages to the OS. System
