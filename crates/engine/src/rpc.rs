@@ -11,7 +11,7 @@
 //! - `WatchSessions` → stream of `Session[]`: this engine's live statuses merged with
 //!   remote devices' workspace session rows
 //! - `Mutate {op, …}` → `{ok}` — workspace entity mutations (createChat, renameChat,
-//!   setChatArchived, deleteChat, renameDevice, markChatSeen)
+//!   setChatArchived, deleteChat, renameDevice, deleteDevice, markChatSeen)
 //! - `EngineInfo` → `{deviceId, workspaceScope}` — this runtime's fixed identity
 //!   and data boundary (never forwarded)
 //! - `LocalDevice` → `{deviceId}` — legacy engine identity (never forwarded)
@@ -379,6 +379,10 @@ enum MutateParams {
     DeleteChat { chat_id: String },
     #[serde(rename_all = "camelCase")]
     RenameDevice { device_id: String, name: String },
+    /// Tombstone a device row (forget an old / offline machine). Refused for
+    /// the local device. Spaces and chats hosted there stay until removed.
+    #[serde(rename_all = "camelCase")]
+    DeleteDevice { device_id: String },
     /// Synced seen marker (LWW + monotonic guard): clears the "completed"
     /// badge on every device. `at` is epoch ms; default = now.
     #[serde(rename_all = "camelCase")]
@@ -846,6 +850,11 @@ impl EngineRpc {
             MutateParams::RenameDevice { device_id, name } => self
                 .workspace
                 .rename_device(&device_id, &name)
+                .map_err(failed)
+                .map(drop),
+            MutateParams::DeleteDevice { device_id } => self
+                .workspace
+                .delete_device(&device_id)
                 .map_err(failed)
                 .map(drop),
             MutateParams::MarkChatSeen { chat_id, at } => {

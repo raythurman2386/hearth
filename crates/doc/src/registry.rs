@@ -732,6 +732,18 @@ impl RegistryDoc {
         Ok(true)
     }
 
+    /// Tombstone a device row (settings UI; forget an old / offline machine).
+    /// `false` when no such live row. Spaces and chats hosted on that device
+    /// are left intact — remove those separately. A later `upsert_device` from
+    /// the same machine revives the row.
+    pub fn delete_device(&mut self, device_id: &str) -> Result<bool, DocError> {
+        let existed = self.row_exists(KIND_DEVICES, device_id);
+        if existed {
+            self.delete_row_ops(&[(KIND_DEVICES, device_id)]);
+        }
+        Ok(existed)
+    }
+
     /// Stamp `lastSeenAt` on an existing device row (boot/shutdown only —
     /// periodic liveness rides presence frames, never rows).
     pub fn set_device_last_seen(

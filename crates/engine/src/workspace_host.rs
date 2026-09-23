@@ -1055,6 +1055,18 @@ impl WorkspaceHost {
         Ok(self.mutate(|doc| doc.rename_device(device_id, name))?)
     }
 
+    /// Tombstone a device row (settings UI). Refuses the local device — a
+    /// running engine cannot forget itself. Returns whether a live row was
+    /// removed.
+    pub fn delete_device(&self, device_id: &str) -> Result<bool, EngineError> {
+        if device_id == self.device_id() {
+            return Err(EngineError::Other(
+                "cannot remove the local device from the registry".into(),
+            ));
+        }
+        Ok(self.mutate(|doc| doc.delete_device(device_id))?)
+    }
+
     // ── git metadata (diff-sync host writes) ────────────────────────────────
 
     /// HEAD-watcher reconciliation: the branch checked out at the chat's cwd.
