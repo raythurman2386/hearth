@@ -32,6 +32,9 @@ Thumbs.db
 .grok/
 .hearth/
 
+# Local scratch dumps (agent scans, one-off extracts) — any depth
+.tmp*
+
 # Extracted or dropped release packages (tarballs land under target/package/,
 # which is already ignored; these catch manual extracts at the repo root)
 /hearth-*-linux-*/

@@ -543,6 +543,19 @@ fn delete_chat_tombstones_row_and_session() {
 }
 
 #[test]
+fn delete_device_tombstones_row_and_leaves_hosted_chats() {
+    let mut ws = RegistryDoc::new("dev-a");
+    ws.upsert_device(&device("dev-b", "Old laptop")).unwrap();
+    ws.upsert_chat(&chat("chat-1", "dev-b")).unwrap();
+    assert_eq!(ws.read_devices().unwrap().len(), 1);
+    assert!(ws.delete_device("dev-b").unwrap());
+    assert!(ws.read_devices().unwrap().is_empty());
+    assert_eq!(ws.read_chats().unwrap().len(), 1);
+    assert!(!ws.delete_device("dev-b").unwrap());
+    assert!(!ws.delete_device("missing").unwrap());
+}
+
+#[test]
 fn spaces_round_trip_and_mutate() {
     let mut ws = RegistryDoc::new("dev-a");
     ws.upsert_space(&space("sp-1", "dev-a", "/home/u/project"))

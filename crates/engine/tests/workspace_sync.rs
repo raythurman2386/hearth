@@ -341,6 +341,15 @@ async fn two_engines_share_a_workspace() {
     )
     .await;
 
+    // Local device delete is refused over Mutate (an engine cannot forget itself).
+    let self_delete = client_a
+        .call(
+            methods::MUTATE,
+            serde_json::json!({ "op": "deleteDevice", "deviceId": "dev-a" }),
+        )
+        .await;
+    assert!(self_delete.is_err(), "local device delete must be refused");
+
     drop(link);
     a.shutdown().await;
     b.shutdown().await;
