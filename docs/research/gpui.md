@@ -52,7 +52,7 @@ fn main() {
     });
 }
 ```
-Model: `App` (root cx) → `cx.open_window(opts, |window, cx| cx.new(|cx| RootView{..}))`. State lives in `Entity<T>` created via `cx.new`; each renders through `impl Render for T { fn render(&mut self, &mut Window, &mut Context<Self>) -> impl IntoElement }`. `prelude::*` brings in the builder traits (`Styled`, `ParentElement`, `InteractiveElement`, `StatefulInteractiveElement`, `IntoElement`, `Render`).
+Model: `App` (root cx) → `cx.open_window(opts, |window, cx| cx.new(|cx| RootView{..}))`. State lives in `Entity<T>` created via `cx.new`; each renders through `impl Render for T { fn render(&mut self, &mut Window, &mut Context<Self>) -> impl IntoElement }`. `prelude::*` brings in the builder traits (Styled, ParentElement, InteractiveElement, StatefulInteractiveElement, IntoElement, Render) — all external gpui APIs, not defined in this repo.
 
 ### The examples directory (`crates/gpui/examples/`)
 Most relevant:
@@ -157,8 +157,8 @@ Alternative: community **`gpui-component`** crate (longbridge/gpui-component) pr
 
 ## 6. Theming / styling
 
-- **`Styled` trait** (`crates/gpui/src/styled.rs:22`): `.flex()`, `.flex_col()`, `.bg(color)`, `.p_2()`, `.gap_3()`, `.size(px(..))`, `.rounded_md()`, `.border_1()`, `.text_xl()`, `.text_color(impl Into<Hsla>)`, `.shadow_lg()`, `.overflow_y_scroll()`. Units: `px(f32)`, `rems(...)`, `relative(...)`, `percentage(...)`. Colors: `rgb(0x..)`, `rgba(..)`, `hsla(..)`, `Hsla::opacity(f)`.
-- Interaction traits: `InteractiveElement` (`.on_click`, `.on_mouse_down`), `StatefulInteractiveElement` (requires `.id(...)`), `ParentElement` (`.child`/`.children`).
+- **`Styled` trait** (external Zed tree: `crates/gpui/src/styled.rs`, not vendored here): `.flex()`, `.flex_col()`, `.bg(color)`, `.p_2()`, `.gap_3()`, `.size(px(..))`, `.rounded_md()`, `.border_1()`, `.text_xl()`, `.text_color(impl Into<Hsla>)`, `.shadow_lg()`, `.overflow_y_scroll()`. Units: `px(f32)`, `rems(...)`, `relative(...)`, `percentage(...)`. Colors: `rgb(0x..)`, `rgba(..)`, `hsla(..)`, `Hsla::opacity(f)`.
+- Interaction traits (also external gpui prelude, not defined in this repo): InteractiveElement (`.on_click`, `.on_mouse_down`), StatefulInteractiveElement (requires `.id(...)`), ParentElement (`.child`/`.children`).
 - **`crates/ui`** is zed's component library (**GPL-3.0** — licensing caveat). Components: button, label, icon, list, context_menu, popover, dropdown_menu, modal, tooltip, avatar, scrollbar, indicator, progress, tab/tab_bar, banner, callout, chip, disclosure, divider, data_table, keybinding, etc.
 - **`crates/theme`**: `trait ActiveTheme { fn theme(&self) -> &Arc<Theme> }` on `App` → `cx.theme().colors()` / `cx.theme().syntax()`.
 

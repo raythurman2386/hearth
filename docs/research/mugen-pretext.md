@@ -36,8 +36,8 @@ Heights are computed analytically, never read back from layout — never-mounted
 - 2f. Theme = concrete numbers for everything affecting height (fonts, line-heights, paddings, gaps). "Numbers drive measured height; colours are paint."
 
 ## 3. Session-doc parts -> rendered blocks
-- 3a. foldEventIntoParts (packages/control/src/parts.ts:132): folds AgentEvents into MessagePart[] — SessionStarted/Steered reset (replay-safe); TextDelta appends to trailing text part; ToolCall append/refresh-by-id (idempotent); ToolResult sets isError; Error/Done(error) -> error parts. Kinds: text|tool|input|error.
-- 3b. parseParts (parts.ts:205): persisted body JSON -> MessagePart[]; called only when messages change, NEVER per token.
+- 3a. foldEventIntoParts (historical upstream `packages/control/src/parts.ts`; Rust port `fold_event_into_parts` in `crates/doc/src/parts.rs:255`): folds AgentEvents into MessagePart[] — SessionStarted/Steered reset (replay-safe); TextDelta appends to trailing text part; ToolCall append/refresh-by-id (idempotent); ToolResult sets isError; Error/Done(error) -> error parts. Kinds: text|tool|input|error.
+- 3b. parseParts (historical upstream `parts.ts`; behavior now lives in the Rust session-doc read path under `crates/doc/src/`): persisted body JSON -> MessagePart[]; called only when messages change, NEVER per token.
 - 3c. Desktop: one row = one message; groupRowParts folds consecutive tools into collapsible group. Mobile: one row = one BLOCK — splitTextBlocks slices text at incremark's top-level AST position.offset boundaries so each slice re-parses to exactly that block; guards (definitions/footnotes stay whole; join mismatch -> unsplit). Gaps: turn 14 / block 8 / md blockGap 14.
 - 3d. Live turn <-> persisted handoff: live rows get ids matching eventual persisted ids (`${msgId}#${blockId}`) so row identities are reused on persist -> no flicker. Live turn stays UNSPLIT (boundaries shift while streaming); re-splits on persist. `__live__#` rows excluded from all caches.
 

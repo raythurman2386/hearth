@@ -1,6 +1,7 @@
 # Memory plan — bounded RSS without touching feel
 
-Written 2026-08-03 after a full-codebase audit plus empirical benchmarks (below).
+Written 2026-08-03 after a full-codebase audit plus empirical benchmarks
+(below). File:line anchors refreshed 2026-09-03 against the current tree.
 Problem: Activity Monitor shows Hearth at 450–600MB on viewer-only laptops and
 >1GB after heavy use. Target: ~150–250MB steady-state, flat over a workday.
 
@@ -25,7 +26,7 @@ mock harness, offline, on Linux/glibc; RSS sampled from `/proc`. Scripts:
 | Loro snapshot on disk | 6–13KB (columnar+compressed; mock text overly compressible — treat as lower bound) |
 
 Code-audit findings backing each work item are cited inline (file:line refs
-verified 2026-08-03).
+originally verified 2026-08-03; refreshed against current tree).
 
 **The two load-bearing empirical facts:**
 1. Cold-open from the SQLite snapshot is within ~11ms of a warm doc, even for a
@@ -59,32 +60,37 @@ verified 2026-08-03).
 | Item | Change | Evidence | Expected |
 |---|---|---|---|
 | Allocator | mimalloc (or jemalloc) as global alloc in `apps/hearth` | system malloc watermark; churn sources below | watermark becomes recoverable; biggest single lever on macOS |
-| Image lifecycle | Call gpui `remove_asset` when transcript rows drop / adopt an LRU image cache with byte budget; bound the global encoded-bytes cache `attachments.rs:462` (no eviction today); clear staged attachments on chat delete | decoded RGBA + atlas tile + encoded bytes ≈ 2.5× decoded size per image, permanent; one screenshot ≈ 48MB decoded | 100MB+ on image-heavy use |
-| Doc delete eviction | `DeleteChat`/`DeleteSpace` drop the doc handle, close the room, delete the snapshot row (`doc_host.rs:125` handles map is insert-only; `rpc.rs:636-693` leaks) | audit §1 | correctness + a few MB per deleted chat |
-| Bound channels | `RpcClient::subscribe` unbounded (`client.rs:123`) → conflating/bounded (watch semantics are latest-wins); terminal PTY + subscriber channels (`terminals.rs:211,243`) → bounded with drop policy; offline local-update queue (`room.rs:341`, drains only on connect) → byte cap + full-resync on overflow | leak-shaped under slow consumer / disconnect | removes the balloon modes (dev builds, sleep/wake, firehose terminals) |
+| Image lifecycle | Call gpui `remove_asset` when transcript rows drop / adopt an LRU image cache with byte budget; bound the global encoded-bytes cache (`attachments.rs:553` `IMAGE_CACHE_BUDGET_BYTES`, eviction via `ImageSource::evict` note at `:692`); clear staged attachments on chat delete | decoded RGBA + atlas tile + encoded bytes ≈ 2.5× decoded size per image, permanent; one screenshot ≈ 48MB decoded | 100MB+ on image-heavy use |
+| Doc delete eviction | DeleteChat/DeleteSpace drop the doc handle, close the room, delete the snapshot row (`DocHostInner` at `doc_host.rs:224`; mutate arms at `rpc.rs:788` / `rpc.rs:845`; `purge_chat` at `doc_host.rs:2174`) | audit §1 | correctness + a few MB per deleted chat |
+| Bound channels | `STREAM_QUEUE_CAP` (`client.rs:17`) bounds RPC stream subscribe (`client.rs:176`). Terminal PTY raw + subscriber channels (`terminals.rs:211`, `terminals.rs:243`) still unbounded — keep a drop policy in mind. Offline pending queues: RegistryDoc (`registry.rs:346`); pending VecDeque (`chat_client.rs:322`); `ChatClient` (`chat_client.rs:378`). Not the removed room.rs. | leak-shaped under slow consumer / disconnect | removes the balloon modes (dev builds, sleep/wake, firehose terminals) |
 | Hygiene | clear codex `streamed_text` per turn; evict idle journal fds; prune `dial_locks` | audit §3/§9/§7 | small, stops slow creep |
 
 ## 5. Phase 2 — bounded docs + delta streaming (the structural fix)
 
 1. **Doc LRU** — wire the dead `DOC_LRU_BYTE_BUDGET` (80MB,
-   `crates/doc/src/constants.rs:17`). Pins: selected chat; chats this device
+   `crates/doc/src/constants.rs:19`). Pins: selected chat; chats this device
    hosts with a live run or undrained commands; N most-recent. Evict = flush
    snapshot (already 1Hz-debounced), drop `ChatDocHandle` + mirror, close
-   room. Measured reopen cost: +11ms vs warm. This alone caps the growth term
-   that took the home laptop to 557MB with zero local sessions.
+   room (`doc_host.rs:1885` `evict_over_budget`). Measured reopen cost: +11ms
+   vs warm. This alone caps the growth term that took the home laptop to
+   557MB with zero local sessions.
 2. **Lazy mirror** — `messages_tx` holds a full transcript copy per open doc
-   even with no subscriber (`doc_host.rs:142,229`); materialize only while a
-   watch is attached.
+   even with no subscriber (`ChatDocHandle` at `doc_host.rs:399` /
+   `messages_tx` at `:403`; watch at `:461`); materialize only while a watch
+   is attached.
 3. **Delta doc-watch** — `WatchDocMessages` currently re-serializes the whole
-   transcript per 120ms commit through 4 copies (`engine/src/rpc.rs:775` →
-   `rpc/src/client.rs:139` → `ui/state.rs:902` → `transcript.rs:1199`;
-   measured 1.13MB/frame on a 1.6MB chat). Send per-entry deltas. Also fixes
-   streaming CPU — same pipeline as the remote-streaming chunkiness work.
-4. **Fold O(n²)** — `fold_event_into_parts` clones the whole parts vec per
-   event (`parts.rs:85`); mutate in place. `render_parts` clone per tick
-   (`sessions.rs:805`) → borrow.
+   transcript per 120ms commit through 4 copies (`engine/src/rpc.rs` module
+   docs + mutate/watch path → `rpc/src/client.rs:176` →
+   `ui/state.rs:889` `apply_devices` / watch apply →
+   `transcript.rs:1190` `ParseOutcome`; measured 1.13MB/frame on a 1.6MB
+   chat). Send per-entry deltas. Also fixes streaming CPU — same pipeline as
+   the remote-streaming chunkiness work.
+4. **Fold O(n²)** — `fold_event_into_parts` (`parts.rs:255`) clones the
+   whole parts vec per event; mutate in place. `render_parts`
+   (`sessions.rs:1147`) clone-per-tick → borrow. Also
+   `touch_session` (`sessions.rs:800`).
 5. **Incremental reads** — `read_entries`/`read_commands` do whole-doc
-   `get_deep_value().to_json_value()` per tick (`schema.rs:209,233`); move to
+   `get_deep_value().to_json_value()` per tick (`schema.rs:292,322`); move to
    `doc.subscribe` diff application (the mirror layer's stated design,
    ARCHITECTURE.md §2.3). Same for `workspace.rs:291` `chat()` linear
    whole-container scan on every 120ms `is_host` check.
@@ -94,21 +100,23 @@ viewer-laptop steady state ≈ gpui baseline + selected chat ≈ 150–250MB, fl
 
 ## 6. Phase 3 — larger surfaces, more care
 
-- **Terminals**: purge `terminal/panel.rs:239` chats map on chat delete;
+- **Terminals**: purge `terminal/panel.rs:359` `chats` map on chat delete;
   scrollback 10k → configurable ~2k lines (24B/cell ⇒ 30–50MB per
-  fully-scrolled terminal today); count replay bytes raw, not base64.
+  fully-scrolled terminal today); count replay bytes raw, not base64
+  (`terminals.rs:32` `MAX_REPLAY_BYTES`).
 - **Diff pane**: watch carries every checkout's ≤3MiB patch, resident engine +
-  UI (`diff_sync.rs:106`, `changes.rs:480`); send summaries, fetch patch on
+  UI (`diff_sync.rs:55` `MAX_PATCH_BYTES`); send summaries, fetch patch on
   demand; stop the 120s repair tick re-capturing unchanged checkouts
-  (`diff_sync.rs:486`).
+  (`diff_sync.rs:60` `REPAIR_INTERVAL`).
 - **Transcript render caches**: byte-budget `tree_cache`/`RenderCache`/
   `HighlightStore` to viewport±K rows (today they grow with every row ever
   scrolled past, freed only on chat switch).
 - **Shallow snapshots** (deferred, correctness-sensitive): client-side trim to
   the edge's compaction frontier would cut in-memory doc 2.5–4× → ~1×; needs
-  the stale-peer story (`room.rs:132` gives up rather than rebuilding).
+  the stale-peer story (`chat_client.rs:108` / `:1455` gap-unrepairable path
+  asks the host to rebuild rather than silently giving up).
 - **Tail-first cold open** (`materialize_tail` exists unwired,
-  `schema.rs:738`): paint last-64 for never-opened remote chats while the doc
+  `schema.rs:1133`): paint last-64 for never-opened remote chats while the doc
   backfills. Perceived-latency win, not a memory item.
 
 ## 7. Implementation status (2026-08-03)

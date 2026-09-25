@@ -158,7 +158,7 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 - The Unix-only `process_group` child-launch call in `source_control` is gated under `cfg(unix)` so the codebase compiles on non-Unix targets.
 - The Windows build warnings are fixed for real: `on_selection_mouse_up` renames its unix-only `Context` param to `_cx`, and the `run_checked` audio helper is gated under `cfg(not(windows))` (it is only referenced by the macos/unix `run_player` branches).
-- Fixed pre-existing clippy failures in `hearth-sync`/`hearth-doc` for real: `handle_conn`/`dispatch_http` take a shared `HubContext` (was `too_many_arguments`), the whois cache uses a `WhoisCacheEntry` struct (was `type_complexity`), and a `then(||…)` is `then_some(...)` (was `unnecessary_lazy_evaluations`). The lone remaining `result_large_err` allow on the tungstenite handshake callback is documented — `ErrorResponse` is a large type owned by the external crate.
+- Fixed pre-existing clippy failures in `hearth-sync`/`hearth-doc` for real: `handle_conn`/`dispatch_http` take a shared `HubContext` (was clippy::too_many_arguments), the whois cache uses a `WhoisCacheEntry` struct (was clippy::type_complexity), and a `then(||…)` is `then_some(...)` (was clippy::unnecessary_lazy_evaluations). The lone remaining clippy::result_large_err allow on the tungstenite handshake callback is documented — `ErrorResponse` is a large type owned by the external crate.
 
 ### Changed
 
