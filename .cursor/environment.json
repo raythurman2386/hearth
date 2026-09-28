@@ -1,0 +1,10 @@
+{
+  "name": "Hearth",
+  "install": "./.cursor/install.sh",
+  "terminals": [
+    {
+      "name": "engine (headless, mock harness)",
+      "command": "rm -rf /tmp/hearth-engine && env HEARTH_DATA_DIR=/tmp/hearth-engine HEARTH_IPC_PORT=27654 HEARTH_HARNESS=mock RUST_LOG=info ./target/debug/hearth headless"
+    }
+  ]
+}
