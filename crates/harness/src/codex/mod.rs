@@ -174,6 +174,7 @@ impl CodexHarness {
         let mut cmd = Command::new(&exe);
         cmd.arg("app-server");
         crate::compose_child_path(&mut cmd, &exe);
+        crate::isolate_process_group(&mut cmd);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -334,6 +335,7 @@ impl Harness for CodexHarness {
         if !request.cwd.is_empty() {
             cmd.current_dir(&request.cwd);
         }
+        crate::isolate_process_group(&mut cmd);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1254,10 +1256,14 @@ async fn run_session(session: Session) {
         }
     }
 
-    shutdown_child(&mut child, kill_grace).await;
+    // Escalation dies BEFORE the child is reaped: after `shutdown_child`
+    // waits the pid, a still-armed SIGTERM/SIGKILL timer would fire at a
+    // freed (reusable) pid — worse now that the signal targets the whole
+    // process group. Same ordering as the ACP session loop.
     if let Some(handle) = escalation {
         handle.abort();
     }
+    shutdown_child(&mut child, kill_grace).await;
 }
 
 /// Deliver a steer as a fresh `turn/start` on the same thread (the fallback
