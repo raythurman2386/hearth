@@ -66,6 +66,9 @@ pub trait Harness: Send + Sync {
     /// the agent's own wire. Native drivers reading the CLI's terminal frame
     /// directly return true, and the engine retires its quiesce watchdogs
     /// for them; adapter-mediated ACP agents keep the watchdog backstop.
+    /// Consulted once per run-loop turn, so an implementation may return
+    /// false TRANSIENTLY (e.g. while a JSON-RPC request is outstanding) to
+    /// keep the watchdog armed through a possible wire hang.
     fn deterministic_turn_end(&self) -> bool {
         false
     }

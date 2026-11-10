@@ -511,6 +511,28 @@ async fn unresponsive_child_is_reaped_with_interrupted_done() {
     );
 }
 
+/// A wedged app server that never answers `turn/start` must fail the request
+/// (and the run) on the per-request timeout instead of hanging Working.
+#[tokio::test]
+async fn unanswered_request_times_out_with_errored_done() {
+    let harness = CodexHarness::new()
+        .with_executable(fixture_path())
+        .with_request_timeout(Duration::from_millis(250))
+        .with_graces(Duration::from_millis(100), Duration::from_millis(500));
+    let (controls, _steer, _token) = controls("Yes");
+    let events = run_to_end(&harness, request("scenario:hang-start"), controls).await;
+    let Some(AgentEvent::Done {
+        status: DoneStatus::Errored,
+        error: Some(error),
+        ..
+    }) = events.last()
+    else {
+        panic!("expected an Errored Done, got {events:?}");
+    };
+    assert!(error.contains("no response within"), "{error}");
+    assert!(error.contains("turn/start"), "{error}");
+}
+
 #[tokio::test]
 async fn turn_failed_maps_to_errored_done() {
     let (controls, _steer, _token) = controls("Yes");

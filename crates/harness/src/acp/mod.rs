@@ -1484,7 +1484,10 @@ fn prompt_turn(
         if let Some(id) = prompt_id {
             params["_meta"] = json!({ "promptId": id, "requestId": id });
         }
-        client.request("session/prompt", params).await
+        // A prompt's response IS the turn: its lifetime is owned by the
+        // session loop's stall/quiet-settle watchdogs, not the generic
+        // per-request bound.
+        client.request_untimed("session/prompt", params).await
     })
 }
 
@@ -1666,7 +1669,9 @@ fn prompt_like_request(
     method: &'static str,
     params: Value,
 ) -> BoxFuture<'static, Result<Value, HarnessError>> {
-    Box::pin(async move { client.request(method, params).await })
+    // Prompt-shaped calls (`session/prompt`, `_session/steering`) are answered
+    // at turn boundaries, not within a request round trip: no fixed bound.
+    Box::pin(async move { client.request_untimed(method, params).await })
 }
 
 /// Track the liveness signals the blanket quiet-settle keys on: content

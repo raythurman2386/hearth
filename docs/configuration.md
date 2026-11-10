@@ -86,6 +86,7 @@ Harnesses that wrap CLIs also honor their own vendor env (for example Codex / Gr
 | `HEARTH_ACP_PROMPT_STALL_MS` | Override ACP first-byte stall bound; `0` disables |
 | `HEARTH_ACP_QUIET_SETTLE_MS` | Override quiet-settle bound; `0` disables |
 | `HEARTH_ACP_EXEC_QUIET_SETTLE_MS` | After an execute-kind tool this turn, quiet-settle uses at least this window (default `180000`); `0` keeps the generic bound |
+| `HEARTH_HARNESS_RPC_TIMEOUT_MS` | Per-request JSON-RPC bound for agent app servers (default `300000`); an unanswered request fails the session instead of hanging it, and `0` disables the bound |
 | `HEARTH_TURN_QUIESCE_MS` | Engine turn-quiesce watchdog; `0` disables |
 | `HEARTH_SELF_TURN_QUIESCE_MS` | Shorter quiesce for genuine background-wake turns (default `20000`); `0` uses the normal window |
 | `HEARTH_SELF_CONTINUED_SHORT_AFTER_MS` | Park duration before a resume uses the short self-continued window (default `30000`); `0` = always short |

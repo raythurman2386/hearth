@@ -1368,16 +1368,20 @@ async fn drive_run(
     // a deterministic wire Done (claude/codex/cursor native) needs no
     // quiesce backstop — arming one only risks false parks on long silent
     // work. The env knob still forces a window on for diagnostics.
-    let deterministic_turn_end = harness.deterministic_turn_end();
-    let quiesce_after: Option<std::time::Duration> = match std::env::var("HEARTH_TURN_QUIESCE_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-    {
-        Some(0) => None,
-        Some(ms) => Some(std::time::Duration::from_millis(ms)),
-        None if deterministic_turn_end => None,
-        None => Some(std::time::Duration::from_secs(120)),
-    };
+    // The predicate is re-read every loop turn rather than cached: a harness
+    // can be deterministic in its steady state yet NOT while the app server
+    // owes it a JSON-RPC reply (Codex reports false then), and that is exactly
+    // the window where the watchdog must stay armed.
+    const DEFAULT_QUIESCE: std::time::Duration = std::time::Duration::from_secs(120);
+    let quiesce_override: Option<Option<std::time::Duration>> =
+        match std::env::var("HEARTH_TURN_QUIESCE_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            Some(0) => Some(None),
+            Some(ms) => Some(Some(std::time::Duration::from_millis(ms))),
+            None => None,
+        };
     let mut last_stream_activity = tokio::time::Instant::now();
     // SELF-CONTINUED turns get a much SHORTER quiesce window. A turn the
     // agent starts on its own (background-task wake) can never receive a
@@ -1428,6 +1432,8 @@ async fn drive_run(
         std::collections::HashMap::new();
 
     let final_status = loop {
+        let quiesce_after: Option<std::time::Duration> = quiesce_override
+            .unwrap_or_else(|| (!harness.deterministic_turn_end()).then_some(DEFAULT_QUIESCE));
         let event: AgentEvent = tokio::select! {
             biased;
             changed = cancel_rx.changed(), if !interrupted => {

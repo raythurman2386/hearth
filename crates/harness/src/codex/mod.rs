@@ -118,6 +118,15 @@ pub struct CodexHarness {
     /// Command discovery cache: only a successful probe is cached, so a
     /// broken CLI retries on the next picker open (ACP-harness parity).
     commands: tokio::sync::OnceCell<Vec<SlashCommand>>,
+    /// Per-request JSON-RPC bound override; `None` uses the crate default
+    /// (`HEARTH_HARNESS_RPC_TIMEOUT_MS`). Tests shrink it.
+    request_timeout: Option<Duration>,
+    /// Requests this harness's live session(s) have sent and not yet seen
+    /// answered. Shared into the [`RpcClient`] so
+    /// [`Harness::deterministic_turn_end`] can keep the engine's quiesce
+    /// watchdog armed while the app server owes us a reply (one counter per
+    /// harness instance; concurrent chats only ever ARM the watchdog more).
+    in_flight: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Default for CodexHarness {
@@ -127,6 +136,8 @@ impl Default for CodexHarness {
             interrupt_grace: Duration::from_secs(2),
             kill_grace: Duration::from_secs(3),
             commands: tokio::sync::OnceCell::new(),
+            request_timeout: None,
+            in_flight: Arc::default(),
         }
     }
 }
@@ -146,6 +157,14 @@ impl CodexHarness {
     pub fn with_graces(mut self, interrupt_grace: Duration, kill_grace: Duration) -> Self {
         self.interrupt_grace = interrupt_grace;
         self.kill_grace = kill_grace;
+        self
+    }
+
+    /// Override the per-request JSON-RPC bound (the default is a generous five
+    /// minutes, `HEARTH_HARNESS_RPC_TIMEOUT_MS`). Tests shrink it so an
+    /// unanswered request surfaces in milliseconds.
+    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = Some(timeout);
         self
     }
 
@@ -292,9 +311,15 @@ impl Harness for CodexHarness {
     fn installed(&self) -> bool {
         self.executable.is_some() || resolve_codex_executable().is_some()
     }
-    /// Done is the CLI's own terminal frame, for wake turns too.
+    /// Done is the CLI's own terminal frame, for wake turns too — UNLESS the
+    /// app server currently owes us a JSON-RPC reply. A request with no
+    /// response is exactly the hang that retires the engine's quiesce
+    /// watchdog too early: while one is outstanding, report false so the
+    /// watchdog stays armed (it parks the turn if the per-request timeout has
+    /// not fired yet). Once nothing is outstanding, the native Done is again
+    /// authoritative and the watchdog retires as before.
     fn deterministic_turn_end(&self) -> bool {
-        true
+        self.in_flight.load(std::sync::atomic::Ordering::SeqCst) == 0
     }
 
     /// The curated static catalog (see [`catalog`]); requires an installed CLI
@@ -368,7 +393,11 @@ impl Harness for CodexHarness {
             });
         }
 
-        let (client, incoming) = RpcClient::new(stdin, stdout);
+        let timeout = self
+            .request_timeout
+            .or_else(crate::jsonrpc::default_request_timeout);
+        let (client, incoming) =
+            RpcClient::new_shared(stdin, stdout, timeout, Arc::clone(&self.in_flight));
         let (event_tx, event_rx) = mpsc::channel::<Result<AgentEvent, HarnessError>>(256);
         tokio::spawn(run_session(Session {
             child,
@@ -1531,6 +1560,25 @@ mod tests {
             &json!({"command": ["git", "push", "--force"]}),
         );
         assert!(q.question.contains("git push --force"));
+    }
+
+    /// The engine retires its quiesce watchdog when a turn end is
+    /// deterministic. An outstanding JSON-RPC request is exactly when it must
+    /// stay armed, so the predicate must flip while one is in flight.
+    #[test]
+    fn watchdog_stays_armed_while_a_request_is_in_flight() {
+        let harness = CodexHarness::new();
+        assert!(harness.deterministic_turn_end());
+
+        harness
+            .in_flight
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        assert!(!harness.deterministic_turn_end());
+
+        harness
+            .in_flight
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        assert!(harness.deterministic_turn_end());
     }
 
     #[test]
