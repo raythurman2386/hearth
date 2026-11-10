@@ -5,13 +5,11 @@
 //! sessions + docs + commands + minimal IPC. Terminals, repos/diffs, uploads, auth,
 //! agent accounts, and the device-room host land in later milestones.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use async_trait::async_trait;
 pub use hearth_proto::{EngineInfo, HarnessId, WorkspaceScope};
-use hearth_rpc::{RpcError, RpcReply, RpcService, methods};
+use hearth_rpc::RpcService;
 
 use hearth_sync::DocsStore;
 
@@ -19,6 +17,9 @@ pub mod agent_accounts;
 pub mod auth;
 pub mod change_requests;
 pub mod chat2_host;
+mod daemon;
+mod device_identity;
+mod device_name;
 pub mod diff_sync;
 pub mod doc_host;
 pub mod instance_lock;
@@ -30,6 +31,7 @@ pub mod run_journal;
 pub mod sessions;
 pub mod source_control;
 pub mod spaces;
+mod tailnet;
 pub mod terminals;
 pub mod titles;
 pub mod uploads;
@@ -38,6 +40,10 @@ pub mod workspace_host;
 pub use agent_accounts::{AgentAccounts, AgentAccountsConfig};
 pub use auth::{Auth, AuthConfig, AuthState, AuthUser};
 pub use change_requests::CheckoutChangeRequests;
+pub use daemon::serve_ipc;
+use daemon::{HeadlessRpc, shutdown_signal};
+use device_identity::load_or_create_device_id;
+use device_name::local_device_name;
 pub use diff_sync::{
     CheckoutDiffSync, capture_commit_diff, capture_diff, capture_diff_against, capture_turn_diff,
     merge_base, read_diff_file_text, snapshot_tree, working_diff_base,
@@ -56,6 +62,7 @@ pub use source_control::{
     GitRemote, parse_git_remote,
 };
 pub use spaces::SpacesSync;
+use tailnet::{resolve_tailnet_host, this_device_is_hub};
 pub use terminals::Terminals;
 pub(crate) use titles::TitleGenerator;
 pub use uploads::Uploads;
@@ -553,32 +560,6 @@ pub struct EngineRuntime {
     hub: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
-/// IPC-only lifecycle control owned by `hearth headless`. The regular
-/// [`EngineRpc`] deliberately does not expose this method, so a viewport
-/// attached to another headed process cannot shut down that process's engine.
-struct HeadlessRpc {
-    inner: Arc<dyn RpcService>,
-    stop_tx: tokio::sync::mpsc::UnboundedSender<()>,
-}
-
-#[async_trait]
-impl RpcService for HeadlessRpc {
-    async fn handle(&self, method: &str, params: serde_json::Value) -> Result<RpcReply, RpcError> {
-        if method != methods::STOP_ENGINE {
-            return self.inner.handle(method, params).await;
-        }
-
-        let stop_tx = self.stop_tx.clone();
-        // Let the unary success frame reach the client before `Engine::run`
-        // aborts the IPC server and drains the runtime.
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let _ = stop_tx.send(());
-        });
-        RpcReply::value(&serde_json::json!({ "ok": true }))
-    }
-}
-
 impl EngineRuntime {
     pub fn core(&self) -> &EngineCore {
         &self.core
@@ -934,419 +915,10 @@ impl Engine {
     }
 }
 
-/// Ctrl-C or SIGTERM. systemd/launchd stop (and the auto-updater's service
-/// restart) deliver SIGTERM — without catching it the daemon dies mid-write
-/// and every stop takes the crash-recovery path instead of the graceful drain.
-async fn shutdown_signal() -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-        tokio::select! {
-            result = tokio::signal::ctrl_c() => result,
-            _ = sigterm.recv() => Ok(()),
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        tokio::signal::ctrl_c().await
-    }
-}
-
-/// Serve the typed RPC on the localhost IPC port.
-///
-/// Both engines call this: the headless daemon, and the headed app's embedded
-/// engine. That second case is the point — an embedded engine that keeps the
-/// port to itself forces anyone wanting a second viewport (the terminal app) to
-/// stop the desktop app, start a daemon, and start it again in the right order.
-/// Serving here means any viewport can just attach.
-///
-/// Localhost only, exactly as before: this widens *which process* can serve the
-/// port, not who can reach it.
-pub async fn serve_ipc(
-    port: u16,
-    service: std::sync::Arc<dyn hearth_rpc::RpcService>,
-) -> std::io::Result<tokio::task::JoinHandle<()>> {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
-    tracing::info!(port, "IPC server listening");
-    Ok(tokio::spawn(hearth_rpc::serve_ws_listener(
-        listener, service,
-    )))
-}
-
-/// Best-effort human name for this device's registry row.
-fn local_device_name(device_id: &str) -> String {
-    select_local_device_name(
-        [
-            std::env::var("HEARTH_DEVICE_NAME").ok(),
-            native_friendly_device_name(),
-            std::env::var("HOSTNAME").ok(),
-            gethostname::gethostname().into_string().ok(),
-            std::fs::read_to_string("/etc/hostname").ok(),
-        ],
-        device_id,
-        std::env::consts::OS,
-    )
-}
-
-fn select_local_device_name(
-    candidates: impl IntoIterator<Item = Option<String>>,
-    device_id: &str,
-    platform: &str,
-) -> String {
-    candidates
-        .into_iter()
-        .flatten()
-        .map(|name| name.trim().to_string())
-        .find(|name| !name.is_empty())
-        .unwrap_or_else(|| {
-            let platform = match platform {
-                "macos" => "macOS",
-                "windows" => "Windows",
-                "linux" => "Linux",
-                _ => "Local",
-            };
-            let short_id: String = device_id.chars().take(8).collect();
-            format!("{platform} device {short_id}")
-        })
-}
-
-#[cfg(target_os = "macos")]
-fn native_friendly_device_name() -> Option<String> {
-    let output = std::process::Command::new("/usr/sbin/scutil")
-        .args(["--get", "ComputerName"])
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn native_friendly_device_name() -> Option<String> {
-    #[cfg(target_os = "windows")]
-    return std::env::var("COMPUTERNAME").ok();
-
-    #[cfg(not(target_os = "windows"))]
-    None
-}
-
-/// Trimmed env var or the given default.
-async fn this_device_is_hub(config: &EngineConfig) -> bool {
-    if config.tailnet_hub {
-        return true;
-    }
-    let Some(want) = config.tailnet_host.as_deref() else {
-        return false;
-    };
-    match hearth_sync::tailnet::discover_self().await {
-        Ok(me) => host_matches(&me, want),
-        Err(err) => {
-            tracing::warn!(error = %err, "tailnet: could not read Self; not hosting rooms");
-            false
-        }
-    }
-}
-
-fn dns_first_label(host: &str) -> &str {
-    host.trim_end_matches('.').split('.').next().unwrap_or(host)
-}
-
-/// True when `configured` names this Tailscale peer: exact MagicDNS / hostname,
-/// or first-label equality (`minis` ↔ `minis.tailnet.ts.net`). Prefix matches
-/// like `mac` ↔ `macbook…` are rejected.
-fn host_matches(peer: &hearth_sync::tailnet::Peer, configured: &str) -> bool {
-    let want = configured.trim().trim_end_matches('.').to_ascii_lowercase();
-    if want.is_empty() {
-        return false;
-    }
-    let dns = peer.dns_host().to_ascii_lowercase();
-    let host = peer.host_name.to_ascii_lowercase();
-    dns == want || host == want || dns_first_label(&dns) == want || dns_first_label(&want) == host
-}
-
-/// Resolve a registry device id to a Tailscale dial host. Returns `None` when
-/// the device's friendly name does not match any peer — callers must not fall
-/// back to the hub (that would run peer RPC on the wrong machine).
-async fn resolve_tailnet_host(workspace: &WorkspaceHost, device_id: &str) -> Option<String> {
-    let name = workspace
-        .read_devices()
-        .ok()
-        .and_then(|devs| devs.into_iter().find(|d| d.id == device_id).map(|d| d.name))?;
-    let peers = hearth_sync::tailnet::discover_peers().await.ok()?;
-    peers
-        .iter()
-        .find(|p| host_matches(p, &name))
-        .map(|p| p.dns_host().to_string())
-}
-
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key)
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| default.to_string())
-}
-
-/// Stable per-installation device id, persisted at `{data_dir}/device-id`.
-fn load_or_create_device_id(data_dir: &Path) -> Result<String, EngineError> {
-    std::fs::create_dir_all(data_dir)?;
-    // EngineInfo is resolved before the lifetime InstanceLock is acquired, so
-    // identity creation and legacy repair need their own short critical section.
-    // The OS releases this lock after a crash; unlike a create_new lockfile it
-    // cannot strand an installation permanently.
-    let _identity_lock = DeviceIdentityLock::acquire(data_dir)?;
-    let path = data_dir.join("device-id");
-    let recovering_empty = match std::fs::read_to_string(&path) {
-        Ok(id) if !id.trim().is_empty() => return Ok(id.trim().to_string()),
-        // Older releases used truncate+write. A crash between those operations
-        // left a zero-byte file that is safe to replace with a fresh identity.
-        Ok(_) => true,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
-        Err(err) => return Err(err.into()),
-    };
-
-    let id = new_id();
-    let temp_path = data_dir.join(format!(
-        ".device-id.tmp-{}-{}",
-        std::process::id(),
-        new_id()
-    ));
-    let write_result = (|| -> Result<(), EngineError> {
-        let mut temp = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)?;
-        temp.write_all(id.as_bytes())?;
-        temp.sync_all()?;
-        Ok(())
-    })();
-    if let Err(err) = write_result {
-        let _ = std::fs::remove_file(&temp_path);
-        return Err(err);
-    }
-
-    // Fresh installs use create-if-absent. Legacy empty files need an atomic
-    // same-directory replacement on Unix; the Windows fallback runs under the
-    // identity lock and remains recoverable if interrupted.
-    let publish_result = if recovering_empty {
-        match std::fs::read_to_string(&path) {
-            Ok(id) if !id.trim().is_empty() => {
-                let _ = std::fs::remove_file(&temp_path);
-                return Ok(id.trim().to_string());
-            }
-            Ok(_) => replace_empty_device_id(&temp_path, &path),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::hard_link(&temp_path, &path)
-            }
-            Err(err) => Err(err),
-        }
-    } else {
-        std::fs::hard_link(&temp_path, &path)
-    };
-    let _ = std::fs::remove_file(&temp_path);
-    match publish_result {
-        Ok(()) => Ok(id),
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-            let winner = std::fs::read_to_string(&path)?;
-            if winner.trim().is_empty() {
-                Err(EngineError::Other(format!(
-                    "invalid device identity {}: file is empty",
-                    path.display()
-                )))
-            } else {
-                Ok(winner.trim().to_string())
-            }
-        }
-        Err(err) => Err(err.into()),
-    }
-}
-
-struct DeviceIdentityLock {
-    _file: std::fs::File,
-}
-
-impl DeviceIdentityLock {
-    fn acquire(data_dir: &Path) -> Result<Self, EngineError> {
-        let path = data_dir.join("device-id.lock");
-        let mut options = std::fs::OpenOptions::new();
-        options.read(true).write(true).create(true).truncate(false);
-
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::OpenOptionsExt;
-            options.share_mode(0);
-            let mut retries = 200;
-            let file = loop {
-                match options.open(&path) {
-                    Ok(file) => break file,
-                    Err(err)
-                        if err.kind() == std::io::ErrorKind::PermissionDenied && retries > 0 =>
-                    {
-                        retries -= 1;
-                        std::thread::sleep(std::time::Duration::from_millis(5));
-                    }
-                    Err(err) => return Err(err.into()),
-                }
-            };
-            return Ok(Self { _file: file });
-        }
-
-        #[cfg(not(windows))]
-        let file = options.open(&path)?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::AsRawFd;
-            loop {
-                if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
-                    break;
-                }
-                let err = std::io::Error::last_os_error();
-                if err.raw_os_error() != Some(libc::EINTR) {
-                    return Err(err.into());
-                }
-            }
-        }
-
-        #[cfg(not(windows))]
-        Ok(Self { _file: file })
-    }
-}
-
-fn replace_empty_device_id(temp_path: &Path, path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        std::fs::rename(temp_path, path)
-    }
-    #[cfg(not(unix))]
-    {
-        match std::fs::remove_file(path) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err),
-        }
-        std::fs::hard_link(temp_path, path)
-    }
-}
-
-#[cfg(test)]
-mod host_match_tests {
-    use super::{dns_first_label, host_matches};
-    use hearth_sync::tailnet::Peer;
-
-    fn peer(host_name: &str, dns_name: &str) -> Peer {
-        Peer {
-            id: "p".into(),
-            host_name: host_name.into(),
-            dns_name: dns_name.into(),
-            tailscale_ips: vec![],
-            os: "linux".into(),
-            online: true,
-            user_id: 0,
-            login_name: String::new(),
-        }
-    }
-
-    #[test]
-    fn hub_autodetect_matches_short_and_magicdns() {
-        let me = peer("minis", "minis.tailnet.ts.net.");
-        assert!(host_matches(&me, "minis"));
-        assert!(host_matches(&me, "minis.tailnet.ts.net"));
-        assert!(host_matches(&me, "minis.tailnet.ts.net."));
-    }
-
-    #[test]
-    fn hub_autodetect_rejects_hostname_prefix_collisions() {
-        let spoke = peer("mac", "mac.tailnet.ts.net.");
-        assert!(!host_matches(&spoke, "macbook.tailnet.ts.net"));
-        assert!(!host_matches(&spoke, "macbook"));
-        let book = peer("macbook", "macbook.tailnet.ts.net.");
-        assert!(!host_matches(&book, "mac"));
-        assert!(!host_matches(&book, "mac.tailnet.ts.net"));
-    }
-
-    #[test]
-    fn dns_first_label_strips_suffix() {
-        assert_eq!(dns_first_label("minis.tailnet.ts.net"), "minis");
-        assert_eq!(dns_first_label("minis."), "minis");
-        assert_eq!(dns_first_label("minis"), "minis");
-    }
-}
-
-#[cfg(test)]
-mod device_name_tests {
-    use super::select_local_device_name;
-
-    fn name(candidates: &[Option<&str>], device_id: &str, platform: &str) -> String {
-        select_local_device_name(
-            candidates
-                .iter()
-                .map(|candidate| candidate.map(str::to_string)),
-            device_id,
-            platform,
-        )
-    }
-
-    #[test]
-    fn explicit_override_wins_and_is_trimmed() {
-        assert_eq!(
-            name(
-                &[Some("  Studio Mac  "), Some("system-host")],
-                "17bc0aa2-rest",
-                "macos"
-            ),
-            "Studio Mac"
-        );
-    }
-
-    #[test]
-    fn native_friendly_name_wins_over_hostnames() {
-        assert_eq!(
-            name(
-                &[
-                    None,
-                    Some("MacBook Pro de Jose"),
-                    None,
-                    Some("MacBook-Pro.local"),
-                ],
-                "17bc0aa2-rest",
-                "macos"
-            ),
-            "MacBook Pro de Jose"
-        );
-    }
-
-    #[test]
-    fn windows_computer_name_is_used_when_present() {
-        assert_eq!(
-            name(
-                &[None, Some("DESKTOP-123"), Some("shell-host")],
-                "17bc0aa2-rest",
-                "windows"
-            ),
-            "DESKTOP-123"
-        );
-    }
-
-    #[test]
-    fn blank_candidates_are_ignored() {
-        assert_eq!(
-            name(
-                &[Some("  "), None, Some("\n"), Some("linux-box")],
-                "17bc0aa2-rest",
-                "linux"
-            ),
-            "linux-box"
-        );
-    }
-
-    #[test]
-    fn final_fallback_is_platform_specific_and_distinct() {
-        assert_eq!(
-            name(&[None, Some(" ")], "17bc0aa2-rest", "linux"),
-            "Linux device 17bc0aa2"
-        );
-    }
 }
