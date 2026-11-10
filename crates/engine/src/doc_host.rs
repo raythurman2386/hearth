@@ -102,9 +102,9 @@ const RELAY_GIVE_UP: std::time::Duration = std::time::Duration::from_secs(15 * 6
 const RELAY_MIN_VERSION: (u64, u64, u64) = (0, 2, 12);
 
 /// Edge connection config. The bearer is a **provider**, never a snapshot:
-/// every room (re)connect and HTTP request re-reads it, so WorkOS access-token
-/// refreshes (~1h expiry) take effect without an engine restart. Dev bearers
-/// (which never expire) ride the same seam as a [`hearth_rpc::StaticToken`].
+/// every room (re)connect and HTTP request re-reads it, so a rotated bearer
+/// takes effect without an engine restart. The device identity is static and
+/// rides the same seam as a [`hearth_rpc::StaticToken`].
 #[derive(Clone)]
 pub struct EdgeConfig {
     /// Edge base URL (`http(s)://…`); rewritten to `ws(s)` for the room socket.
@@ -660,10 +660,10 @@ impl DocHost {
         }
     }
 
-    /// Retire this host's workers (runtime replacement, e.g. sign-out): cancel
-    /// and await every spawned task, drop every open chat handle (ending the
-    /// weak-keyed room/join loops and watcher streams), and sever the sessions
-    /// back-edge so the replaced engine graph can actually drop. Idempotent.
+    /// Retire this host's workers (runtime shutdown): cancel and await every
+    /// spawned task, drop every open chat handle (ending the weak-keyed
+    /// room/join loops and watcher streams), and sever the sessions back-edge
+    /// so the engine graph can actually drop. Idempotent.
     pub async fn shutdown_workers(&self) {
         self.inner.shutdown.cancel();
         self.inner.tasks.close();

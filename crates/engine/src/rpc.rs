@@ -15,9 +15,7 @@
 //! - `EngineInfo` → `{deviceId, workspaceScope}` — this runtime's fixed identity
 //!   and data boundary (never forwarded)
 //! - `LocalDevice` → `{deviceId}` — legacy engine identity (never forwarded)
-//! - AuthRpc (feature-inventory §2): `AuthStatus` (stream), `SignIn`/`SignInHeadless` →
-//!   `{url}`, `CompleteSignIn {code}`, `SignOut`, `ListOrgs`, `CreateOrg {name}`,
-//!   `SelectOrg {organizationId}`
+//! - AuthRpc (feature-inventory §2): `AuthStatus` (stream), `SignOut`
 //! - Repos (§3.5): `ListRepos`, `AddRepo {path}`, `CloneRepo {url}`,
 //!   `CreateRepo {name}`, `ListBranches {repoPath}` (default branch first),
 //!   `ListFolders {path?}`, `CreateWorktree {repoPath, branch}`, `DeleteWorktree
@@ -25,8 +23,8 @@
 //! - Terminals (§3.4): `OpenTerminal {chatId, cols, rows}` → `TerminalSession`,
 //!   `SubscribeTerminal {terminalId, afterSeq?}` → stream of `TerminalEvent`
 //!   (replay then live tail), `WriteTerminal {terminalId, data}`, `ResizeTerminal`,
-//!   `CloseTerminal`. M5 is single-user local: per-user owner checks land with
-//!   real multi-account auth in M6.
+//!   `CloseTerminal`. The tailnet is single-user per device: every IPC/relay
+//!   caller is the device owner, so no per-user owner checks apply.
 //! - Agent accounts (§3.7): `ListAgentAccounts {forceUsage?}` →
 //!   `AgentAccountsSnapshot`, `ActivateAgentAccount`/`ForgetAgentAccount`
 //!   `{harness, accountId}` → snapshot, `StartAgentLogin {harness}` →
@@ -407,7 +405,6 @@ pub struct EngineRpc {
     auth: Option<Auth>,
     links: Option<std::sync::Arc<LinkCache>>,
     updater: Option<hearth_update::Updater>,
-    local_import: Option<crate::local_import::LocalImporter>,
     engine_info: EngineInfo,
 }
 
@@ -444,12 +441,11 @@ impl EngineRpc {
             auth: None,
             links: None,
             updater: None,
-            local_import: None,
             engine_info,
         }
     }
 
-    /// Attach the auth service (AuthStatus + AuthRpc mutations).
+    /// Attach the auth service (AuthStatus + SignOut).
     pub fn with_auth(mut self, auth: Auth) -> Self {
         self.auth = Some(auth);
         self
@@ -467,12 +463,6 @@ impl EngineRpc {
         self
     }
 
-    /// Attach the local→synced profile importer (synced runtimes only).
-    pub fn with_local_import(mut self, importer: crate::local_import::LocalImporter) -> Self {
-        self.local_import = Some(importer);
-        self
-    }
-
     fn auth(&self) -> Result<&Auth, RpcError> {
         self.auth
             .as_ref()
@@ -483,12 +473,6 @@ impl EngineRpc {
         self.updater
             .as_ref()
             .ok_or_else(|| RpcError::Failed("updates unavailable".into()))
-    }
-
-    fn local_importer(&self) -> Result<&crate::local_import::LocalImporter, RpcError> {
-        self.local_import
-            .as_ref()
-            .ok_or_else(|| RpcError::Failed("local import requires a synced workspace".into()))
     }
 
     /// Resolve a mention-search root from synced workspace rows. A client may
@@ -1015,10 +999,8 @@ fn doc_messages_stream(
     .boxed()
 }
 
-/// Authentication-only RPC surface used while the headed app is waiting for a
-/// production WorkOS session. Keeping this independent from [`EngineRpc`] lets
-/// the UI show its sign-in and organization gates before identity-scoped Loro
-/// stores are opened.
+/// Authentication RPC surface: the live status stream and the sign-out signal.
+/// Identity itself is fixed for the runtime's lifetime (see [`crate::auth`]).
 #[derive(Clone)]
 pub struct AuthRpc {
     auth: Auth,
@@ -1030,84 +1012,17 @@ impl AuthRpc {
     }
 
     pub fn handles(method: &str) -> bool {
-        matches!(
-            method,
-            methods::AUTH_STATUS
-                | methods::SIGN_IN
-                | methods::SIGN_IN_HEADLESS
-                | methods::COMPLETE_SIGN_IN
-                | methods::SIGN_OUT
-                | methods::LIST_ORGS
-                | methods::CREATE_ORG
-                | methods::SELECT_ORG
-        )
+        matches!(method, methods::AUTH_STATUS | methods::SIGN_OUT)
     }
 }
 
 #[async_trait]
 impl RpcService for AuthRpc {
-    async fn handle(&self, method: &str, params: serde_json::Value) -> Result<RpcReply, RpcError> {
+    async fn handle(&self, method: &str, _params: serde_json::Value) -> Result<RpcReply, RpcError> {
         match method {
             methods::AUTH_STATUS => Ok(RpcReply::Stream(watch_stream(self.auth.watch_state()))),
-            methods::SIGN_IN => {
-                let url = self
-                    .auth
-                    .start_sign_in()
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "url": url }))
-            }
-            methods::SIGN_IN_HEADLESS => {
-                let url = self.auth.start_headless_sign_in();
-                RpcReply::value(&serde_json::json!({ "url": url }))
-            }
-            methods::COMPLETE_SIGN_IN => {
-                #[derive(Deserialize)]
-                struct P {
-                    code: String,
-                }
-                let p: P = parse_params(params)?;
-                self.auth
-                    .complete_sign_in(&p.code)
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "ok": true }))
-            }
             methods::SIGN_OUT => {
                 self.auth.sign_out();
-                RpcReply::value(&serde_json::json!({ "ok": true }))
-            }
-            methods::LIST_ORGS => {
-                let orgs = self
-                    .auth
-                    .list_orgs()
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "orgs": orgs }))
-            }
-            methods::CREATE_ORG => {
-                #[derive(Deserialize)]
-                struct P {
-                    name: String,
-                }
-                let p: P = parse_params(params)?;
-                self.auth
-                    .create_org(&p.name)
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&serde_json::json!({ "ok": true }))
-            }
-            methods::SELECT_ORG => {
-                #[derive(Deserialize)]
-                #[serde(rename_all = "camelCase")]
-                struct P {
-                    organization_id: String,
-                }
-                let p: P = parse_params(params)?;
-                self.auth
-                    .select_org(&p.organization_id)
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&serde_json::json!({ "ok": true }))
             }
             _ => Err(RpcError::UnknownMethod(method.to_string())),
@@ -1300,42 +1215,6 @@ impl RpcService for EngineRpc {
             }
             methods::LOCAL_DEVICE => {
                 RpcReply::value(&serde_json::json!({ "deviceId": self.doc_host.device_id() }))
-            }
-            methods::LOCAL_IMPORT_STATUS => {
-                let importer = self.local_importer()?.clone();
-                let status = tokio::task::spawn_blocking(move || importer.status())
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&status)
-            }
-            methods::IMPORT_LOCAL_WORKSPACE => {
-                let importer = self.local_importer()?.clone();
-                // Progress rides an unbounded channel: the importer is
-                // blocking (sqlite + fs) and must never wedge on a slow
-                // viewer; items are tiny and bounded by the chat count.
-                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
-                tokio::task::spawn_blocking(move || {
-                    let emit = |event: crate::local_import::ImportEvent| {
-                        if let Ok(item) = serde_json::to_value(&event) {
-                            let _ = tx.send(item);
-                        }
-                    };
-                    if let Err(err) = importer.run(emit) {
-                        tracing::error!(error = %err, "local import failed");
-                        let _ = tx.send(serde_json::json!({
-                            "kind": "summary",
-                            "importedChats": 0, "importedSpaces": 0,
-                            "skippedChats": 0, "skippedSpaces": 0,
-                            "journalsCopied": 0, "ledgerRowsMerged": 0,
-                            "errors": [format!("{err}")],
-                        }));
-                    }
-                    // tx drops here — the stream ends after the summary item.
-                });
-                Ok(RpcReply::Stream(Box::pin(futures::stream::poll_fn(
-                    move |cx| rx.poll_recv(cx),
-                ))))
             }
             methods::UPDATE_STATUS => Ok(RpcReply::Stream(watch_stream(self.updater()?.watch()))),
             methods::APPLY_UPDATE => {
