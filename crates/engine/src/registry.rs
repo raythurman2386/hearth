@@ -9,12 +9,14 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
 use hearth_harness::{Harness, HarnessError, mock::MockHarness};
 use hearth_proto::{AgentEvent, DoneStatus, HarnessId, ReasoningLevel, SteeringMode};
+
+use crate::util::lock;
 
 /// What `ListHarnesses` reports per harness.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,15 +126,15 @@ impl HarnessRegistry {
     }
 
     fn slots(&self) -> MutexGuard<'_, HashMap<HarnessId, Slot>> {
-        self.slots.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.slots)
     }
 
     fn order(&self) -> MutexGuard<'_, Vec<HarnessId>> {
-        self.order.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.order)
     }
 
     fn prefs(&self) -> MutexGuard<'_, HarnessPrefsFile> {
-        self.prefs.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.prefs)
     }
 
     /// Load `harness-prefs.json` from the engine data dir and remember the
@@ -144,10 +146,7 @@ impl HarnessRegistry {
             .and_then(|text| serde_json::from_str::<HarnessPrefsFile>(&text).ok())
             .unwrap_or_default();
         *self.prefs() = loaded;
-        *self
-            .prefs_path
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(path);
+        *lock(&self.prefs_path) = Some(path);
         self.migrate_legacy_prefs();
     }
 
@@ -226,12 +225,7 @@ impl HarnessRegistry {
 
     /// Best-effort atomic write (temp + rename, the ui-settings pattern).
     fn persist_prefs(&self) {
-        let Some(path) = self
-            .prefs_path
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
-        else {
+        let Some(path) = lock(&self.prefs_path).clone() else {
             return;
         };
         let json = match serde_json::to_string_pretty(&*self.prefs()) {
@@ -241,8 +235,7 @@ impl HarnessRegistry {
                 return;
             }
         };
-        let tmp = path.with_extension("json.tmp");
-        if let Err(err) = std::fs::write(&tmp, json).and_then(|()| std::fs::rename(&tmp, &path)) {
+        if let Err(err) = crate::fsx::replace_atomic(&path, json.as_bytes(), false) {
             tracing::warn!(error = %err, "harness-prefs save failed");
         }
     }
