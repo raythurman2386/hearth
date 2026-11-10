@@ -8,15 +8,17 @@
 //! (suppressing every snapshot save), and the transcript vanished on the
 //! next restart. An absent row must mean "being born on chat2".
 
+mod common;
+use common::*;
+
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use hearth_doc::{MessageRole, MessageStatus, SessionCommandPayload, SessionMessageEntry};
-use hearth_engine::{EngineCore, HarnessRegistry};
+use hearth_doc::{MessageRole, SessionCommandPayload};
+use hearth_engine::EngineCore;
 use hearth_harness::{Harness, HarnessError, RunControls};
 use hearth_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
@@ -77,39 +79,7 @@ impl Harness for OneLinerHarness {
 }
 
 fn assemble(dir: &std::path::Path) -> EngineCore {
-    let registry = HarnessRegistry::new();
-    registry.register(Arc::new(OneLinerHarness));
-    EngineCore::assemble(dir, Arc::new(registry), HarnessId::Mock, None)
-        .expect("engine core assembles")
-}
-
-async fn wait_for<F>(mut predicate: F, what: &str)
-where
-    F: FnMut() -> bool,
-{
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while !predicate() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(15)).await;
-    }
-}
-
-fn entries(core: &EngineCore) -> Vec<SessionMessageEntry> {
-    core.doc_host
-        .open(CHAT)
-        .ok()
-        .and_then(|h| h.doc().read_entries().ok())
-        .unwrap_or_default()
-}
-
-fn complete_assistant_count(core: &EngineCore) -> usize {
-    entries(core)
-        .iter()
-        .filter(|e| e.role == MessageRole::Assistant && e.status == Some(MessageStatus::Complete))
-        .count()
+    common::assemble_with_harness(dir, Arc::new(OneLinerHarness))
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -169,11 +139,15 @@ async fn transcript_survives_open_racing_create_chat() {
                 },
             )
             .expect("queue run command");
-        wait_for(|| complete_assistant_count(&core) == 1, "turn to complete").await;
+        wait_for(
+            || complete_assistant_count(&core, CHAT) == 1,
+            "turn to complete",
+        )
+        .await;
 
         // The row arriving mid-life must not blank the transcript (the old
         // watcher retired the handle; a reopen then built a fresh empty doc).
-        let mid = entries(&core);
+        let mid = entries(&core, CHAT);
         assert!(
             mid.iter().any(|e| e.role == MessageRole::User),
             "user message lost after registry row arrived: {mid:?}"
@@ -188,9 +162,9 @@ async fn transcript_survives_open_racing_create_chat() {
     // stuck s2 handle's `retired` flag used to suppress every snapshot save,
     // so the doc's only copy died with the process.
     let core = assemble(&dir);
-    let after = entries(&core);
+    let after = entries(&core, CHAT);
     assert_eq!(
-        complete_assistant_count(&core),
+        complete_assistant_count(&core, CHAT),
         1,
         "assistant turn lost across restart: {after:?}"
     );

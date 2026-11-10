@@ -11,6 +11,9 @@
 // full `Response` — its size is not ours to shrink.
 #![allow(clippy::result_large_err)]
 
+mod common;
+use common::*;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -25,7 +28,7 @@ use tokio_tungstenite::tungstenite::handshake::server::{
     Request as WsRequest, Response as WsResponse,
 };
 
-use hearth_doc::{MessageRole, MessageStatus, SessionCommandPayload};
+use hearth_doc::{MessageRole, SessionCommandPayload};
 use hearth_engine::{EngineCore, HarnessRegistry};
 use hearth_harness::{Harness, HarnessError, RunControls};
 use hearth_proto::{
@@ -182,20 +185,7 @@ fn registry() -> Arc<HarnessRegistry> {
 }
 
 fn assemble(dir: &std::path::Path, device_id: &str) -> EngineCore {
-    std::fs::create_dir_all(dir).expect("create data dir");
-    std::fs::write(dir.join("device-id"), device_id).expect("write device id");
-    EngineCore::assemble(dir, registry(), HarnessId::Mock, None).expect("engine assembles")
-}
-
-fn complete_assistant_count(core: &EngineCore) -> usize {
-    core.doc_host
-        .open(CHAT)
-        .ok()
-        .and_then(|h| h.doc().read_entries().ok())
-        .unwrap_or_default()
-        .iter()
-        .filter(|e| e.role == MessageRole::Assistant && e.status == Some(MessageStatus::Complete))
-        .count()
+    common::assemble_with_device(dir, registry(), device_id)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -269,7 +259,7 @@ async fn rows_dark_command_delivers_over_the_peer_relay_exactly_once() {
     // B executes it — allow the 10s rows grace plus relay dial time.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
-        if complete_assistant_count(&core_b) == 1 {
+        if complete_assistant_count(&core_b, CHAT) == 1 {
             break;
         }
         assert!(
@@ -319,7 +309,7 @@ async fn rows_dark_command_delivers_over_the_peer_relay_exactly_once() {
     assert_eq!(dup, "duplicate");
     tokio::time::sleep(Duration::from_millis(800)).await;
     assert_eq!(
-        complete_assistant_count(&core_b),
+        complete_assistant_count(&core_b, CHAT),
         1,
         "the doc row + a duplicate relay must not double-run the command"
     );

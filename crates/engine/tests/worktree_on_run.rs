@@ -5,6 +5,9 @@
 //! branch. A second spec-carrying Run for the same chat REUSES the checkout
 //! instead of minting another.
 
+mod common;
+use common::*;
+
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -14,7 +17,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use hearth_doc::{MessageRole, MessageStatus, SessionCommandPayload, SessionMessageEntry};
+use hearth_doc::SessionCommandPayload;
 use hearth_engine::{EngineCore, HarnessRegistry};
 use hearth_harness::{Harness, HarnessError, RunControls};
 use hearth_proto::{
@@ -78,31 +81,17 @@ impl Harness for RecordingHarness {
     }
 }
 
-async fn wait_for<F>(mut predicate: F, what: &str)
+async fn wait_for<F>(predicate: F, what: &str)
 where
     F: FnMut() -> bool,
 {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
-    while !predicate() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(15)).await;
-    }
-}
-
-fn complete_assistant_count(core: &EngineCore) -> usize {
-    let entries: Vec<SessionMessageEntry> = core
-        .doc_host
-        .open(CHAT)
-        .ok()
-        .and_then(|h| h.doc().read_entries().ok())
-        .unwrap_or_default();
-    entries
-        .iter()
-        .filter(|e| e.role == MessageRole::Assistant && e.status == Some(MessageStatus::Complete))
-        .count()
+    common::wait_for_with(
+        predicate,
+        what,
+        Duration::from_secs(20),
+        Duration::from_millis(15),
+    )
+    .await;
 }
 
 fn run_payload(message_id: &str, repo_path: &str) -> SessionCommandPayload {
@@ -194,7 +183,7 @@ async fn run_with_worktree_spec_materializes_on_host_and_reuses() {
     core.doc_host
         .queue_command(CHAT, run_payload("msg-wt-1", &repo_path))
         .expect("queue run command");
-    wait_for(|| complete_assistant_count(&core) == 1, "first turn").await;
+    wait_for(|| complete_assistant_count(&core, CHAT) == 1, "first turn").await;
 
     let first_cwd = cwds.lock().unwrap().first().cloned().expect("run recorded");
     assert_ne!(
@@ -229,7 +218,7 @@ async fn run_with_worktree_spec_materializes_on_host_and_reuses() {
     core.doc_host
         .queue_command(CHAT, run_payload("msg-wt-2", &repo_path))
         .expect("queue second run");
-    wait_for(|| complete_assistant_count(&core) == 2, "second turn").await;
+    wait_for(|| complete_assistant_count(&core, CHAT) == 2, "second turn").await;
     let second_cwd = cwds.lock().unwrap().get(1).cloned().expect("second run");
     assert_eq!(
         second_cwd, first_cwd,

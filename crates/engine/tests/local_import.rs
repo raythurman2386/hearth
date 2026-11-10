@@ -2,17 +2,16 @@
 //! imported docs, journal carry-over, idempotence, and the uploads read-root
 //! marker.
 
-use std::sync::Arc;
+mod common;
 
 use hearth_doc::{MessagePart, MessageRole, SessionDoc, SessionMessageEntry};
 
 use hearth_engine::local_import::{ImportEvent, marker_grants_read_root};
 use hearth_engine::run_journal::journal_paths;
-use hearth_engine::{EngineCore, EngineProfile, HarnessId, default_registry};
+use hearth_engine::{EngineCore, EngineProfile};
 
 fn assemble(profile: EngineProfile) -> EngineCore {
-    EngineCore::assemble_with_profile(profile, Arc::new(default_registry()), HarnessId::Mock, None)
-        .expect("assemble profile")
+    common::assemble_profile(profile)
 }
 
 /// Seed a local profile with a space, two chats (one with a doc + journal,

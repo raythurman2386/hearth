@@ -2,39 +2,29 @@
 //! workspace room test). Device rows and spaces converge through the real
 //! registry WS protocol on `Hub`.
 
+mod common;
+
 use std::sync::Arc;
 use std::time::Duration;
 
-use hearth_engine::{EdgeConfig, EngineCore, HarnessId, default_registry};
+use hearth_engine::{EngineCore, default_registry};
 use hearth_sync::hub::{Hub, HubConfig};
 
-async fn wait_for<F>(mut predicate: F, what: &str)
+async fn wait_for<F>(predicate: F, what: &str)
 where
     F: FnMut() -> bool,
 {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    while !predicate() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    common::wait_for_with(
+        predicate,
+        what,
+        Duration::from_secs(15),
+        Duration::from_millis(25),
+    )
+    .await;
 }
 
 fn assemble(dir: &std::path::Path, device_id: &str, hub: &str) -> EngineCore {
-    std::fs::create_dir_all(dir).expect("create data dir");
-    std::fs::write(dir.join("device-id"), device_id).expect("write device id");
-    let edge = Some(EdgeConfig::with_static_token(hub, "tailnet").with_device(device_id));
-    EngineCore::assemble_with_identity(
-        dir,
-        Arc::new(default_registry()),
-        HarnessId::Mock,
-        edge,
-        "hub-org",
-        "alice",
-    )
-    .expect("engine core assembles")
+    common::assemble_with_identity(dir, Arc::new(default_registry()), device_id, hub, "hub-org")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

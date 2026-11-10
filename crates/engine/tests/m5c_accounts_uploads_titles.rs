@@ -5,6 +5,9 @@
 //! Account tests use explicit `AgentAccountsConfig` paths under a tempdir (never
 //! the real `~/.codex`), so they are hermetic and parallel-safe.
 
+mod common;
+use common::*;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -108,21 +111,6 @@ async fn init_repo(dir: &Path) {
     std::fs::write(dir.join("a.txt"), "one\n").expect("write a.txt");
     git(dir, &["add", "."]).await;
     git(dir, &["commit", "-m", "initial"]).await;
-}
-
-/// Poll until `probe` yields Some, or panic at the deadline.
-async fn wait_for<T>(what: &str, mut probe: impl FnMut() -> Option<T>) -> T {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    loop {
-        if let Some(value) = probe() {
-            return value;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -410,7 +398,7 @@ async fn titling_e2e_names_chat_and_renames_worktree_branch() {
         .expect("dispatch");
 
     // The mock's scripted reply doubles as the titling model's output.
-    let chat = wait_for("chat title", || {
+    let chat = wait_for_value("chat title", || {
         core.workspace
             .chat(chat_id)
             .ok()

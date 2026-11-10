@@ -13,6 +13,9 @@
 //! - a steer with no live run after a restart dispatches as a new turn that
 //!   still resumes the prior conversation.
 
+mod common;
+use common::*;
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -34,23 +37,6 @@ use hearth_sync::DocsStore;
 const CHAT: &str = "chat-restart";
 
 type RequestLog = Arc<Mutex<Vec<RunRequest>>>;
-
-fn run_request(prompt: &str, cwd: &str) -> RunRequest {
-    RunRequest {
-        mode: None,
-        prompt: prompt.into(),
-        harness: None,
-        model: None,
-        reasoning: None,
-        model_options: Default::default(),
-        cwd: cwd.into(),
-        sandbox: SandboxLevel::WorkspaceWrite,
-        auto_approve: true,
-        attachments: Vec::new(),
-        worktree: None,
-        resume: None,
-    }
-}
 
 /// Records every `RunRequest` it receives (the resume-injection probe). A
 /// successful run emits `SessionStarted{session_id}` … `Done{session_id}`;
@@ -135,10 +121,7 @@ impl Harness for RecordingHarness {
 }
 
 fn assemble(dir: &std::path::Path, harness: RecordingHarness) -> EngineCore {
-    let registry = HarnessRegistry::new();
-    registry.register(Arc::new(harness));
-    EngineCore::assemble(dir, Arc::new(registry), HarnessId::Mock, None)
-        .expect("engine core assembles")
+    common::assemble_with_harness(dir, Arc::new(harness))
 }
 
 fn queue_run(core: &EngineCore, prompt: &str, cwd: &str, message_id: &str) {
@@ -146,48 +129,11 @@ fn queue_run(core: &EngineCore, prompt: &str, cwd: &str, message_id: &str) {
         .queue_command(
             CHAT,
             SessionCommandPayload::Run {
-                request: run_request(prompt, cwd),
+                request: run_request_in(prompt, cwd),
                 message_id: message_id.into(),
             },
         )
         .expect("queue run command");
-}
-
-async fn wait_for<F>(predicate: F, what: &str)
-where
-    F: FnMut() -> bool,
-{
-    wait_for_within(predicate, what, Duration::from_secs(10)).await;
-}
-
-async fn wait_for_within<F>(mut predicate: F, what: &str, deadline: Duration)
-where
-    F: FnMut() -> bool,
-{
-    let deadline = tokio::time::Instant::now() + deadline;
-    while !predicate() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(15)).await;
-    }
-}
-
-/// Tolerant read for hot-polling predicates (mirrors e2e.rs `entries_now`).
-fn entries_now(core: &EngineCore) -> Vec<SessionMessageEntry> {
-    core.doc_host
-        .open(CHAT)
-        .ok()
-        .and_then(|h| h.doc().read_entries().ok())
-        .unwrap_or_default()
-}
-
-fn complete_assistant_count(core: &EngineCore) -> usize {
-    entries_now(core)
-        .iter()
-        .filter(|e| e.role == MessageRole::Assistant && e.status == Some(MessageStatus::Complete))
-        .count()
 }
 
 fn stored_harness_session(core: &EngineCore) -> Option<(String, Option<String>)> {
@@ -234,7 +180,7 @@ async fn run_one_turn_and_shutdown(dir: &std::path::Path, requests: &RequestLog,
         "msg-user-1",
     );
     wait_for(
-        || complete_assistant_count(&core) == 1,
+        || complete_assistant_count(&core, CHAT) == 1,
         "first turn to complete",
     )
     .await;
@@ -278,7 +224,7 @@ async fn restart_roundtrip_restores_chats_transcript_and_resume() {
     );
 
     // Transcript survived: user + completed assistant entry, texts intact.
-    let entries = entries_now(&core);
+    let entries = entries(&core, CHAT);
     assert_eq!(
         entries.len(),
         2,
@@ -297,7 +243,7 @@ async fn restart_roundtrip_restores_chats_transcript_and_resume() {
     // the stored session id even though the caller sent `resume: None`.
     queue_run(&core, "what was the codeword?", "/tmp", "msg-user-2");
     wait_for(
-        || complete_assistant_count(&core) == 2,
+        || complete_assistant_count(&core, CHAT) == 2,
         "second turn to complete",
     )
     .await;
@@ -400,7 +346,7 @@ async fn kill_crash_recovers_resume_from_journal_and_stamps_aborted() {
     assert_eq!(core.device_id, "dev-crash");
 
     // Boot recovery stamped the abandoned streaming entry `aborted` …
-    let entries = entries_now(&core);
+    let entries = entries(&core, CHAT);
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[1].status, Some(MessageStatus::Aborted));
     // … and closed the stale journal with a synthetic Done.
@@ -415,7 +361,7 @@ async fn kill_crash_recovers_resume_from_journal_and_stamps_aborted() {
     pre_title(&core);
     queue_run(&core, "keep going", "/tmp", "msg-user-2");
     wait_for(
-        || complete_assistant_count(&core) == 1,
+        || complete_assistant_count(&core, CHAT) == 1,
         "post-crash turn to complete",
     )
     .await;
@@ -534,7 +480,7 @@ async fn persistent_session_serves_multiple_turns_on_one_child() {
 
     queue_run(&core, "first", "/tmp", "msg-user-1");
     wait_for(
-        || complete_assistant_count(&core) == 1,
+        || complete_assistant_count(&core, CHAT) == 1,
         "first turn to complete",
     )
     .await;
@@ -543,7 +489,7 @@ async fn persistent_session_serves_multiple_turns_on_one_child() {
     // the live child instead of spawning a new one.
     queue_run(&core, "second", "/tmp", "msg-user-2");
     wait_for(
-        || complete_assistant_count(&core) == 2,
+        || complete_assistant_count(&core, CHAT) == 2,
         "second turn to complete on the same child",
     )
     .await;
@@ -553,7 +499,7 @@ async fn persistent_session_serves_multiple_turns_on_one_child() {
         1,
         "one harness child must serve both turns"
     );
-    let entries = entries_now(&core);
+    let entries = entries(&core, CHAT);
     assert_eq!(
         entries
             .iter()
@@ -647,12 +593,12 @@ async fn fresh_crash_auto_resumes_and_notes_the_interruption() {
     // The run is PICKED BACK UP without any user action (hearth: "not just
     // eulogized"): recovery re-dispatches the crashed prompt itself.
     wait_for(
-        || complete_assistant_count(&core) == 1,
+        || complete_assistant_count(&core, CHAT) == 1,
         "auto-resumed turn to complete",
     )
     .await;
 
-    let entries = entries_now(&core);
+    let entries = entries(&core, CHAT);
     // The aborted entry SAYS why it ended — and that the run is resuming.
     let aborted = entries
         .iter()
@@ -714,7 +660,7 @@ async fn resume_is_cwd_scoped() {
         "msg-user-2",
     );
     wait_for(
-        || complete_assistant_count(&core) == 2,
+        || complete_assistant_count(&core, CHAT) == 2,
         "cross-cwd turn to complete",
     )
     .await;
@@ -749,7 +695,7 @@ async fn startup_crash_retries_once_with_resume_kept() {
     );
     queue_run(&core, "second turn", "/tmp", "msg-user-2");
     wait_for(
-        || complete_assistant_count(&core) == 2,
+        || complete_assistant_count(&core, CHAT) == 2,
         "retried turn to complete",
     )
     .await;
@@ -767,7 +713,7 @@ async fn startup_crash_retries_once_with_resume_kept() {
         assert_eq!(log[2].prompt, "second turn");
     }
     // The retry reused the same user entry — no duplicates, no error turn.
-    let entries = entries_now(&core);
+    let entries = entries(&core, CHAT);
     let users: Vec<_> = entries
         .iter()
         .filter(|e| e.role == MessageRole::User)
@@ -878,7 +824,7 @@ async fn real_codex_remembers_codeword_across_engine_restart() {
         )
         .expect("queue first real run");
     wait_for_within(
-        || complete_assistant_count(&core) == 1,
+        || complete_assistant_count(&core, CHAT) == 1,
         "first real codex turn",
         Duration::from_secs(120),
     )
@@ -904,13 +850,13 @@ async fn real_codex_remembers_codeword_across_engine_restart() {
         )
         .expect("queue second real run");
     wait_for_within(
-        || complete_assistant_count(&core) == 2,
+        || complete_assistant_count(&core, CHAT) == 2,
         "post-restart real codex turn",
         Duration::from_secs(120),
     )
     .await;
 
-    let entries = entries_now(&core);
+    let entries = entries(&core, CHAT);
     let last_assistant_text: String = entries
         .iter()
         .rev()
@@ -959,7 +905,7 @@ async fn steer_after_restart_dispatches_new_turn_with_resume() {
         )
         .expect("queue steer command");
     wait_for(
-        || complete_assistant_count(&core) == 2,
+        || complete_assistant_count(&core, CHAT) == 2,
         "steer-as-new-turn to complete",
     )
     .await;

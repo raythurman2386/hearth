@@ -5,6 +5,9 @@
 //! blocking pre-step in FRONT of QueueCommand, so a dead peer link killed the
 //! send instead of queueing it).
 
+mod common;
+use common::*;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,9 +17,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use hearth_doc::{
-    MessageRole, MessageStatus, SessionCommandPayload, SessionCommandStatus, SessionMessageEntry,
-};
+use hearth_doc::{MessageRole, SessionCommandPayload, SessionCommandStatus};
 use hearth_engine::{EngineCore, HarnessRegistry};
 use hearth_harness::{Harness, HarnessError, RunControls};
 use hearth_proto::{
@@ -86,35 +87,6 @@ impl Harness for AckHarness {
     }
 }
 
-async fn wait_for<F>(mut predicate: F, what: &str)
-where
-    F: FnMut() -> bool,
-{
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while !predicate() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(15)).await;
-    }
-}
-
-fn entries(core: &EngineCore) -> Vec<SessionMessageEntry> {
-    core.doc_host
-        .open(CHAT)
-        .ok()
-        .and_then(|h| h.doc().read_entries().ok())
-        .unwrap_or_default()
-}
-
-fn complete_assistant_count(core: &EngineCore) -> usize {
-    entries(core)
-        .iter()
-        .filter(|e| e.role == MessageRole::Assistant && e.status == Some(MessageStatus::Complete))
-        .count()
-}
-
 fn run_payload(message_id: &str, pending_ref: &str) -> SessionCommandPayload {
     SessionCommandPayload::Run {
         request: RunRequest {
@@ -171,7 +143,7 @@ async fn run_defers_until_attachment_bytes_land_then_executes_rewritten() {
         .expect("queue run command");
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(
-        complete_assistant_count(&core),
+        complete_assistant_count(&core, CHAT),
         0,
         "run must defer while attachment bytes are in transit"
     );
@@ -210,14 +182,14 @@ async fn run_defers_until_attachment_bytes_land_then_executes_rewritten() {
         .expect("upload commit");
 
     wait_for(
-        || complete_assistant_count(&core) == 1,
+        || complete_assistant_count(&core, CHAT) == 1,
         "deferred run to execute",
     )
     .await;
 
     // The persisted user entry carries the rewritten ABSOLUTE path (legacy
     // transcript shape — old clients render it as always), not the ref.
-    let user_text = entries(&core)
+    let user_text = entries(&core, CHAT)
         .iter()
         .find(|e| e.role == MessageRole::User)
         .and_then(|e| {

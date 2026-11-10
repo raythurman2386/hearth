@@ -4,14 +4,16 @@
 //! and never mints a space row — the two failure modes of pre-#40 engines
 //! (a phantom project at root, and the run dying on the literal `~`).
 
+mod common;
+use common::*;
+
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use hearth_doc::{MessageRole, MessageStatus, SessionCommandPayload, SessionMessageEntry};
+use hearth_doc::SessionCommandPayload;
 use hearth_engine::{EngineCore, HarnessRegistry};
 use hearth_harness::{Harness, HarnessError, RunControls};
 use hearth_proto::{
@@ -81,33 +83,6 @@ impl Harness for RecordingHarness {
     }
 }
 
-async fn wait_for<F>(mut predicate: F, what: &str)
-where
-    F: FnMut() -> bool,
-{
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while !predicate() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(15)).await;
-    }
-}
-
-fn complete_assistant_count(core: &EngineCore) -> usize {
-    let entries: Vec<SessionMessageEntry> = core
-        .doc_host
-        .open(CHAT)
-        .ok()
-        .and_then(|h| h.doc().read_entries().ok())
-        .unwrap_or_default();
-    entries
-        .iter()
-        .filter(|e| e.role == MessageRole::Assistant && e.status == Some(MessageStatus::Complete))
-        .count()
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn projectless_chat_runs_from_home_and_mints_no_space() {
     let tmp = tempfile::tempdir().unwrap();
@@ -175,7 +150,11 @@ async fn projectless_chat_runs_from_home_and_mints_no_space() {
             },
         )
         .expect("queue run command");
-    wait_for(|| complete_assistant_count(&core) == 1, "turn to complete").await;
+    wait_for(
+        || complete_assistant_count(&core, CHAT) == 1,
+        "turn to complete",
+    )
+    .await;
 
     // The harness must see the host's real home dir, not the literal `~`.
     let cwds: Vec<String> = requests
