@@ -52,9 +52,6 @@ pub fn devices_subtitle(scope: Option<WorkspaceScope>) -> &'static str {
         Some(WorkspaceScope::Local) => {
             "Manage device details stored in this local workspace. Remove machines you no longer use."
         }
-        Some(WorkspaceScope::Synced) => {
-            "Manage device names, inspect synced metadata, and remove old machines."
-        }
         Some(WorkspaceScope::Development) | None => {
             "Manage device names for this workspace. Remove machines you no longer use."
         }

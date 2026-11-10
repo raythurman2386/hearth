@@ -1,6 +1,6 @@
-//! hearth — headed by default; `hearth headless` runs the engine alone. Both start
-//! local-only without credentials. `hearth login` and `hearth logout` select the
-//! profile used by the next engine start without mutating a live runtime.
+//! hearth — headed by default; `hearth headless` runs the engine alone. Both
+//! start with the device's own identity: sync is opt-in via
+//! `HEARTH_TAILNET_HOST`, and `hearth status` reports the resolved runtime.
 
 mod auth_cli;
 mod daemon;
@@ -18,13 +18,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the engine without a UI (local-only unless a saved session enables sync).
+    /// Run the engine without a UI (local-only unless a tailnet host is set).
     Headless,
-    /// Sign in and enable sync on the next engine start.
-    Login,
-    /// Remove the saved session and return to local-only on the next start.
-    Logout,
-    /// Show workspace mode, optional auth, and engine status.
+    /// Show workspace mode, device identity, and engine status.
     Status,
     /// Live sync introspection from the running engine: per-room connection
     /// state, last pushed-frame/ack ages, rejoin/probe/resync counters.
@@ -151,14 +147,6 @@ fn main() -> anyhow::Result<()> {
                 engine.run().await
             })
         }
-        Some(Command::Login) => {
-            let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(auth_cli::login(engine_config_from_env()))
-        }
-        Some(Command::Logout) => {
-            let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(auth_cli::logout(engine_config_from_env()))
-        }
         Some(Command::Status) => {
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(auth_cli::status(engine_config_from_env()))
@@ -208,7 +196,6 @@ fn main() -> anyhow::Result<()> {
                 data_dir: cfg.data_dir,
                 ipc_port: cfg.ipc_port,
                 edge_url: cfg.edge_url,
-                workos_client_id: None,
                 edge_token: cfg.edge_token,
                 org_id: cfg.org_id,
                 default_harness: cfg.default_harness,
@@ -218,13 +205,13 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-/// The env-resolved engine configuration shared by `headless`, `login`,
-/// `logout`, and `status` — one resolution so the CLI auth commands always
-/// operate on the exact session the daemon will load.
+/// The env-resolved engine configuration shared by `headless` and `status` —
+/// one resolution so the CLI always describes the exact runtime the daemon
+/// will open.
 fn engine_config_from_env() -> hearth_engine::EngineConfig {
     // Tailnet opt-in: HEARTH_TAILNET_HOST points at the always-on hub.
-    // When set, WorkOS/edge-token are unused; the dummy bearer just enables
-    // the existing room-client seam against the hub's HTTP+WS mux.
+    // When set, the dummy bearer enables the existing room-client seam against
+    // the hub's HTTP+WS mux.
     let tailnet_host = std::env::var("HEARTH_TAILNET_HOST")
         .ok()
         .map(|s| s.trim().to_string())
@@ -257,7 +244,6 @@ fn engine_config_from_env() -> hearth_engine::EngineConfig {
             .unwrap_or(27654),
         default_harness: harness_from_env(),
         org_id: std::env::var("HEARTH_ORG_ID").ok(),
-        workos_client_id: None,
         edge_token,
         tailnet_host,
         tailnet_port,
