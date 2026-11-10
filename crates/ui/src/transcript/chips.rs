@@ -103,6 +103,10 @@ pub(super) struct FoldState {
     /// tween made every once-collapsed group flash open→closed on each
     /// reappearance (user report).
     pub(super) toggled_at: Option<Instant>,
+    /// Monotonic recency stamp for the tool-detail card cache
+    /// ([`super::MAX_TOOL_DETAILS`]); group folds (`Transcript::folds`) never
+    /// read it.
+    pub(super) touched: u64,
 }
 impl Transcript {
     pub(super) fn toggle_fold(&mut self, row_id: SharedString, open_height: f32, auto_open: bool) {

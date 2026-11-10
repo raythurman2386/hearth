@@ -1,5 +1,7 @@
-use super::Transcript;
-use super::chips::{CHIP_GAP, CHIP_HEIGHT, CHIPS_TOP_PAD, SUBAGENT_TITLE_MAX, subagent_tab_title};
+use super::chips::{
+    CHIP_GAP, CHIP_HEIGHT, CHIPS_TOP_PAD, FoldState, SUBAGENT_TITLE_MAX, subagent_tab_title,
+};
+use super::highlights::{HighlightStore, MAX_HIGHLIGHT_ENTRIES};
 use super::model::{
     CALL_WRAP_COLS, OUTPUT_DETAIL_MAX_LINES, Row, RowKind, THOUGHT_WRAP_COLS, ToolDetail, ToolItem,
     assistant_copy_text, call_block, chips_height, flavour_seed, flavour_word, format_elapsed,
@@ -12,15 +14,20 @@ use super::viewport::{
     MAX_SAVED_VIEWPORTS, OwnTurnAnchor, SavedViewport, SavedViewportCache, TranscriptReplayState,
     ViewportAnchor, ViewportFinalizeToken, own_turn_reservation, selection_scroll_step,
 };
+use super::{
+    BlobFetch, MAX_BLOB_DETAILS, MAX_TOOL_DETAILS, Transcript, prune_blob_cache, prune_tool_details,
+};
 use crate::changes::LineKind;
 use crate::markdown::parser::{BlockTree, parse_full};
 use crate::markdown::render;
+use crate::syntax_cache::DocumentHighlightKey;
 use crate::theme::Theme;
 use chrono::FixedOffset;
-use gpui::{Bounds, ListAlignment, ListOffset, ListState, SharedString, px};
+use gpui::{Bounds, ListAlignment, ListOffset, ListState, SharedString, Task, px};
 use hearth_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry, SubagentStatus};
 use hearth_proto::ToolCall;
 use hearth_proto::view::{single_line, tool_chip_content};
+use hearth_syntax::LanguageId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -1583,4 +1590,188 @@ fn empty_text_parts_produce_no_rows() {
         vec![text_part("t0", ""), text_part("t1", "   ")],
     );
     assert!(rows_for_entry(&entry, false, &mut parse).is_empty());
+}
+
+// ---- bounded long-chat caches ----
+
+fn blob_ref(ix: usize) -> SharedString {
+    SharedString::from(format!("chat-1/part{ix}.output"))
+}
+
+fn highlight_slot(ix: usize) -> (SharedString, usize) {
+    (SharedString::from(format!("m{ix}#p1")), 0)
+}
+
+fn highlight_key(ix: usize) -> DocumentHighlightKey {
+    DocumentHighlightKey::new(LanguageId::Rust, &format!("fn block_{ix}() {{}}"))
+}
+
+/// A blob cache filled to the cap, ordered oldest first (`blob_ref(0)` is the
+/// least recently fetched).
+fn filled_blob_cache(
+    fetch: impl Fn(usize) -> BlobFetch,
+) -> (HashMap<SharedString, BlobFetch>, HashMap<SharedString, u64>) {
+    let mut details = HashMap::new();
+    let mut order = HashMap::new();
+    for ix in 0..MAX_BLOB_DETAILS {
+        let blob_ref = blob_ref(ix);
+        order.insert(blob_ref.clone(), ix as u64 + 1);
+        details.insert(blob_ref, fetch(ix));
+    }
+    (details, order)
+}
+
+#[test]
+fn blob_cache_is_bounded_and_keeps_the_most_recent_refs() {
+    let mut details = HashMap::new();
+    let mut order = HashMap::new();
+    for ix in 0..MAX_BLOB_DETAILS + 32 {
+        let blob_ref = blob_ref(ix);
+        order.insert(blob_ref.clone(), ix as u64 + 1);
+        details.insert(blob_ref.clone(), BlobFetch::Failed);
+        prune_blob_cache(&mut details, &mut order, &blob_ref);
+    }
+    assert_eq!(details.len(), MAX_BLOB_DETAILS);
+    assert_eq!(order.len(), details.len());
+    // The first insertions drained out; the most recently fetched survive.
+    for ix in 0..32 {
+        assert!(!details.contains_key(&blob_ref(ix)), "ref {ix} not evicted");
+        assert!(!order.contains_key(&blob_ref(ix)), "order {ix} drifted");
+    }
+    for ix in 32..MAX_BLOB_DETAILS + 32 {
+        assert!(
+            details.contains_key(&blob_ref(ix)),
+            "recent ref {ix} evicted"
+        );
+    }
+}
+
+#[test]
+fn blob_cache_never_evicts_the_ref_being_fetched() {
+    let (mut details, mut order) = filled_blob_cache(|_| BlobFetch::Failed);
+    // A completion insert can carry an older order stamp than everything
+    // cached (the click that ranked it happened long ago) — its own slot
+    // must still survive the prune it triggers.
+    let keep = blob_ref(MAX_BLOB_DETAILS);
+    order.insert(keep.clone(), 0);
+    details.insert(keep.clone(), BlobFetch::Failed);
+    prune_blob_cache(&mut details, &mut order, &keep);
+    assert_eq!(details.len(), MAX_BLOB_DETAILS);
+    assert!(details.contains_key(&keep));
+    assert!(order.contains_key(&keep));
+    assert_eq!(order.len(), details.len());
+    assert!(
+        !details.contains_key(&blob_ref(0)),
+        "oldest other ref stayed"
+    );
+}
+
+#[test]
+fn blob_cache_prefers_settled_entries_over_in_flight_fetches() {
+    // The OLDEST slot is still loading; a settled slot sits right behind it.
+    // Dropping the loading slot would cancel a live fetch, so the settled
+    // entry must go even though it is newer.
+    let (mut details, mut order) = filled_blob_cache(|ix| {
+        if ix == 0 {
+            BlobFetch::Loading(Task::ready(()))
+        } else {
+            BlobFetch::Failed
+        }
+    });
+    let keep = blob_ref(MAX_BLOB_DETAILS);
+    order.insert(keep.clone(), MAX_BLOB_DETAILS as u64 + 1);
+    details.insert(keep.clone(), BlobFetch::Failed);
+    prune_blob_cache(&mut details, &mut order, &keep);
+    assert!(matches!(
+        details.get(&blob_ref(0)),
+        Some(BlobFetch::Loading(_))
+    ));
+    assert!(!details.contains_key(&blob_ref(1)));
+    assert_eq!(order.len(), details.len());
+}
+
+#[test]
+fn blob_cache_evicts_a_loading_slot_only_as_a_last_resort() {
+    let (mut details, mut order) = filled_blob_cache(|_| BlobFetch::Loading(Task::ready(())));
+    let keep = blob_ref(MAX_BLOB_DETAILS);
+    order.insert(keep.clone(), MAX_BLOB_DETAILS as u64 + 1);
+    details.insert(keep.clone(), BlobFetch::Loading(Task::ready(())));
+    prune_blob_cache(&mut details, &mut order, &keep);
+    // Every slot is in flight: the oldest loses (its task is cancelled and
+    // the chip re-arms as a retry), and the new slot is kept.
+    assert!(!details.contains_key(&blob_ref(0)));
+    assert!(details.contains_key(&keep));
+    assert_eq!(details.len(), MAX_BLOB_DETAILS);
+    assert_eq!(order.len(), details.len());
+}
+
+#[test]
+fn highlight_store_is_bounded_and_keeps_the_newest_slots() {
+    let mut store = HighlightStore::default();
+    for ix in 0..MAX_HIGHLIGHT_ENTRIES + 32 {
+        store.insert_for_test(highlight_slot(ix), highlight_key(ix));
+    }
+    assert_eq!(store.len(), MAX_HIGHLIGHT_ENTRIES);
+    for ix in 0..32 {
+        assert!(
+            !store.entries.contains_key(&highlight_slot(ix)),
+            "slot {ix} not evicted"
+        );
+    }
+    for ix in 32..MAX_HIGHLIGHT_ENTRIES + 32 {
+        assert!(
+            store.entries.contains_key(&highlight_slot(ix)),
+            "newest slot {ix} evicted"
+        );
+    }
+}
+
+#[test]
+fn highlight_store_touch_keeps_a_revisited_block_alive() {
+    let mut store = HighlightStore::default();
+    for ix in 0..MAX_HIGHLIGHT_ENTRIES {
+        store.insert_for_test(highlight_slot(ix), highlight_key(ix));
+    }
+    // Re-requesting the oldest slot (a paint hit, as `request` does) makes it
+    // the most recent — the next insertion evicts its neighbour instead.
+    store.touch_for_test(&highlight_slot(0));
+    store.insert_for_test(
+        highlight_slot(MAX_HIGHLIGHT_ENTRIES),
+        highlight_key(MAX_HIGHLIGHT_ENTRIES),
+    );
+    assert!(store.entries.contains_key(&highlight_slot(0)));
+    assert!(!store.entries.contains_key(&highlight_slot(1)));
+    assert!(
+        store
+            .entries
+            .contains_key(&highlight_slot(MAX_HIGHLIGHT_ENTRIES))
+    );
+    assert_eq!(store.len(), MAX_HIGHLIGHT_ENTRIES);
+}
+
+#[test]
+fn tool_detail_folds_are_bounded_and_keep_the_newest() {
+    let mut folds: HashMap<SharedString, FoldState> = HashMap::new();
+    for ix in 0..MAX_TOOL_DETAILS + 32 {
+        let key = SharedString::from(format!("m{ix}#p1#d0"));
+        // Same insertion shape as `Transcript::tool_detail_fold_mut`: stamp
+        // newest, insert, then prune protecting the new key.
+        folds.insert(
+            key.clone(),
+            FoldState {
+                touched: ix as u64 + 1,
+                ..FoldState::default()
+            },
+        );
+        prune_tool_details(&mut folds, &key);
+    }
+    assert_eq!(folds.len(), MAX_TOOL_DETAILS);
+    for ix in 0..32 {
+        let key = SharedString::from(format!("m{ix}#p1#d0"));
+        assert!(!folds.contains_key(&key), "fold {ix} not evicted");
+    }
+    for ix in 32..MAX_TOOL_DETAILS + 32 {
+        let key = SharedString::from(format!("m{ix}#p1#d0"));
+        assert!(folds.contains_key(&key), "newest fold {ix} evicted");
+    }
 }

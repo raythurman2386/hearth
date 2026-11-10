@@ -908,8 +908,7 @@ impl Transcript {
                             .items_center()
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                let entry =
-                                    this.tool_details.entry(toggle_key.clone()).or_default();
+                                let entry = this.tool_detail_fold_mut(toggle_key.clone());
                                 let currently_open = entry.open.unwrap_or(false);
                                 entry.from = if currently_open { open_h } else { closed_h };
                                 entry.open = Some(!currently_open);
