@@ -22,6 +22,7 @@ mod device_identity;
 mod device_name;
 pub mod diff_sync;
 pub mod doc_host;
+mod fsx;
 pub mod instance_lock;
 pub mod profile;
 pub mod registry;
@@ -35,6 +36,7 @@ mod tailnet;
 pub mod terminals;
 pub mod titles;
 pub mod uploads;
+mod util;
 pub mod workspace_host;
 
 pub use agent_accounts::{AgentAccounts, AgentAccountsConfig};

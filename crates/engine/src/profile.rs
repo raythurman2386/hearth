@@ -4,7 +4,6 @@
 //! agent credentials, UI settings, and the device id remain device-scoped under
 //! the engine data directory.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use hearth_proto::WorkspaceScope;
@@ -156,33 +155,11 @@ fn load_or_create_local_profile_id(data_dir: &Path) -> Result<String, EngineErro
 
     // Publish a fully-written same-directory file without replacing a profile
     // another process may have created concurrently.
-    let temp_path = data_dir.join(format!(
-        ".{LOCAL_PROFILE_FILE}.tmp-{}-{}",
-        std::process::id(),
-        Uuid::new_v4()
-    ));
-    let write_result = (|| -> Result<(), EngineError> {
-        let mut temp = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)?;
-        temp.write_all(&bytes)?;
-        temp.sync_all()?;
-        Ok(())
-    })();
-    if let Err(err) = write_result {
-        let _ = std::fs::remove_file(&temp_path);
-        return Err(err);
-    }
-
-    let publish_result = std::fs::hard_link(&temp_path, &path);
-    let _ = std::fs::remove_file(&temp_path);
-    match publish_result {
-        Ok(()) => Ok(id.to_string()),
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+    match crate::fsx::publish_new(&path, &bytes)? {
+        crate::fsx::PublishOutcome::Created => Ok(id.to_string()),
+        crate::fsx::PublishOutcome::Exists => {
             read_local_profile_id(&path).map_err(ProfileReadError::into_engine)
         }
-        Err(err) => Err(err.into()),
     }
 }
 
@@ -246,35 +223,9 @@ fn publish_legacy_uploads_owner(
     let mut bytes = serde_json::to_vec_pretty(owner)
         .map_err(|err| EngineError::Other(format!("serialize legacy uploads owner: {err}")))?;
     bytes.push(b'\n');
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(LEGACY_UPLOADS_OWNER_FILE);
-    let temp_path = path.with_file_name(format!(
-        ".{file_name}.tmp-{}-{}",
-        std::process::id(),
-        Uuid::new_v4()
-    ));
-    let write_result = (|| -> Result<(), EngineError> {
-        let mut temp = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)?;
-        temp.write_all(&bytes)?;
-        temp.sync_all()?;
-        Ok(())
-    })();
-    if let Err(err) = write_result {
-        let _ = std::fs::remove_file(&temp_path);
-        return Err(err);
-    }
-
-    let publish_result = std::fs::hard_link(&temp_path, path);
-    let _ = std::fs::remove_file(&temp_path);
-    match publish_result {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-        Err(err) => Err(err.into()),
+    match crate::fsx::publish_new(path, &bytes)? {
+        // Someone else claimed the legacy cache first; their file stands.
+        crate::fsx::PublishOutcome::Created | crate::fsx::PublishOutcome::Exists => Ok(()),
     }
 }
 

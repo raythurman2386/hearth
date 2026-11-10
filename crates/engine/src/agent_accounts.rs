@@ -25,7 +25,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -41,6 +41,7 @@ use hearth_proto::{
 };
 
 use crate::repos::home_dir;
+use crate::util::lock;
 use crate::{EngineError, new_id, now_ms};
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
@@ -291,7 +292,8 @@ impl AgentAccounts {
         std::fs::create_dir_all(&self.inner.config.codex_home)?;
         let json = serde_json::to_string_pretty(&slot.credentials)
             .map_err(|e| EngineError::Other(format!("serialize codex auth: {e}")))?;
-        write_file_atomic(&self.inner.config.codex_auth_file(), json.as_bytes(), true)
+        crate::fsx::replace_atomic(&self.inner.config.codex_auth_file(), json.as_bytes(), true)
+            .map_err(EngineError::from)
     }
 
     // ── forget ──────────────────────────────────────────────────────────────
@@ -612,7 +614,7 @@ impl AgentAccounts {
             .map_err(|e| EngineError::Other(format!("serialize slot: {e}")))?;
         // Atomic + 0600 from birth: tokens must never be world-readable, and a
         // crash mid-write must never leave torn JSON.
-        write_file_atomic(&file, json.as_bytes(), true)
+        crate::fsx::replace_atomic(&file, json.as_bytes(), true).map_err(EngineError::from)
     }
 
     // ── remaining usage ─────────────────────────────────────────────────────
@@ -691,10 +693,6 @@ impl AgentAccounts {
             plan_label,
         })
     }
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -935,27 +933,6 @@ async fn await_login_url(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-}
-
-/// Atomic write via a same-dir temp file + rename; `secret` = 0600 from birth.
-fn write_file_atomic(file: &Path, bytes: &[u8], secret: bool) -> Result<(), EngineError> {
-    let tmp = file.with_extension(format!("tmp-{}", std::process::id()));
-    {
-        use std::io::Write;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        if secret {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        #[cfg(not(unix))]
-        let _ = secret;
-        let mut handle = options.open(&tmp)?;
-        handle.write_all(bytes)?;
-    }
-    std::fs::rename(&tmp, file)?;
-    Ok(())
 }
 
 #[cfg(test)]

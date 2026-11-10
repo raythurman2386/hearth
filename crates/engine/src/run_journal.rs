@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -115,9 +115,7 @@ impl RunJournal {
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<String, ChatJournal>> {
-        self.open_files
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        crate::util::lock(&self.open_files)
     }
 
     fn path_for(&self, chat_id: &str) -> PathBuf {

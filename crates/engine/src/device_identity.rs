@@ -1,8 +1,9 @@
 //! Stable per-installation device identity: load, flock-guarded create, atomic
 //! publish (with legacy empty-file repair).
 
-use std::io::Write;
 use std::path::Path;
+
+use crate::fsx::{self, PublishOutcome};
 
 use super::*;
 
@@ -25,58 +26,38 @@ pub(crate) fn load_or_create_device_id(data_dir: &Path) -> Result<String, Engine
     };
 
     let id = new_id();
-    let temp_path = data_dir.join(format!(
-        ".device-id.tmp-{}-{}",
-        std::process::id(),
-        new_id()
-    ));
-    let write_result = (|| -> Result<(), EngineError> {
-        let mut temp = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)?;
-        temp.write_all(id.as_bytes())?;
-        temp.sync_all()?;
-        Ok(())
-    })();
-    if let Err(err) = write_result {
-        let _ = std::fs::remove_file(&temp_path);
-        return Err(err);
-    }
-
     // Fresh installs use create-if-absent. Legacy empty files need an atomic
     // same-directory replacement on Unix; the Windows fallback runs under the
     // identity lock and remains recoverable if interrupted.
     let publish_result = if recovering_empty {
         match std::fs::read_to_string(&path) {
-            Ok(id) if !id.trim().is_empty() => {
-                let _ = std::fs::remove_file(&temp_path);
-                return Ok(id.trim().to_string());
-            }
-            Ok(_) => replace_empty_device_id(&temp_path, &path),
+            Ok(winner) if !winner.trim().is_empty() => return Ok(winner.trim().to_string()),
+            Ok(_) => replace_empty_device_id(&path, id.as_bytes()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::hard_link(&temp_path, &path)
+                fsx::publish_new(&path, id.as_bytes())
             }
-            Err(err) => Err(err),
+            Err(err) => return Err(err.into()),
         }
     } else {
-        std::fs::hard_link(&temp_path, &path)
+        fsx::publish_new(&path, id.as_bytes())
     };
-    let _ = std::fs::remove_file(&temp_path);
     match publish_result {
-        Ok(()) => Ok(id),
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-            let winner = std::fs::read_to_string(&path)?;
-            if winner.trim().is_empty() {
-                Err(EngineError::Other(format!(
-                    "invalid device identity {}: file is empty",
-                    path.display()
-                )))
-            } else {
-                Ok(winner.trim().to_string())
-            }
-        }
+        Ok(PublishOutcome::Created) => Ok(id),
+        Ok(PublishOutcome::Exists) => read_winner(&path),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => read_winner(&path),
         Err(err) => Err(err.into()),
+    }
+}
+
+fn read_winner(path: &Path) -> Result<String, EngineError> {
+    let winner = std::fs::read_to_string(path)?;
+    if winner.trim().is_empty() {
+        Err(EngineError::Other(format!(
+            "invalid device identity {}: file is empty",
+            path.display()
+        )))
+    } else {
+        Ok(winner.trim().to_string())
     }
 }
 
@@ -132,10 +113,11 @@ impl DeviceIdentityLock {
     }
 }
 
-fn replace_empty_device_id(temp_path: &Path, path: &Path) -> std::io::Result<()> {
+fn replace_empty_device_id(path: &Path, bytes: &[u8]) -> std::io::Result<PublishOutcome> {
     #[cfg(unix)]
     {
-        std::fs::rename(temp_path, path)
+        fsx::replace_atomic(path, bytes, false)?;
+        Ok(PublishOutcome::Created)
     }
     #[cfg(not(unix))]
     {
@@ -144,6 +126,6 @@ fn replace_empty_device_id(temp_path: &Path, path: &Path) -> std::io::Result<()>
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(err),
         }
-        std::fs::hard_link(temp_path, path)
+        fsx::publish_new(path, bytes)
     }
 }
