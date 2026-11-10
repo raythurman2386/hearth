@@ -10,7 +10,6 @@ hearth-proto.workspace = true
 similar.workspace = true
 hearth-doc.workspace = true
 hearth-engine.workspace = true
-hearth-harness.workspace = true
 hearth-rpc.workspace = true
 hearth-update.workspace = true
 hearth-syntax.workspace = true
