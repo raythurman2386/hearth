@@ -53,7 +53,7 @@ use crate::workspace_host::WorkspaceHost;
 
 /// Hard cap on the unified patch (plus untracked hunks) — "Partial snapshot".
 pub const MAX_PATCH_BYTES: usize = 3 * 1024 * 1024;
-pub const MAX_DIFF_SOURCE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_DIFF_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 /// Trailing debounce after a filesystem event burst.
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(500);
 /// Slow repair pass: re-reconcile + re-sync every checkout.

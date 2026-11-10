@@ -192,16 +192,6 @@ impl RunJournal {
         stale.sort();
         Ok(stale)
     }
-
-    /// Remove a chat's journal file entirely (tests / future compaction).
-    pub fn discard(&self, chat_id: &str) -> Result<(), JournalError> {
-        self.lock().remove(chat_id);
-        let path = self.path_for(chat_id);
-        if path.exists() {
-            std::fs::remove_file(path)?;
-        }
-        Ok(())
-    }
 }
 
 /// Parse every valid line; malformed lines (torn tail writes) are skipped.

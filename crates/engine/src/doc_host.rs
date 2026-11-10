@@ -2945,7 +2945,7 @@ impl DocHost {
     }
 
     /// Chat-config harness when the workspace row carries one, else the default.
-    pub(crate) fn harness_for(&self, chat_id: &str) -> HarnessId {
+    fn harness_for(&self, chat_id: &str) -> HarnessId {
         self.workspace()
             .and_then(|ws| ws.chat_config(chat_id))
             .map(|config| config.harness)
@@ -3571,10 +3571,7 @@ impl DocHost {
 /// The resumed-turn prompt for answers to a question whose run died: each
 /// answer paired with its question text so the reattached conversation reads
 /// naturally. Pure.
-pub fn respond_input_prompt(
-    questions: &[UserInputQuestion],
-    answers: &[UserInputAnswer],
-) -> String {
+fn respond_input_prompt(questions: &[UserInputQuestion], answers: &[UserInputAnswer]) -> String {
     let mut lines = vec!["Answering your earlier question:".to_string()];
     for answer in answers {
         let picked = answer.labels.join(", ");

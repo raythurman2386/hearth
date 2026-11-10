@@ -18,7 +18,7 @@ use gpui::{
     SharedString, Style, TextRun, Window, fill, font, outline, point, px, relative, size,
 };
 
-use crate::theme::{Appearance, Theme, current_appearance, rgb_to_hsl};
+use crate::theme::{Appearance, Theme, rgb_to_hsl};
 
 use super::emulator::{CellColor, CellSnapshot, Side};
 use super::panel::TerminalPanel;
@@ -52,12 +52,6 @@ pub fn terminal_bg_for(appearance: Appearance) -> Hsla {
         Appearance::Dark => rgb8(0x14, 0x18, 0x14), // Ravenwood bg0
         Appearance::Light => rgb8(0xfd, 0xf6, 0xe3), // Ravenwood cream bg
     }
-}
-
-/// Terminal background in the appearance currently installed — the
-/// context-free form, same shape as [`crate::theme::ink`].
-pub fn terminal_bg() -> Hsla {
-    terminal_bg_for(current_appearance())
 }
 
 /// The panel fill behind the grid. On glass the opaque tone thins to a

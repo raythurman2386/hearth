@@ -19,7 +19,7 @@ impl HarnessId {
     /// `opencode`) map to [`Self::Raven`] so old chat rows stay readable.
     /// Truly unknown ids return `None` so a future peer's config can degrade
     /// without dropping the chat row.
-    pub fn from_wire(raw: &str) -> Option<Self> {
+    pub(crate) fn from_wire(raw: &str) -> Option<Self> {
         match raw {
             "codex" => Some(Self::Codex),
             "grok" => Some(Self::Grok),
@@ -297,7 +297,8 @@ impl ToolCall {
 /// Spawn-input keys that carry a child model, in precedence order. Drivers
 /// disagree on the spelling, so the lookup is by key set, not by harness —
 /// a new adapter naming it any of these needs no code change here.
-pub const SUBAGENT_MODEL_KEYS: [&str; 4] = ["model", "modelId", "model_id", "subagent_model"];
+pub(crate) const SUBAGENT_MODEL_KEYS: [&str; 4] =
+    ["model", "modelId", "model_id", "subagent_model"];
 
 /// The spawn-input keys [`sanitize_tool_call`](crate::) must preserve so the
 /// chip can name the child's model. Deliberately tiny: everything else on a
