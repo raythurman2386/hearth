@@ -221,6 +221,12 @@ case "$turnline" in
   exec sleep 30
   ;;
 
+*scenario:hang-start*)
+  # Never answer turn/start: the client's per-request timeout must fail the
+  # request (and the run) instead of leaving it Working forever.
+  exec sleep 30
+  ;;
+
 *scenario:fail*)
   emit "{\"id\":$tid,\"result\":{\"turn\":{\"id\":\"t-1\"}}}"
   emit '{"method":"turn/started","params":{"turn":{"id":"t-1"}}}'

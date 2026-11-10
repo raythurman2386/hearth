@@ -66,6 +66,9 @@ pub trait Harness: Send + Sync {
     /// the agent's own wire. Native drivers reading the CLI's terminal frame
     /// directly return true, and the engine retires its quiesce watchdogs
     /// for them; adapter-mediated ACP agents keep the watchdog backstop.
+    /// Consulted once per run-loop turn, so an implementation may return
+    /// false TRANSIENTLY (e.g. while a JSON-RPC request is outstanding) to
+    /// keep the watchdog armed through a possible wire hang.
     fn deterministic_turn_end(&self) -> bool {
         false
     }
@@ -262,6 +265,10 @@ pub(crate) async fn shutdown_child(
         if tokio::time::timeout(kill_grace, child.wait()).await.is_ok() {
             return;
         }
+        // TERM was ignored: KILL the whole group too, or a descendant that
+        // ignored TERM (node/MCP/subagent) outlives the reaped direct child.
+        // The pid is still unreaped here, so the group id cannot be recycled.
+        send_signal(pid, Signal::Kill);
     }
     let _ = child.start_kill();
     let _ = child.wait().await;
@@ -273,6 +280,28 @@ pub(crate) enum Signal {
     Kill,
 }
 
+/// Make the child lead its own session/process group on Unix (`setsid`), so a
+/// TERM/KILL sent to the negative pid reaches every process the agent forks:
+/// npm/node MCP servers, subagent processes, and the harness wrapper's own
+/// grandchildren. Signalling only the direct pid leaves those orphaned.
+/// No-op off Unix (Windows has no process-group signal with this shape).
+#[cfg(unix)]
+pub(crate) fn isolate_process_group(cmd: &mut tokio::process::Command) {
+    // SAFETY: `setsid` is async-signal-safe and touches no Rust memory; the
+    // closure runs in the forked child between fork and exec.
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn isolate_process_group(_cmd: &mut tokio::process::Command) {}
+
 #[cfg(unix)]
 pub(crate) fn send_signal(pid: u32, signal: Signal) {
     let sig = match signal {
@@ -281,11 +310,56 @@ pub(crate) fn send_signal(pid: u32, signal: Signal) {
     };
     // SAFETY: plain kill(2) on a pid we spawned and have not yet reaped.
     unsafe {
-        libc::kill(pid as libc::pid_t, sig);
+        // The child leads its own group (`isolate_process_group`), so the
+        // negative pid is the whole agent tree. Fall back to the direct pid
+        // when the group is already gone (or setsid was unavailable).
+        if libc::kill(-(pid as libc::pid_t), sig) != 0 {
+            libc::kill(pid as libc::pid_t, sig);
+        }
     }
 }
 
 #[cfg(not(unix))]
 pub(crate) fn send_signal(_pid: u32, _signal: Signal) {
     // No SIGTERM off unix; `start_kill`/`kill_on_drop` handle termination.
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncBufReadExt;
+
+    /// The shape of every agent CLI: the direct child forks grandchildren
+    /// (node/MCP servers/subagents). A group signal must reach them; without
+    /// the session isolation only the direct pid would die and the test's
+    /// `sleep` would survive.
+    #[tokio::test]
+    async fn group_signal_reaches_grandchildren() {
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.arg("-c")
+            .arg("sleep 60 & echo $!; wait")
+            .stdout(std::process::Stdio::piped());
+        isolate_process_group(&mut cmd);
+        let mut child = cmd.spawn().expect("spawn sh");
+        let stdout = child.stdout.take().expect("stdout");
+        let mut line = String::new();
+        tokio::io::BufReader::new(stdout)
+            .read_line(&mut line)
+            .await
+            .expect("read grandchild pid");
+        let grandchild: libc::pid_t = line.trim().parse().expect("pid");
+        let pid = child.id().expect("child id");
+        send_signal(pid, Signal::Term);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await;
+        let mut gone = false;
+        for _ in 0..500 {
+            // SAFETY: signal 0 only probes liveness of a pid we spawned.
+            if unsafe { libc::kill(grandchild, 0) } != 0 {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(gone, "grandchild {grandchild} survived the group signal");
+    }
 }

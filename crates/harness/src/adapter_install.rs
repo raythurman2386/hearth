@@ -304,12 +304,8 @@ async fn install_into(
     if output.is_empty() {
         output = out.trim().to_owned();
     }
-    let tail: String = if output.len() > 1200 {
-        // npm front-loads "npm ERR!" lines; keep the tail where the cause lands.
-        format!("…{}", &output[output.len() - 1200..])
-    } else {
-        output
-    };
+    // npm front-loads "npm ERR!" lines; keep the tail where the cause lands.
+    let tail = tail_snippet(&output, 1200);
     let exit = describe_npm_exit(Some(status));
     Err(HarnessError::Install(if tail.is_empty() {
         format!(
@@ -326,9 +322,48 @@ async fn install_into(
     }))
 }
 
+/// The last `max_bytes` bytes of `output` prefixed with an ellipsis, or the
+/// whole string when it is shorter. npm output is arbitrary UTF-8, so a fixed
+/// byte cut can land inside a multi-byte character: the start is walked back to
+/// the nearest char boundary (at most three bytes) instead of panicking.
+fn tail_snippet(output: &str, max_bytes: usize) -> String {
+    if output.len() <= max_bytes {
+        return output.to_owned();
+    }
+    let mut start = output.len() - max_bytes;
+    while start > 0 && !output.is_char_boundary(start) {
+        start -= 1;
+    }
+    format!("…{}", &output[start..])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 1200-byte tail cut that lands inside a two-byte character must step
+    /// back to that character's start rather than panic on a non-boundary
+    /// slice index (npm prints arbitrary UTF-8, including non-ASCII error
+    /// text and paths).
+    #[test]
+    fn tail_snippet_steps_back_to_a_char_boundary() {
+        let output = format!("aé{}", "b".repeat(1199));
+        assert_eq!(output.len(), 1202);
+        // The naive cut (`len - 1200`) is the second byte of `é`.
+        assert!(!output.is_char_boundary(output.len() - 1200));
+
+        let tail = tail_snippet(&output, 1200);
+        assert!(tail.starts_with('…'));
+        assert_eq!(tail, format!("…é{}", "b".repeat(1199)));
+        assert_eq!(tail.len(), 3 + 2 + 1199); // "…" + whole char + tail
+    }
+
+    #[test]
+    fn tail_snippet_keeps_short_and_ascii_tails() {
+        assert_eq!(tail_snippet("short", 1200), "short");
+        let long = "x".repeat(1300);
+        assert_eq!(tail_snippet(&long, 1200), format!("…{}", "x".repeat(1200)));
+    }
 
     #[test]
     fn pin_parses_scoped_and_bare_names() {

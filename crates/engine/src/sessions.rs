@@ -57,6 +57,39 @@ pub enum SteerOutcome {
 
 type PendingInputs = Arc<Mutex<HashMap<String, oneshot::Sender<Vec<UserInputAnswer>>>>>;
 
+/// Depth of the run's harness-bridge event channel. It carries ONLY input
+/// questions/resolutions — the agent's stream has its own bounded channel — and
+/// a harness has at most one question set outstanding (it awaits the resolver
+/// before asking again), so this is orders of magnitude above the attainable
+/// depth. Bounded so a stalled fold can never accumulate them without limit.
+const INPUT_EVENT_QUEUE: usize = 64;
+
+/// Deliver a harness-bridge event into the run fold. Both senders are SYNC
+/// callbacks invoked from harness/RPC tasks, so `blocking_send` is unavailable
+/// (it panics inside an async context). `try_send` is the normal path; if the
+/// queue is ever FULL the event is preserved by a relay task that awaits
+/// capacity rather than dropped. Ordering could only invert in that branch,
+/// which needs 64 queued input events — unreachable with at most one question
+/// set outstanding per run; a `Closed` queue means the run is over.
+fn send_input_event(tx: &mpsc::Sender<AgentEvent>, event: AgentEvent) {
+    match tx.try_send(event) {
+        Ok(()) => {}
+        Err(mpsc::error::TrySendError::Full(event)) => {
+            tracing::warn!(
+                target: "hearth_engine::sessions",
+                "input-event queue full; relaying instead of dropping"
+            );
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let tx = tx.clone();
+                handle.spawn(async move {
+                    let _ = tx.send(event).await;
+                });
+            }
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {}
+    }
+}
+
 /// A harness-native session id plus the cwd it was created under. Harness
 /// session stores are cwd-scoped (claude keys conversations by project
 /// directory — hearth sessions.ts:563 "harness session stores are keyed by
@@ -114,7 +147,7 @@ struct RunHandle {
     /// Engine-level cancel: arms the run task's grace deadline so a harness that
     /// ignores its token can never strand the run.
     cancel: watch::Sender<bool>,
-    engine_tx: mpsc::UnboundedSender<AgentEvent>,
+    engine_tx: mpsc::Sender<AgentEvent>,
     pending_inputs: PendingInputs,
     /// Steers accepted into the mailbox but not yet confirmed by a `Steered`
     /// event — the at-least-once ledger. A run can die with accepted steers
@@ -423,7 +456,7 @@ impl SessionsEngine {
         let run_id = new_id();
         let (steer_tx, steer_rx) = mpsc::channel::<SteerMessage>(32);
         let (cancel_tx, cancel_rx) = watch::channel(false);
-        let (engine_tx, engine_rx) = mpsc::unbounded_channel::<AgentEvent>();
+        let (engine_tx, engine_rx) = mpsc::channel::<AgentEvent>(INPUT_EVENT_QUEUE);
         let pending_inputs: PendingInputs = Arc::new(Mutex::new(HashMap::new()));
 
         // Input bridge: the harness asks questions; we mint the request id, park the
@@ -435,10 +468,13 @@ impl SessionsEngine {
                 let (tx, rx) = oneshot::channel();
                 let request_id = new_id();
                 lock(&pending).insert(request_id.clone(), tx);
-                let _ = engine_tx.send(AgentEvent::InputRequested {
-                    request_id,
-                    questions,
-                });
+                send_input_event(
+                    &engine_tx,
+                    AgentEvent::InputRequested {
+                        request_id,
+                        questions,
+                    },
+                );
                 rx
             })
         };
@@ -617,9 +653,12 @@ impl SessionsEngine {
             return Ok(false);
         };
         let _ = resolver.send(answers);
-        let _ = engine_tx.send(AgentEvent::InputResolved {
-            request_id: request_id.to_string(),
-        });
+        send_input_event(
+            &engine_tx,
+            AgentEvent::InputResolved {
+                request_id: request_id.to_string(),
+            },
+        );
         Ok(true)
     }
 
@@ -1270,7 +1309,7 @@ async fn drive_run(
     request: RunRequest,
     doc: Arc<SessionDoc>,
     controls: RunControls,
-    mut engine_rx: mpsc::UnboundedReceiver<AgentEvent>,
+    mut engine_rx: mpsc::Receiver<AgentEvent>,
     mut cancel_rx: watch::Receiver<bool>,
     resume_state: RunResumeState,
 ) {
@@ -1368,16 +1407,21 @@ async fn drive_run(
     // a deterministic wire Done (claude/codex/cursor native) needs no
     // quiesce backstop — arming one only risks false parks on long silent
     // work. The env knob still forces a window on for diagnostics.
-    let deterministic_turn_end = harness.deterministic_turn_end();
-    let quiesce_after: Option<std::time::Duration> = match std::env::var("HEARTH_TURN_QUIESCE_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-    {
-        Some(0) => None,
-        Some(ms) => Some(std::time::Duration::from_millis(ms)),
-        None if deterministic_turn_end => None,
-        None => Some(std::time::Duration::from_secs(120)),
-    };
+    // The predicate is re-read every loop turn rather than cached: a harness
+    // can be deterministic in its steady state yet NOT while the app server
+    // owes it a JSON-RPC reply (Codex reports false then), and that is exactly
+    // the window where the watchdog must stay armed. The 15s live heartbeat
+    // above guarantees a re-read even when the stream produces nothing.
+    const DEFAULT_QUIESCE: std::time::Duration = std::time::Duration::from_secs(120);
+    let quiesce_override: Option<Option<std::time::Duration>> =
+        match std::env::var("HEARTH_TURN_QUIESCE_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            Some(0) => Some(None),
+            Some(ms) => Some(Some(std::time::Duration::from_millis(ms))),
+            None => None,
+        };
     let mut last_stream_activity = tokio::time::Instant::now();
     // SELF-CONTINUED turns get a much SHORTER quiesce window. A turn the
     // agent starts on its own (background-task wake) can never receive a
@@ -1428,6 +1472,8 @@ async fn drive_run(
         std::collections::HashMap::new();
 
     let final_status = loop {
+        let quiesce_after: Option<std::time::Duration> = quiesce_override
+            .unwrap_or_else(|| (!harness.deterministic_turn_end()).then_some(DEFAULT_QUIESCE));
         let event: AgentEvent = tokio::select! {
             biased;
             changed = cancel_rx.changed(), if !interrupted => {

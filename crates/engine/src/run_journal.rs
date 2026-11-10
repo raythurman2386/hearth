@@ -9,12 +9,29 @@
 //!
 //! Bounded-window compaction is deferred (whole file kept for now, per M2 scope); a torn
 //! trailing line from a crash mid-write is tolerated everywhere.
+//!
+//! DURABILITY POLICY: every event is serialized and appended, but the file is
+//! buffered, and only a non-streaming event (Done/Error/tool outcomes, session
+//! and input transitions, steer boundaries) forces a write+flush before
+//! `append` returns. High-frequency streaming deltas (`TextDelta`,
+//! `ReasoningDelta`, `Usage`, including `Subagent`-wrapped ones) ride the
+//! buffer and are flushed at most every [`STREAM_FLUSH_INTERVAL`], or earlier
+//! when the buffer fills. A later durable event flushes the deltas before it,
+//! so the on-disk file is always a complete LINE PREFIX and no durable event
+//! is ever behind an unflushed delta. Equivalence to the former
+//! write-every-event behavior: process-crash durability is unchanged for
+//! durable events (and still page-cache-only, never fsync'd); a crash may lose
+//! at most the last ~100ms of deltas, which are never the journal's
+//! crash-recovery gauge (that reads only the LAST complete event). Read paths
+//! (`replay`/`last_event`/`stale_sessions`) flush the buffer first, so a
+//! same-process reader never observes a stale prefix.
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -34,12 +51,51 @@ struct JournalLine {
     event: AgentEvent,
 }
 
+/// Deltas may sit in the buffer at most this long before a flush; durable
+/// events always flush immediately (see the module's durability policy).
+const STREAM_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
+/// Coalescing capacity for high-frequency deltas: one syscall per full buffer
+/// instead of one per event.
+const JOURNAL_BUF_BYTES: usize = 64 * 1024;
+
 struct ChatJournal {
-    file: File,
+    file: BufWriter<File>,
     next_seq: u64,
     /// True when the file ends without a newline (torn write) — the next append
     /// starts with one so the torn line stays isolated.
     needs_newline: bool,
+    last_flush: Instant,
+}
+
+impl ChatJournal {
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()?;
+        self.last_flush = Instant::now();
+        Ok(())
+    }
+}
+
+impl Drop for ChatJournal {
+    fn drop(&mut self) {
+        // Eviction (`OPEN_FILE_CAP`) and shutdown both drop entries: buffered
+        // deltas must reach the file, never die in a dropped BufWriter.
+        if let Err(err) = self.file.flush() {
+            tracing::warn!(error = %err, "journal: flush on drop failed");
+        }
+    }
+}
+
+/// Render-only high-frequency events that ride the buffer between flushes.
+/// Everything else is a durability point (turn end, error, tool/command
+/// outcome, session/input transition).
+fn is_streaming_delta(event: &AgentEvent) -> bool {
+    match event {
+        AgentEvent::TextDelta { .. }
+        | AgentEvent::ReasoningDelta { .. }
+        | AgentEvent::Usage { .. } => true,
+        AgentEvent::Subagent { event, .. } => is_streaming_delta(event),
+        _ => false,
+    }
 }
 
 /// Append-only JSONL journal store, one file per chat.
@@ -114,9 +170,10 @@ impl RunJournal {
             files.insert(
                 chat_id.to_string(),
                 ChatJournal {
-                    file,
+                    file: BufWriter::with_capacity(JOURNAL_BUF_BYTES, file),
                     next_seq,
                     needs_newline,
+                    last_flush: Instant::now(),
                 },
             );
         }
@@ -138,10 +195,35 @@ impl RunJournal {
         buf.extend_from_slice(line.as_bytes());
         buf.push(b'\n');
         journal.file.write_all(&buf)?;
-        journal.file.flush()?;
+        // Durable events flush before append returns; deltas at most every
+        // STREAM_FLUSH_INTERVAL (or when the BufWriter fills). See the
+        // module-level durability policy.
+        if !is_streaming_delta(event) || journal.last_flush.elapsed() >= STREAM_FLUSH_INTERVAL {
+            journal.flush()?;
+        }
         journal.needs_newline = false;
         journal.next_seq = seq + 1;
         Ok(seq)
+    }
+
+    /// Write out every buffered journal before a read path or shutdown looks
+    /// at the files, so a same-process reader never sees a stale prefix.
+    fn flush_all(&self) {
+        let mut files = self.lock();
+        for (chat_id, journal) in files.iter_mut() {
+            if let Err(err) = journal.flush() {
+                tracing::warn!(chat = %chat_id, error = %err, "journal: flush failed");
+            }
+        }
+    }
+
+    /// Test seam: bytes still buffered for `chat_id` (0 = fully flushed).
+    #[cfg(test)]
+    fn pending_bytes(&self, chat_id: &str) -> usize {
+        self.lock()
+            .get(chat_id)
+            .map(|journal| journal.file.buffer().len())
+            .unwrap_or(0)
     }
 
     /// Events with `seq > after_seq`, in order. A cursor ahead of the last issued seq is
@@ -151,6 +233,7 @@ impl RunJournal {
         chat_id: &str,
         after_seq: u64,
     ) -> Result<Vec<(u64, AgentEvent)>, JournalError> {
+        self.flush_all();
         let path = self.path_for(chat_id);
         if !path.exists() {
             return Ok(Vec::new());
@@ -163,6 +246,7 @@ impl RunJournal {
 
     /// The last event in a chat's journal, if any (ignores a torn tail line).
     pub fn last_event(&self, chat_id: &str) -> Result<Option<(u64, AgentEvent)>, JournalError> {
+        self.flush_all();
         let path = self.path_for(chat_id);
         if !path.exists() {
             return Ok(None);
@@ -173,6 +257,7 @@ impl RunJournal {
     /// Crash-recovery scan: chat ids whose journal's last event is NOT a `Done` — their
     /// runs died mid-stream and need recovery (stamp `aborted`, close the journal).
     pub fn stale_sessions(&self) -> Result<Vec<String>, JournalError> {
+        self.flush_all();
         let mut stale = Vec::new();
         for entry in std::fs::read_dir(&self.dir)? {
             let entry = entry?;
@@ -191,6 +276,12 @@ impl RunJournal {
         }
         stale.sort();
         Ok(stale)
+    }
+}
+
+impl Drop for RunJournal {
+    fn drop(&mut self) {
+        self.flush_all();
     }
 }
 
@@ -291,6 +382,67 @@ mod tests {
         assert!(matches!(after[0].1, AgentEvent::Done { .. }));
         // Era fallback: cursor ahead of last seq replays everything.
         assert_eq!(journal.replay("chat-1", 99).unwrap().len(), 3);
+    }
+
+    /// Deltas ride the buffer; a durable event (here: Done) flushes them AND
+    /// itself before `append` returns, so a crash can never leave a Done
+    /// behind unflushed deltas, and the file is a complete line prefix.
+    #[test]
+    fn durable_events_flush_buffered_deltas() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = RunJournal::open(dir.path()).unwrap();
+        journal.append("chat-1", &text("a")).unwrap();
+        journal.append("chat-1", &text("b")).unwrap();
+        assert!(
+            journal.pending_bytes("chat-1") > 0,
+            "streaming deltas should be buffered"
+        );
+
+        journal.append("chat-1", &done()).unwrap();
+        assert_eq!(journal.pending_bytes("chat-1"), 0);
+
+        // Raw file, bypassing the flushing replay path: everything is on disk.
+        let raw = std::fs::read_to_string(dir.path().join("chat-1.jsonl")).unwrap();
+        assert_eq!(raw.lines().count(), 3);
+        assert!(raw.lines().last().unwrap().contains("\"type\":\"done\""));
+    }
+
+    /// Same-process readers must never observe a stale prefix: the read paths
+    /// flush the buffer before they parse.
+    #[test]
+    fn read_paths_flush_buffered_deltas_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = RunJournal::open(dir.path()).unwrap();
+        journal.append("chat-1", &text("buffered")).unwrap();
+        assert_eq!(journal.replay("chat-1", 0).unwrap().len(), 1);
+        assert!(journal.last_event("chat-1").unwrap().is_some());
+        let raw = std::fs::read_to_string(dir.path().join("chat-1.jsonl")).unwrap();
+        assert!(raw.contains("buffered"));
+    }
+
+    /// Buffered deltas survive the open-fd eviction path and a clean drop.
+    #[test]
+    fn eviction_and_drop_flush_buffered_deltas() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = RunJournal::open(dir.path()).unwrap();
+        for i in 0..20 {
+            journal
+                .append(&format!("chat-{i}"), &text("delta"))
+                .unwrap();
+        }
+        // The first 16 journals were evicted by OPEN_FILE_CAP; their deltas
+        // must already be on disk, not lost with the BufWriter.
+        for i in 0..16 {
+            let raw = std::fs::read_to_string(dir.path().join(format!("chat-{i}.jsonl")))
+                .expect("evicted journal");
+            assert_eq!(raw.lines().count(), 1, "chat-{i}");
+        }
+        drop(journal);
+        for i in 0..20 {
+            let raw = std::fs::read_to_string(dir.path().join(format!("chat-{i}.jsonl")))
+                .expect("journal after drop");
+            assert_eq!(raw.lines().count(), 1, "chat-{i}");
+        }
     }
 
     #[test]

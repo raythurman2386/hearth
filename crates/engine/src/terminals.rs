@@ -30,6 +30,11 @@ use crate::{EngineError, new_id};
 const MAX_TERMINALS: usize = 32;
 const MAX_INPUT_BYTES: usize = 64 * 1024;
 const MAX_REPLAY_BYTES: usize = 1024 * 1024;
+/// Raw PTY chunks buffered between the blocking reader thread and the 12ms
+/// batcher. 8KiB reads → at most ~512KiB queued per terminal; past that the
+/// reader BLOCKS (see [`read_pty`]) instead of letting a `yes`/`cargo build`
+/// flood grow the process without bound.
+const RAW_QUEUE_CHUNKS: usize = 64;
 const EXITED_TTL: Duration = Duration::from_secs(30 * 60);
 const REAPER_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -208,7 +213,7 @@ impl Terminals {
         lock(&self.inner.sessions).insert(id.clone(), session.clone());
 
         // Raw PTY bytes: blocking reader thread → batcher task (12ms windows).
-        let (raw_tx, raw_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (raw_tx, raw_rx) = mpsc::channel::<Vec<u8>>(RAW_QUEUE_CHUNKS);
         std::thread::Builder::new()
             .name(format!("pty-read-{id}"))
             .spawn(move || read_pty(reader, raw_tx))
@@ -329,13 +334,25 @@ fn dispose(session: &Arc<Mutex<LiveTerminal>>, kill: bool) {
 
 /// Blocking PTY reader: forwards raw chunks until EOF. A closed PTY reads as an
 /// error on some platforms (EIO on Linux once the shell exits) — both end the loop.
-fn read_pty(mut reader: Box<dyn Read + Send>, tx: mpsc::UnboundedSender<Vec<u8>>) {
+///
+/// OVERFLOW POLICY — BACKPRESSURE, never drop: the queue is bounded
+/// ([`RAW_QUEUE_CHUNKS`]) and `blocking_send` stalls this thread when the
+/// batcher falls behind. A flooding producer is therefore throttled to the
+/// drain rate (the 12ms batch window) instead of growing an unbounded queue,
+/// and the PTY's own kernel buffer + the shell's writes absorb the stall. Order
+/// is preserved (one FIFO, single producer) and the last chunk before EOF is
+/// always sent: the send happens before the loop breaks. No deadlock: the
+/// only consumer, [`pump_output`], drains unconditionally and never waits on
+/// this thread; if it goes away (terminal closed, task aborted, engine
+/// shutdown) the receiver drops and the blocked send returns `Err`, ending
+/// the loop.
+fn read_pty(mut reader: Box<dyn Read + Send>, tx: mpsc::Sender<Vec<u8>>) {
     let mut buf = [0u8; 8192];
     loop {
         match reader.read(&mut buf) {
             Ok(0) | Err(_) => break,
             Ok(n) => {
-                if tx.send(buf[..n].to_vec()).is_err() {
+                if tx.blocking_send(buf[..n].to_vec()).is_err() {
                     break;
                 }
             }
@@ -348,7 +365,7 @@ fn read_pty(mut reader: Box<dyn Read + Send>, tx: mpsc::UnboundedSender<Vec<u8>>
 /// a weak session handle so a closed terminal tears this task down.
 async fn pump_output(
     session: Weak<Mutex<LiveTerminal>>,
-    mut raw_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    mut raw_rx: mpsc::Receiver<Vec<u8>>,
     wait: tokio::task::JoinHandle<Result<portable_pty::ExitStatus, std::io::Error>>,
 ) {
     let batch = Duration::from_millis(TERMINAL_OUTPUT_BATCH_MS);
@@ -419,5 +436,50 @@ async fn reaper_task(inner: Weak<TerminalsInner>) {
             let session = lock(session);
             !(session.exited && session.last_active_at.elapsed() > EXITED_TTL)
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Backpressure policy: a queue far smaller than the stream must not lose
+    /// a byte or reorder one — the reader blocks and resumes, and the last
+    /// chunk before EOF still arrives.
+    #[test]
+    fn pty_reader_keeps_every_chunk_in_order_under_backpressure() {
+        let data: Vec<u8> = (0..1usize << 20).map(|i| (i % 251) as u8).collect();
+        let expected = data.clone();
+        // 1MiB in 8KiB reads → 128 chunks through a two-slot queue.
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(2);
+        let reader = std::thread::spawn(move || {
+            read_pty(Box::new(std::io::Cursor::new(data)), tx);
+        });
+
+        let mut got = Vec::with_capacity(expected.len());
+        while let Some(chunk) = rx.blocking_recv() {
+            got.extend_from_slice(&chunk);
+        }
+        reader.join().expect("reader thread");
+        assert_eq!(got, expected);
+    }
+
+    /// Shutdown cannot deadlock: once the batcher's receiver is gone a reader
+    /// parked in `blocking_send` is woken with an error and exits.
+    #[test]
+    fn pty_reader_exits_when_the_batcher_goes_away() {
+        let (tx, rx) = mpsc::channel::<Vec<u8>>(1);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            read_pty(Box::new(std::io::Cursor::new(vec![b'x'; 1 << 20])), tx);
+            let _ = done_tx.send(());
+        });
+        // Let the reader fill the single slot and park in `blocking_send`.
+        std::thread::sleep(Duration::from_millis(50));
+        drop(rx);
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("reader exits after the receiver drops");
+        reader.join().expect("reader thread");
     }
 }

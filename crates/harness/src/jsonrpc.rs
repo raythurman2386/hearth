@@ -12,8 +12,9 @@
 //!   the TS harness's swallowed-EPIPE behavior.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -21,6 +22,35 @@ use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::HarnessError;
+
+/// Generous bound on a single request/response round trip: app-server
+/// handshakes and thread resumes can be slow, but a reply that never comes is
+/// a wedged process, and awaiting it forever strands the session Working.
+pub(crate) const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// `HEARTH_HARNESS_RPC_TIMEOUT_MS` overrides [`DEFAULT_REQUEST_TIMEOUT`]; `0`
+/// disables the bound. Read per client so a discovery probe and a session can
+/// differ if the environment changes mid-process (tests).
+pub(crate) fn default_request_timeout() -> Option<Duration> {
+    match std::env::var("HEARTH_HARNESS_RPC_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        Some(0) => None,
+        Some(ms) => Some(Duration::from_millis(ms)),
+        None => Some(DEFAULT_REQUEST_TIMEOUT),
+    }
+}
+
+/// Decrements the shared in-flight count on every exit path (response, error,
+/// timeout, dropped sender).
+struct InFlight(Arc<AtomicUsize>);
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 /// A non-response line from the app server, in stdout order.
 #[derive(Debug)]
@@ -47,12 +77,28 @@ pub(crate) struct RpcClient {
     next_id: Arc<AtomicI64>,
     pending: Pending,
     writer: mpsc::UnboundedSender<String>,
+    /// Per-request bound; `None` leaves a request unbounded (the ACP
+    /// `session/prompt` turn, whose own stall watchdog owns its lifetime).
+    request_timeout: Option<Duration>,
+    /// Requests sent and not yet resolved/removed, shared with the owning
+    /// harness so it can answer "is a response still outstanding?".
+    in_flight: Arc<AtomicUsize>,
 }
 
 impl RpcClient {
     /// Spawn the writer + reader tasks over the child's stdio; returns the
     /// client and the incoming (notification/request) channel.
     pub fn new(stdin: ChildStdin, stdout: ChildStdout) -> (Self, mpsc::Receiver<Incoming>) {
+        Self::new_shared(stdin, stdout, default_request_timeout(), Arc::default())
+    }
+
+    /// [`Self::new`] with an explicit timeout and in-flight counter owner.
+    pub fn new_shared(
+        stdin: ChildStdin,
+        stdout: ChildStdout,
+        request_timeout: Option<Duration>,
+        in_flight: Arc<AtomicUsize>,
+    ) -> (Self, mpsc::Receiver<Incoming>) {
         let (writer_tx, writer_rx) = mpsc::unbounded_channel::<String>();
         tokio::spawn(write_loop(stdin, writer_rx));
         let pending: Pending = Arc::default();
@@ -63,13 +109,39 @@ impl RpcClient {
                 next_id: Arc::new(AtomicI64::new(0)),
                 pending,
                 writer: writer_tx,
+                request_timeout,
+                in_flight,
             },
             incoming_rx,
         )
     }
 
     /// Send a request and await its response (resolved by the reader task).
+    /// Bounded by [`Self::request_timeout`]: a wedged app server surfaces as a
+    /// protocol error (which tears the session down) instead of a hang.
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, HarnessError> {
+        self.request_bounded(method, params, self.request_timeout)
+            .await
+    }
+
+    /// Send a request whose response is a whole agent TURN (ACP
+    /// `session/prompt`) and await it without a fixed bound: the ACP session
+    /// loop's stall/quiet-settle watchdogs own that turn's lifetime, and a
+    /// blanket request timeout would abort legitimate long turns.
+    pub async fn request_untimed(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, HarnessError> {
+        self.request_bounded(method, params, None).await
+    }
+
+    async fn request_bounded(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Option<Duration>,
+    ) -> Result<Value, HarnessError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, rx) = oneshot::channel();
         self.pending.lock().expect("pending lock").insert(id, tx);
@@ -80,7 +152,25 @@ impl RpcClient {
                 "{method}: app-server stdin closed"
             )));
         }
-        match rx.await {
+        self.in_flight.fetch_add(1, Ordering::SeqCst);
+        let _in_flight = InFlight(Arc::clone(&self.in_flight));
+        let response = match timeout {
+            Some(timeout) => match tokio::time::timeout(timeout, rx).await {
+                Ok(response) => response,
+                Err(_) => {
+                    // Withdraw the slot so a late reply is ignored, and fail
+                    // the request: callers turn this into a Done{Errored} and
+                    // reap the child.
+                    self.pending.lock().expect("pending lock").remove(&id);
+                    return Err(HarnessError::Protocol(format!(
+                        "{method}: no response within {}s — the app server is unresponsive",
+                        timeout.as_secs()
+                    )));
+                }
+            },
+            None => rx.await,
+        };
+        match response {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(message)) => Err(HarnessError::Protocol(format!("{method}: {message}"))),
             // Sender dropped: the reader hit EOF and failed all pending.
