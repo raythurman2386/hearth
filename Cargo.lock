@@ -2929,7 +2929,7 @@ dependencies = [
 
 [[package]]
 name = "hearth"
-version = "0.2.11"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2947,7 +2947,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-doc"
-version = "0.2.11"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "hearth-proto",
@@ -2961,7 +2961,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-engine"
-version = "0.2.11"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2996,7 +2996,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-harness"
-version = "0.2.11"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3013,7 +3013,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-proto"
-version = "0.2.11"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "serde",
@@ -3022,7 +3022,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-rpc"
-version = "0.2.11"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3040,7 +3040,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-sync"
-version = "0.2.11"
+version = "0.3.0"
 dependencies = [
  "base64 0.23.1",
  "block2 0.6.2",
@@ -3064,7 +3064,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-syntax"
-version = "0.2.11"
+version = "0.3.0"
 dependencies = [
  "thiserror 2.0.20",
  "tree-sitter",
@@ -3098,7 +3098,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-ui"
-version = "0.2.11"
+version = "0.3.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -3130,7 +3130,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-update"
-version = "0.2.11"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "futures",

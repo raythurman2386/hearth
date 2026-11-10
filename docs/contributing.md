@@ -74,9 +74,9 @@ scripts/              # Packaging and smoke helpers
 Huginn-style `plan` / `agent` / `chat` flow through:
 
 - `hearth_proto::SessionMode` on `RunRequest` / `ChatConfig`
-- UI Mode chip in `crates/ui/src/pickers.rs`
-- ACP apply path in `crates/harness/src/acp/mod.rs` (`session/set_mode` + config option category `mode`)
-- Live routing in `crates/engine/src/sessions.rs` (`RuntimeConfig.mode`)
+- UI Mode chip in `crates/ui/src/pickers/` (`model.rs` labels, `render.rs` chip)
+- ACP apply path in `crates/harness/src/acp/run/setup.rs` (`session/set_mode` + config option category `mode`)
+- Live routing in `crates/engine/src/sessions/mod.rs` (`RuntimeConfig.mode`)
 
 Permission-mode agents (Claude/Codex) share the ACP `category: "mode"` select but must **not** be fed Huginn’s plan/agent/chat ids; the harness code branches on whether `plan`/`chat` appear in the advertised values.
 

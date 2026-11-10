@@ -4,9 +4,37 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-10
+
+### Changed (breaking)
+
+- **The Raven harness is now Huginn** (upstream 0.7.0). Hearth launches the `huginn` binary, honors `HUGINN_EXECUTABLE`, uses the `huginn` accounts directory and the `huginn` wire id, and ships Huginn's brand mark. Existing `"raven"` chat rows and `HEARTH_HARNESS=raven` still load as Hearth data compatibility. Hearth passes `--mode plan` explicitly so the documented read-only default survives upstream's change of its own default to agent.
+- Device removal works against current engines, and the UI now explains engine/app version skew instead of surfacing a raw protocol error when the running engine predates `deleteDevice`.
+- `hearth status` reports the resolved runtime (data dir, mode, device identity, tailnet, engine pid and IPC port); `hearth login` and `hearth logout` are gone.
+
 ### Removed
 
-- The legacy WorkOS/OAuth authentication path and its local→synced profile import. Hearth has no account service or sign-in step: the device is the identity, and the tailnet (`tailscale whois`) is the trust boundary. `WorkspaceScope` is now only `Local` or `Development`, the UI no longer shows sign-in/sign-out/organization gates, and the `hearth login` / `hearth logout` subcommands are gone (`hearth status` reports the resolved runtime).
+- The legacy WorkOS/OAuth authentication path, the local→synced profile import, the sign-in/sign-out UI, organization gates, `AuthRpc`, and the `hearth login` / `hearth logout` subcommands. Hearth has no account service: the device is the identity and the tailnet (`tailscale whois`) is the trust boundary. `WorkspaceScope` is now only `Local` or `Development`.
+- Dead public surface across proto, rpc, engine and UI, the legacy workspace-doc mutators, six unreferenced examples, a 47 KB unreferenced fixture, and unused dependency edges (`reqwest`/`rusqlite` where unused, `loro-protocol`, `hearth-proto` from rpc, and others).
+
+### Added
+
+- A `cargo-machete` CI job that fails on unused dependencies.
+- Bounded transcript caches — blob details (256), highlight entries (512), and tool folds (512) use LRU eviction, so no map grows for the process lifetime.
+
+### Fixed
+
+- Harness install-output truncation no longer panics when the 1,200-byte tail lands mid-character.
+- Agent processes run in their own process group; interrupt and teardown signal the whole tree, and Codex aborts its escalation timer before reaping.
+- Codex JSON-RPC requests time out (five minutes by default, `HEARTH_HARNESS_RPC_TIMEOUT_MS`, `0` disables), and the quiesce watchdog stays armed while a reply is outstanding.
+- Terminal raw PTY and run-input channels are bounded with backpressure (no drops), and the run journal buffers streaming deltas while flushing every durable event.
+- Atomic file publish/replace is shared, preserving 0600 on secret writes and create-if-absent semantics for identity and profile files.
+- Cleared all 14 RustSec vulnerabilities (rusqlite/libsqlite3-sys, pulldown-cmark, quinn-proto, rustls, rustls-webpki, webpki-roots, tokio, async-executor, chacha20). Eleven unmaintained advisories remain upstream-blocked and are tracked in #41.
+
+### Internal
+
+- Split `shell`, `transcript`, `composer`, `changes`, `pickers`, the ACP and Codex harnesses, `doc_host`, `sessions`, and `rpc` out of their god files into modules. The largest ACP function went from 1,253 lines to 270.
+- Shared engine integration-test helpers (`tests/common`), atomic-write and mutex helpers, and removed the duplicated release-era scaffolding.
 
 ## [0.2.11] - 2026-09-05
 
