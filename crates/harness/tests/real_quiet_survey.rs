@@ -202,7 +202,7 @@ async fn real_all_harnesses_quiet_survey() {
         .unwrap_or(3);
     type AgentCtor = fn() -> AcpHarness;
     let agents: Vec<(&str, AgentCtor)> =
-        vec![("grok", AcpHarness::grok), ("raven", AcpHarness::raven)];
+        vec![("grok", AcpHarness::grok), ("huginn", AcpHarness::huginn)];
     let mut failures: Vec<String> = Vec::new();
     for (name, ctor) in agents {
         for i in 1..=runs {
