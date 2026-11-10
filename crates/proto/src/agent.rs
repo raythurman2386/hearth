@@ -8,24 +8,25 @@ pub enum HarnessId {
     Codex,
     /// xAI's Grok Build agent, driven over ACP (`grok agent stdio`).
     Grok,
-    /// Raven, driven over ACP (`raven --acp`).
-    Raven,
+    /// Huginn, driven over ACP (`huginn --acp`).
+    Huginn,
     /// Test harness; never shown in production pickers.
     Mock,
 }
 
 impl HarnessId {
-    /// Wire id. Retired names (`claude-code`, `cursor`, `hermes`, `pi`,
-    /// `opencode`) map to [`Self::Raven`] so old chat rows stay readable.
-    /// Truly unknown ids return `None` so a future peer's config can degrade
-    /// without dropping the chat row.
+    /// Wire id. `"raven"` is Hearth's own legacy alias (not an upstream
+    /// Huginn alias); together with the retired names (`claude-code`,
+    /// `cursor`, `hermes`, `pi`, `opencode`) it maps to [`Self::Huginn`] so
+    /// old chat rows stay readable. Truly unknown ids return `None` so a
+    /// future peer's config can degrade without dropping the chat row.
     pub(crate) fn from_wire(raw: &str) -> Option<Self> {
         match raw {
             "codex" => Some(Self::Codex),
             "grok" => Some(Self::Grok),
-            "raven" => Some(Self::Raven),
+            "huginn" => Some(Self::Huginn),
             "mock" => Some(Self::Mock),
-            "claude-code" | "cursor" | "hermes" | "pi" | "opencode" => Some(Self::Raven),
+            "raven" | "claude-code" | "cursor" | "hermes" | "pi" | "opencode" => Some(Self::Huginn),
             _ => None,
         }
     }
@@ -35,7 +36,7 @@ impl<'de> Deserialize<'de> for HarnessId {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = String::deserialize(deserializer)?;
         Self::from_wire(&raw).ok_or_else(|| {
-            serde::de::Error::unknown_variant(&raw, &["codex", "grok", "raven", "mock"])
+            serde::de::Error::unknown_variant(&raw, &["codex", "grok", "huginn", "raven", "mock"])
         })
     }
 }
@@ -64,7 +65,7 @@ pub enum SandboxLevel {
     DangerFullAccess,
 }
 
-/// The interaction mode for a session, mirroring Raven's plan/agent/chat
+/// The interaction mode for a session, mirroring Huginn's plan/agent/chat
 /// modes (and the ACP `session/set_mode` ids). `None` on a run means the
 /// harness's own default applies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -591,12 +592,17 @@ mod tests {
     #[test]
     fn harness_id_uses_kebab_case() {
         assert_eq!(
-            serde_json::to_string(&HarnessId::Raven).unwrap(),
-            "\"raven\""
+            serde_json::to_string(&HarnessId::Huginn).unwrap(),
+            "\"huginn\""
+        );
+        // Hearth's own legacy alias keeps old chat rows readable.
+        assert_eq!(
+            serde_json::from_str::<HarnessId>("\"raven\"").unwrap(),
+            HarnessId::Huginn
         );
         assert_eq!(
             serde_json::from_str::<HarnessId>("\"claude-code\"").unwrap(),
-            HarnessId::Raven
+            HarnessId::Huginn
         );
         assert_eq!(
             serde_json::from_str::<HarnessId>("\"codex\"").unwrap(),

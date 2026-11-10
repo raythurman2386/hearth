@@ -421,7 +421,7 @@ pub(crate) fn harness_brand_icon(harness: HarnessId) -> (&'static str, Option<gp
     match harness {
         HarnessId::Codex => (crate::icons::OPENAI_MARK, None),
         HarnessId::Grok => (crate::icons::GROK_MARK, None),
-        HarnessId::Raven | HarnessId::Mock => (crate::icons::RAVEN_MARK, None),
+        HarnessId::Huginn | HarnessId::Mock => (crate::icons::HUGINN_MARK, None),
     }
 }
 
@@ -777,11 +777,11 @@ mod tests {
     fn resolved_chat_config_requires_harness() {
         let mut resolved = ResolvedRunConfig::default();
         assert!(resolved.chat_config().is_none());
-        resolved.harness = Some(HarnessId::Raven);
+        resolved.harness = Some(HarnessId::Huginn);
         resolved.model = Some("opus".into());
         resolved.reasoning = Some(ReasoningLevel::High);
         let config = resolved.chat_config().expect("harness set");
-        assert_eq!(config.harness, HarnessId::Raven);
+        assert_eq!(config.harness, HarnessId::Huginn);
         assert_eq!(config.model.as_deref(), Some("opus"));
         assert_eq!(config.sandbox, SandboxLevel::WorkspaceWrite);
     }
@@ -851,12 +851,12 @@ mod tests {
         };
         let mixed = vec![
             descriptor(HarnessId::Mock, "Mock"),
-            descriptor(HarnessId::Raven, "Claude Code"),
+            descriptor(HarnessId::Huginn, "Claude Code"),
         ];
         // Env-independent core: mock hidden in production…
         let visible = visible_harnesses_impl(&mixed, false);
         assert_eq!(visible.len(), 1);
-        assert_eq!(visible[0].id, HarnessId::Raven);
+        assert_eq!(visible[0].id, HarnessId::Huginn);
         let only_mock = vec![descriptor(HarnessId::Mock, "Mock")];
         assert_eq!(visible_harnesses_impl(&only_mock, false).len(), 1);
         // …and opted back in by HEARTH_HARNESS=mock (the e2e rig).
@@ -878,7 +878,7 @@ mod tests {
         let catalog = |claude: Option<bool>, codex: Option<bool>, grok: Option<bool>| {
             vec![
                 descriptor(HarnessId::Mock, "Mock", Some(false)),
-                descriptor(HarnessId::Raven, "Raven", claude),
+                descriptor(HarnessId::Huginn, "Huginn", claude),
                 descriptor(HarnessId::Codex, "Codex", codex),
                 descriptor(HarnessId::Grok, "Grok", grok),
             ]
@@ -888,20 +888,20 @@ mod tests {
         let offered = offered_harnesses_impl(&catalog(None, None, None), false);
         assert_eq!(
             offered.iter().map(|d| d.id).collect::<Vec<_>>(),
-            vec![HarnessId::Raven, HarnessId::Codex, HarnessId::Grok]
+            vec![HarnessId::Huginn, HarnessId::Codex, HarnessId::Grok]
         );
         // The device's flags win: Grok on, Codex off; catalog order holds.
         let offered = offered_harnesses_impl(&catalog(Some(true), Some(false), Some(true)), false);
         assert_eq!(
             offered.iter().map(|d| d.id).collect::<Vec<_>>(),
-            vec![HarnessId::Raven, HarnessId::Grok]
+            vec![HarnessId::Huginn, HarnessId::Grok]
         );
         // The dev-rig mock opt-in survives the enabled filter (and Grok's
         // unknown flag still resolves through its installed probe).
         let offered = offered_harnesses_impl(&catalog(Some(true), Some(false), None), true);
         assert_eq!(
             offered.iter().map(|d| d.id).collect::<Vec<_>>(),
-            vec![HarnessId::Mock, HarnessId::Raven, HarnessId::Grok]
+            vec![HarnessId::Mock, HarnessId::Huginn, HarnessId::Grok]
         );
         // Nothing enabled offers nothing — the composer renders the
         // no-agents empty state instead of resurrecting disabled agents.
@@ -932,7 +932,7 @@ mod tests {
         // combination (enablement follows detection), but a catalog from an
         // older engine still can — the filter is the cross-version defense.
         let catalog = vec![
-            descriptor(HarnessId::Raven, "Claude Code", Some(true), false),
+            descriptor(HarnessId::Huginn, "Claude Code", Some(true), false),
             descriptor(HarnessId::Codex, "Codex", Some(true), false),
             descriptor(HarnessId::Grok, "Grok", Some(true), true),
         ];
@@ -947,7 +947,7 @@ mod tests {
         // NotInstalled errors at send; the composer shows the no-agents
         // state and blocks new sends instead.
         let catalog = vec![
-            descriptor(HarnessId::Raven, "Claude Code", Some(true), false),
+            descriptor(HarnessId::Huginn, "Claude Code", Some(true), false),
             descriptor(HarnessId::Codex, "Codex", Some(false), false),
             descriptor(HarnessId::Grok, "Grok", Some(false), true),
         ];

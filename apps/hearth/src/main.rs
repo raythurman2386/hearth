@@ -252,14 +252,16 @@ fn engine_config_from_env() -> hearth_engine::EngineConfig {
 }
 
 /// `HEARTH_HARNESS` (kebab-case id) picks the default harness for chats without a
-/// config row — `mock` powers the e2e smoke; default `raven`.
+/// config row — `mock` powers the e2e smoke; default `huginn`.
 fn harness_from_env() -> hearth_engine::HarnessId {
     match std::env::var("HEARTH_HARNESS").as_deref().map(str::trim) {
         Ok("mock") => hearth_engine::HarnessId::Mock,
         Ok("codex") => hearth_engine::HarnessId::Codex,
         Ok("grok") => hearth_engine::HarnessId::Grok,
-        Ok("raven") => hearth_engine::HarnessId::Raven,
-        _ => hearth_engine::HarnessId::Raven,
+        Ok("huginn") => hearth_engine::HarnessId::Huginn,
+        // Hearth data compat: launches from before the rename set `raven`.
+        Ok("raven") => hearth_engine::HarnessId::Huginn,
+        _ => hearth_engine::HarnessId::Huginn,
     }
 }
 
