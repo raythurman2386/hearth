@@ -30,6 +30,13 @@ block2 = "0.6"
 # infrastructure for this crate's tests and hearth-engine's integration tests.
 mock-server = []
 
+# This target imports `registry::mock_server`, so it only builds with the
+# feature on. `cargo test --workspace` enables it (hearth-engine's dev-dep);
+# `cargo test -p hearth-sync --features mock-server` runs it in isolation.
+[[test]]
+name = "registry_client"
+required-features = ["mock-server"]
+
 [dev-dependencies]
 chrono.workspace = true
 hearth-proto.workspace = true
