@@ -7,16 +7,12 @@ publish.workspace = true
 
 [dependencies]
 hearth-proto.workspace = true
-base64 = "0.23"
-reqwest.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true
 futures.workspace = true
 async-trait.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

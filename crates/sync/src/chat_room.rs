@@ -138,7 +138,7 @@ impl ChatLog {
 
     pub fn stats(&self) -> Result<LogStats, SyncError> {
         let conn = lock(&self.conn);
-        let (row_count, row_bytes): (u64, u64) = conn
+        let (row_count, row_bytes): (i64, i64) = conn
             .query_row(
                 "SELECT COUNT(*), COALESCE(SUM(LENGTH(bytes)), 0) FROM rows",
                 [],
@@ -149,8 +149,8 @@ impl ChatLog {
         Ok(LogStats {
             head_seq: self.head_seq()?,
             seq_floor: self.seq_floor()?,
-            row_count,
-            row_bytes,
+            row_count: row_count as u64,
+            row_bytes: row_bytes as u64,
             checkpoint_seq: self
                 .meta("checkpointSeq")?
                 .and_then(|s| s.parse().ok())
@@ -197,7 +197,7 @@ impl ChatLog {
             return Ok(AppendOutcome::TooLarge);
         }
         let conn = lock(&self.conn);
-        let existing: Option<u64> = conn
+        let existing: Option<i64> = conn
             .query_row(
                 "SELECT seq FROM rows WHERE batch_id = ?1",
                 params![batch_id],
@@ -206,7 +206,10 @@ impl ChatLog {
             .optional()
             .map_err(|e| SyncError::Tailnet(format!("chat log dup: {e}")))?;
         if let Some(seq) = existing {
-            return Ok(AppendOutcome::Ok { seq, dup: true });
+            return Ok(AppendOutcome::Ok {
+                seq: seq as u64,
+                dup: true,
+            });
         }
         let head: u64 = conn
             .query_row("SELECT value FROM meta WHERE key = 'headSeq'", [], |row| {
@@ -287,7 +290,7 @@ impl ChatLog {
         self.put_blob("checkpoint", bytes)?;
         self.put_blob("checkpoint-frontier", frontier)?;
         let conn = lock(&self.conn);
-        let before: usize = conn
+        let before: i64 = conn
             .query_row("SELECT COUNT(*) FROM rows", [], |row| row.get(0))
             .map_err(|e| SyncError::Tailnet(format!("chat log count: {e}")))?;
         conn.execute(
@@ -295,7 +298,7 @@ impl ChatLog {
             params![seq_covered as i64],
         )
         .map_err(|e| SyncError::Tailnet(format!("chat log prune: {e}")))?;
-        let after: usize = conn
+        let after: i64 = conn
             .query_row("SELECT COUNT(*) FROM rows", [], |row| row.get(0))
             .map_err(|e| SyncError::Tailnet(format!("chat log count: {e}")))?;
         drop(conn);
@@ -305,7 +308,7 @@ impl ChatLog {
         self.set_meta("checkpointAt", &now_ms().to_string())?;
         Ok(CheckpointOutcome::Ok {
             seq_floor: seq_covered,
-            pruned: before.saturating_sub(after),
+            pruned: before.saturating_sub(after) as usize,
         })
     }
 

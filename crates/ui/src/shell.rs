@@ -1455,11 +1455,11 @@ impl Shell {
                 // over a remembered "no project" opt-out. Otherwise the last
                 // selected project stands, unless opted out.
                 let exists = |id: &String| state.read(cx).space_row(id).is_some();
-                let filter = self.settings.space_filter.clone().filter(&exists);
+                let filter = self.settings.space_filter.clone().filter(|id| exists(id));
                 let target = match filter {
                     Some(filter) => Some(filter),
                     None if !state.read(cx).no_project => {
-                        self.settings.last_space_id.clone().filter(&exists)
+                        self.settings.last_space_id.clone().filter(|id| exists(id))
                     }
                     None => None,
                 };

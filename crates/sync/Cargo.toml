@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 hearth-doc.workspace = true
 loro.workspace = true
-loro-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -31,10 +30,15 @@ block2 = "0.6"
 # infrastructure for this crate's tests and hearth-engine's integration tests.
 mock-server = []
 
+# This target imports `registry::mock_server`, so it only builds with the
+# feature on. `cargo test --workspace` enables it (hearth-engine's dev-dep);
+# `cargo test -p hearth-sync --features mock-server` runs it in isolation.
+[[test]]
+name = "registry_client"
+required-features = ["mock-server"]
+
 [dev-dependencies]
 chrono.workspace = true
-# chat2_live example only (live checkpoint fetch against a deployed worker).
-reqwest.workspace = true
 hearth-proto.workspace = true
 tempfile.workspace = true
 # `start_paused` virtual-clock tests (the 2026-07-30 sync-stall regressions).
