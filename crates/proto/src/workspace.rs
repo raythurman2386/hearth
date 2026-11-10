@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub enum WorkspaceScope {
     Local,
-    Synced,
     Development,
 }
 
@@ -30,7 +29,6 @@ mod tests {
     fn workspace_scope_uses_wire_safe_names() {
         for (scope, encoded) in [
             (WorkspaceScope::Local, "\"local\""),
-            (WorkspaceScope::Synced, "\"synced\""),
             (WorkspaceScope::Development, "\"development\""),
         ] {
             assert_eq!(serde_json::to_string(&scope).unwrap(), encoded);
