@@ -54,7 +54,7 @@ A bare run never dials a remote host. Multi-device sync requires Tailscale and a
 | `HEARTH_DEVICE_NAME` | Optional device display name (engine + daemon install) |
 | `HEARTH_ORG_ID` | Optional registry org key (default `dev-org`) |
 
-Auth is Tailscale: inbound connections are identified with `tailscale whois`. There is no WorkOS, no `session.json`, and `hearth login`/`logout` are no-ops when the tailnet host is set.
+Auth is Tailscale: inbound connections are identified with `tailscale whois`. There is no account service, no `session.json`, and no sign-in command — `hearth status` reports the resolved scope and device identity.
 
 On the hub, publish release artifacts into `{data_dir}/releases/` (served at `/releases/*`) so `hearth update` works:
 

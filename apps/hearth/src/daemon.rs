@@ -4,8 +4,8 @@
 //! `HEARTH_*` environment captured at install time, so
 //! `HEARTH_TAILNET_HOST=… hearth daemon install` bakes that override in.
 //!
-//! Auth is decoupled: without a saved session the service remains up on the
-//! local-only profile. `hearth login` and a service restart opt into sync.
+//! Auth is the device identity: the service serves the local profile, or the
+//! tailnet profile when `HEARTH_TAILNET_HOST` was baked into the unit.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

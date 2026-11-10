@@ -56,9 +56,9 @@ no engine listening on 127.0.0.1:27654
 
 ---
 
-## Sync / login confusion on a local-only install
+## Sync on a local-only install
 
-Bare Hearth **does not** dial the tailnet. If you never set `HEARTH_TAILNET_HOST`, `hearth login` is not required for normal local use. `hearth sync` will not show useful rooms without an opted-in, running engine that can reach the hub.
+Bare Hearth **does not** dial the tailnet. If you never set `HEARTH_TAILNET_HOST`, there is no sign-in step and no sync network traffic. `hearth sync` will not show useful rooms without an opted-in, running engine that can reach the hub.
 
 ## GUI stays on the splash / “locked” and never loads (spoke laptop)
 

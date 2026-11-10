@@ -4,6 +4,10 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+### Removed
+
+- The legacy WorkOS/OAuth authentication path and its local→synced profile import. Hearth has no account service or sign-in step: the device is the identity, and the tailnet (`tailscale whois`) is the trust boundary. `WorkspaceScope` is now only `Local` or `Development`, the UI no longer shows sign-in/sign-out/organization gates, and the `hearth login` / `hearth logout` subcommands are gone (`hearth status` reports the resolved runtime).
+
 ## [0.2.11] - 2026-09-05
 
 ### Fixed
