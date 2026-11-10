@@ -45,6 +45,27 @@ pub fn format_last_seen(last_seen: Option<DateTime<Utc>>, now: DateTime<Utc>) ->
     }
 }
 
+/// Turn a device-mutation RPC error into the line Settings shows.
+///
+/// An app newer than the daemon it talks to asks for an op that build does not
+/// have; serde rejects it while deserializing the tagged `MutateParams` enum
+/// (`unknown variant` / `unknown field`, or `unknown operation` from an older
+/// surface). That looks like a bug, so name the real cause — and keep the raw
+/// engine text appended for debugging.
+pub fn device_mutation_error(action: &str, err: &str) -> String {
+    let lower = err.to_ascii_lowercase();
+    let version_skew = ["unknown variant", "unknown field", "unknown operation"]
+        .iter()
+        .any(|needle| lower.contains(needle));
+    if version_skew {
+        format!(
+            "{action} failed: the running engine is older than this app — restart or update the engine. ({err})"
+        )
+    } else {
+        format!("{action} failed: {err}")
+    }
+}
+
 /// Scope-aware copy: a local registry describes only the active local
 /// workspace and must not imply that account device metadata is already live.
 pub fn devices_subtitle(scope: Option<WorkspaceScope>) -> &'static str {
@@ -129,7 +150,7 @@ impl DevicesPage {
             let result = engine.client().call(methods::MUTATE, params).await;
             this.update(cx, |page, cx| {
                 if let Err(err) = result {
-                    page.error = Some(format!("Rename failed: {err}").into());
+                    page.error = Some(device_mutation_error("Rename", &err.to_string()).into());
                 }
                 cx.notify();
             })
@@ -169,7 +190,7 @@ impl DevicesPage {
             let result = engine.client().call(methods::MUTATE, params).await;
             this.update(cx, |page, cx| {
                 if let Err(err) = result {
-                    page.error = Some(format!("Remove failed: {err}").into());
+                    page.error = Some(device_mutation_error("Remove", &err.to_string()).into());
                 }
                 cx.notify();
             })
@@ -579,5 +600,45 @@ mod tests {
         let copy = devices_subtitle(Some(WorkspaceScope::Local));
         assert!(copy.contains("local workspace"));
         assert!(!copy.contains("synced"));
+    }
+
+    #[test]
+    fn version_skew_errors_say_the_engine_is_old() {
+        // The exact shapes a daemon can answer with when it predates the op.
+        for detail in [
+            "bad params: unknown variant `deleteDevice`, expected one of `createChat`, `createSpace`",
+            "bad params: unknown field `deviceId`, expected one of `chatId`, `spaceId`",
+            "unknown operation: deleteDevice",
+        ] {
+            let message = device_mutation_error("Remove", detail);
+            assert!(
+                message.starts_with("Remove failed: the running engine is older than this app"),
+                "got: {message}"
+            );
+            assert!(
+                message.contains("restart or update the engine"),
+                "got: {message}"
+            );
+            assert!(
+                message.contains(detail),
+                "raw detail must survive: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_mutation_errors_keep_the_engine_text_only() {
+        let message =
+            device_mutation_error("Remove", "cannot remove the local device from the registry");
+        assert_eq!(
+            message,
+            "Remove failed: cannot remove the local device from the registry"
+        );
+        assert!(!message.contains("older than this app"));
+        // Rename shares the rendering, with its own verb.
+        assert_eq!(
+            device_mutation_error("Rename", "transport: connection closed"),
+            "Rename failed: transport: connection closed"
+        );
     }
 }
