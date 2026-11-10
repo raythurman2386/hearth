@@ -1688,7 +1688,7 @@ impl Render for Pickers {
         let harness_icon: (&'static str, Option<gpui::Hsla>) = match self.effective_harness(cx) {
             Some(harness) => harness_brand_icon(harness),
             None if no_agents => (crate::icons::TERMINAL, Some(theme.text_muted)),
-            None => (crate::icons::RAVEN_MARK, None),
+            None => (crate::icons::HUGINN_MARK, None),
         };
         let explicit_options = self.explicit_options(cx);
         let traits_set = traits_summary(
@@ -1787,7 +1787,7 @@ impl Render for Pickers {
         });
         // Mode chip (plan/agent/chat): the trigger label is the current mode,
         // brightening only when a non-default mode is active. Always shown —
-        // every harness has a mode (Raven's plan/agent/chat; others fall back
+        // every harness has a mode (Huginn's plan/agent/chat; others fall back
         // to their own default when `None`).
         let mode_label: SharedString = self
             .effective_mode(cx)

@@ -1,6 +1,6 @@
 # Hearth
 
-A **local-first** control surface for coding agents (Raven, Codex, Grok) on Linux, macOS, and Windows.
+A **local-first** control surface for coding agents (Huginn, Codex, Grok) on Linux, macOS, and Windows.
 
 Hearth is a fork of [**Zeron**](https://github.com/zeronsh/comet) — a native rewrite (Rust + [gpui](https://github.com/zed-industries/zed)) of a multi-device agent controller. This fork keeps the part that matters on a single machine: a fast, private harness runner you drive locally. No hosted account, no cloud sync, and no telemetry is required for normal use.
 
@@ -8,11 +8,11 @@ Hearth is a fork of [**Zeron**](https://github.com/zeronsh/comet) — a native r
 
 - **Local-first by default** — a bare `hearth` run does not dial the edge.
 - **One binary** — headed UI by default; `hearth headless` for an engine daemon the UI can attach to.
-- **Harness-agnostic** — ACP agents over stdio (Raven, Grok) plus a native Codex driver. **Raven** is registered first among real harnesses and is the usual new-chat fallback when it is installed.
+- **Harness-agnostic** — ACP agents over stdio (Huginn, Grok) plus a native Codex driver. **Huginn** is registered first among real harnesses and is the usual new-chat fallback when it is installed.
 - **Ravenwood themed** — UI colors follow the [Ravenwood](https://github.com/raythurman2386/ravenwood-vscode) palette.
 - **Workspace-aware** — spaces (device + folder), optional git worktrees, diffs, session transcripts, steering, and a terminal pane.
 
-Hearth is **not** the agent. Agents such as Raven own tools, sandboxes, and model providers. Hearth starts them, streams events, and records chats.
+Hearth is **not** the agent. Agents such as Huginn own tools, sandboxes, and model providers. Hearth starts them, streams events, and records chats.
 
 ## Install / run
 
@@ -34,7 +34,7 @@ opt-in: `hearth daemon install` (see [docs/configuration.md](docs/configuration.
 
 Build from source is a contributor path — see
 [docs/contributing.md](docs/contributing.md). Agents need their own model
-endpoints (for example local Ollama for Raven).
+endpoints (for example local Ollama for Huginn).
 
 Data directory: `~/.hearth` (override with `HEARTH_DATA_DIR`).
 
@@ -50,13 +50,13 @@ hearth update       # apply release update (--check to report only)
 hearth release publish  # on the hub: publish GitHub/local artifacts to /releases
 ```
 
-There is **no** `hearth -p` / `hearth --mode` one-shot interface. For agent CLI flags, use the agent itself (for example `raven --mode agent -p "…"`).
+There is **no** `hearth -p` / `hearth --mode` one-shot interface. For agent CLI flags, use the agent itself (for example `huginn --mode agent -p "…"`).
 
-## Using Raven
+## Using Huginn
 
-1. Install [Raven](https://github.com/raythurman2386/raven) so `raven` is on PATH (or set `RAVEN_EXECUTABLE`).
-2. Run `hearth`, pick harness **Raven**, set Mode to **Agent** when you want full tools (Raven’s default is **plan**, which is read-only until approval).
-3. Send prompts from the composer. Models are live-probed from Raven’s ACP config (provider-qualified ids).
+1. Install [Huginn](https://github.com/raythurman2386/huginn) — for example `cargo install --path .` from a Huginn checkout — so `huginn` is on PATH (or set `HUGINN_EXECUTABLE`).
+2. Run `hearth`, pick harness **Huginn**, set Mode to **Agent** when you want full tools (Hearth starts Huginn in **plan** mode, which is read-only until approval).
+3. Send prompts from the composer. Models are live-probed from Huginn’s ACP config (provider-qualified ids).
 
 Details: [docs/usage.md](docs/usage.md), [docs/harnesses.md](docs/harnesses.md).
 
@@ -82,6 +82,6 @@ To opt in, set `HEARTH_TAILNET_HOST` to the hub's MagicDNS name (see [docs/confi
 
 ## Credit
 
-Fork of **Zeron** by the **zeronsh** maintainers ([zeronsh/comet](https://github.com/zeronsh/comet)). This fork renames the product to Hearth, adds Raven as a first-class ACP harness, ports the Ravenwood theme, defaults to local-only operation, and drops mobile/web apps and cloud-centric CI from the default path.
+Fork of **Zeron** by the **zeronsh** maintainers ([zeronsh/comet](https://github.com/zeronsh/comet)). This fork renames the product to Hearth, adds Huginn as a first-class ACP harness, ports the Ravenwood theme, defaults to local-only operation, and drops mobile/web apps and cloud-centric CI from the default path.
 
 Licensed under the [MIT License](LICENSE).

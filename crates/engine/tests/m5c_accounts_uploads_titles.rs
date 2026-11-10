@@ -220,7 +220,7 @@ fn snapshot_wire_shape() {
 async fn non_codex_login_is_refused() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let (accounts, _) = test_accounts(tmp.path());
-    assert!(accounts.start_login(HarnessId::Raven).await.is_err());
+    assert!(accounts.start_login(HarnessId::Huginn).await.is_err());
     assert!(
         accounts
             .complete_login("no-such-login", "code#state")
@@ -578,12 +578,12 @@ async fn rpc_dispatch_for_m5c_methods() {
     assert!(snapshot["accounts"].is_array());
     assert!(snapshot["warnings"].is_array());
 
-    // Non-Codex logins fail (retired harness ids deserialize as Raven).
+    // Non-Codex logins fail (retired harness ids deserialize as Huginn).
     assert!(
         client
             .call(
                 methods::START_AGENT_LOGIN,
-                serde_json::json!({ "harness": "raven" }),
+                serde_json::json!({ "harness": "huginn" }),
             )
             .await
             .is_err()

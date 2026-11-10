@@ -2536,7 +2536,7 @@ mod tests {
         let mut state = AppState::new();
         state.apply_chats(vec![chat("a", 0, None), chat("b", 1, None)]);
         let config = hearth_proto::ChatConfig {
-            harness: HarnessId::Raven,
+            harness: HarnessId::Huginn,
             model: Some("claude-fable-5".into()),
             mode: None,
             reasoning: Some(hearth_proto::ReasoningLevel::XHigh),
@@ -2561,7 +2561,7 @@ mod tests {
         state.apply_chat_config(
             "missing",
             hearth_proto::ChatConfig {
-                harness: HarnessId::Raven,
+                harness: HarnessId::Huginn,
                 model: None,
                 mode: None,
                 reasoning: None,

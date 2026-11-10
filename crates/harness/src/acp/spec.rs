@@ -162,43 +162,46 @@ pub(crate) fn grok_spec() -> AcpAgentSpec {
     }
 }
 
-fn raven_install_paths() -> Vec<PathBuf> {
+fn huginn_install_paths() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        dirs.push(home.join(".cargo").join("bin").join("raven"));
-        dirs.push(home.join(".local").join("bin").join("raven"));
+        dirs.push(home.join(".cargo").join("bin").join("huginn"));
+        dirs.push(home.join(".local").join("bin").join("huginn"));
     }
-    dirs.push(PathBuf::from("/opt/homebrew/bin/raven"));
-    dirs.push(PathBuf::from("/usr/local/bin/raven"));
+    dirs.push(PathBuf::from("/opt/homebrew/bin/huginn"));
+    dirs.push(PathBuf::from("/usr/local/bin/huginn"));
     dirs
 }
 
-pub(crate) fn raven_spec() -> AcpAgentSpec {
+pub(crate) fn huginn_spec() -> AcpAgentSpec {
     AcpAgentSpec {
-        id: HarnessId::Raven,
-        display_name: "Raven",
-        executable: "raven",
-        env_override: "RAVEN_EXECUTABLE",
-        // `raven --acp` serves ACP v1 over stdio.
-        // No npm fallback exists — Raven is a Cargo binary.
-        args: &["--acp"],
+        id: HarnessId::Huginn,
+        display_name: "Huginn",
+        executable: "huginn",
+        env_override: "HUGINN_EXECUTABLE",
+        // `huginn --acp` serves ACP v1 over stdio.
+        // No npm fallback exists — Huginn is a Cargo binary.
+        // Hearth pins plan mode explicitly: upstream now defaults to Agent,
+        // but Hearth's read-only default (and its docs) expect plan unless the
+        // Mode chip says otherwise.
+        args: &["--mode", "plan", "--acp"],
         npm_package: None,
-        extra_paths: raven_install_paths,
-        cli_executable: "raven",
-        cli_extra_paths: raven_install_paths,
-        install_hint: "raven (searched PATH, the login shell's PATH, ~/.cargo/bin, \
+        extra_paths: huginn_install_paths,
+        cli_executable: "huginn",
+        cli_extra_paths: huginn_install_paths,
+        install_hint: "huginn (searched PATH, the login shell's PATH, ~/.cargo/bin, \
              ~/.local/bin, /opt/homebrew/bin, and /usr/local/bin; install with \
-             `cargo install --path .` from your raven checkout, or set \
-             RAVEN_EXECUTABLE to override)",
-        // Raven's ACP server advertises its live model list (provider-qualified
+             `cargo install --path .` from your huginn checkout, or set \
+             HUGINN_EXECUTABLE to override)",
+        // Huginn's ACP server advertises its live model list (provider-qualified
         // ids) as the `model` config option at session/new; the picker live-
         // probes that, so the static catalog here is only a cold-open fallback.
         models: || {
             vec![Model {
                 id: "default".into(),
-                label: "Raven default".into(),
+                label: "Huginn default".into(),
                 description: Some(
-                    "Uses the model configured in Raven (OLLAMA_API_KEY / RAVEN_API_KEY)".into(),
+                    "Uses the model configured in Huginn (OLLAMA_API_KEY / HUGINN_API_KEY)".into(),
                 ),
                 reasoning_levels: Vec::new(),
                 options: Vec::new(),
@@ -251,5 +254,17 @@ pub fn prewarm_managed_adapters() {
                 ),
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn huginn_spec_pins_plan_mode_and_the_huginn_binary() {
+        let spec = huginn_spec();
+        assert_eq!(spec.executable, "huginn");
+        assert_eq!(spec.args, &["--mode", "plan", "--acp"]);
     }
 }

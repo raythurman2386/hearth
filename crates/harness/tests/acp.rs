@@ -573,7 +573,7 @@ async fn models_enrich_from_the_static_catalog_on_id_match() {
 
 #[tokio::test]
 async fn models_fall_back_to_the_static_catalog_when_the_probe_fails() {
-    let harness = AcpHarness::raven().with_executable("/nonexistent/never-a-raven");
+    let harness = AcpHarness::huginn().with_executable("/nonexistent/never-a-huginn");
     let models = harness.models().await.expect("static fallback");
     let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
     assert_eq!(ids, vec!["default"], "{models:?}");

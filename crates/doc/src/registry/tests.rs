@@ -460,7 +460,7 @@ fn future_harness_chat_rows_stay_visible_without_their_config() {
     // row ("skipping malformed registry row"), so new sessions silently
     // never appeared in that device's sidebar. Unknown config values must
     // cost the config, not the row. Retired ids (`claude-code`, …) map to
-    // Raven; this covers a truly future id.
+    // Huginn; this covers a truly future id.
     let mut ws = RegistryDoc::new("dev-a");
     ws.upsert_chat(&chat("chat-1", "dev-a")).unwrap();
     let fields: std::collections::BTreeMap<String, serde_json::Value> = [

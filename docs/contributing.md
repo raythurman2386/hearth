@@ -43,7 +43,7 @@ apps/hearth/          # Binary: CLI + headed/headless entry
 crates/
   proto/              # Shared wire types (HarnessId, RunRequest, AgentEvent, …)
   doc/                # Loro-backed session/workspace documents
-  harness/            # Agent adapters (ACP Raven/Grok, native Codex, mock)
+  harness/            # Agent adapters (ACP Huginn/Grok, native Codex, mock)
   engine/             # Sessions, registry, docs host, repos, terminals, uploads
   rpc/                # Localhost JSON-RPC / WebSocket between UI and engine
   sync/               # Optional tailnet room clients + hub (off by default)
@@ -66,19 +66,19 @@ scripts/              # Packaging and smoke helpers
 1. Add or extend a type under `crates/harness` implementing `Harness`.
 2. Register it in `crates/engine/src/registry.rs` (lazy descriptor + install probe + factory). Keep descriptor fields aligned with the live harness (tests assert stability for several adapters).
 3. Wire UI affordances if needed (`crates/ui` icons, catalogs, Settings → Agents).
-4. If the engine default env should accept a new id, extend `harness_from_env` in `apps/hearth/src/main.rs` (today: `raven`, `codex`, `grok`, `mock`).
+4. If the engine default env should accept a new id, extend `harness_from_env` in `apps/hearth/src/main.rs` (today: `huginn`, `codex`, `grok`, `mock`; `raven` remains a data-compat alias).
 5. Add harness tests under `crates/harness/tests/` with fixtures where possible (see [testing](testing.md)).
 
 ## ACP session modes
 
-Raven-style `plan` / `agent` / `chat` flow through:
+Huginn-style `plan` / `agent` / `chat` flow through:
 
 - `hearth_proto::SessionMode` on `RunRequest` / `ChatConfig`
 - UI Mode chip in `crates/ui/src/pickers.rs`
 - ACP apply path in `crates/harness/src/acp/mod.rs` (`session/set_mode` + config option category `mode`)
 - Live routing in `crates/engine/src/sessions.rs` (`RuntimeConfig.mode`)
 
-Permission-mode agents (Claude/Codex) share the ACP `category: "mode"` select but must **not** be fed Raven’s plan/agent/chat ids; the harness code branches on whether `plan`/`chat` appear in the advertised values.
+Permission-mode agents (Claude/Codex) share the ACP `category: "mode"` select but must **not** be fed Huginn’s plan/agent/chat ids; the harness code branches on whether `plan`/`chat` appear in the advertised values.
 
 ## Documentation
 

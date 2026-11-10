@@ -2,7 +2,7 @@
 //!
 //! NATIVE DRIVERS speak each agent's own wire directly: Codex over the
 //! app-server JSON-RPC ([`CodexHarness`]). The shared [`AcpHarness`] covers
-//! agents built on ACP — Raven (`raven --acp`) and Grok (`grok agent stdio`).
+//! agents built on ACP — Huginn (`huginn --acp`) and Grok (`grok agent stdio`).
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;

@@ -147,7 +147,7 @@ pub(crate) fn config_option_sets(
                 .map(Value::String),
             // Two different "mode" selects share this category:
             //
-            // - Raven (and similar) advertise plan/agent/chat as the
+            // - Huginn (and similar) advertise plan/agent/chat as the
             //   session interaction mode. Honor `request.mode` so the
             //   composer chip actually switches the live toolset.
             // - Claude/Codex advertise permission/sandbox modes
@@ -407,8 +407,8 @@ mod tests {
     }
 
     #[test]
-    fn raven_mode_config_option_uses_the_requested_session_mode() {
-        let raven = json!({
+    fn huginn_mode_config_option_uses_the_requested_session_mode() {
+        let huginn = json!({
             "sessionId": "s-1",
             "configOptions": [{
                 "id": "mode",
@@ -424,17 +424,17 @@ mod tests {
         });
         let no_opts = serde_json::Map::new();
         assert_eq!(
-            config_option_sets(&raven, None, &[], &no_opts, Some(SessionMode::Agent)),
+            config_option_sets(&huginn, None, &[], &no_opts, Some(SessionMode::Agent)),
             vec![("mode".to_owned(), json!({ "value": "agent" }))]
         );
         // No explicit pick: leave the agent's advertised default (plan).
         assert_eq!(
-            config_option_sets(&raven, None, &[], &no_opts, None),
+            config_option_sets(&huginn, None, &[], &no_opts, None),
             Vec::new()
         );
         // Already-current: nothing to set.
         assert_eq!(
-            config_option_sets(&raven, None, &[], &no_opts, Some(SessionMode::Plan)),
+            config_option_sets(&huginn, None, &[], &no_opts, Some(SessionMode::Plan)),
             Vec::new()
         );
     }

@@ -1,6 +1,6 @@
 # Configuration guide
 
-Hearth has **no** primary TOML config file like Raven. Behavior is controlled by:
+Hearth has **no** primary TOML config file like Huginn. Behavior is controlled by:
 
 1. **Environment variables** (and values baked into a `hearth daemon install` unit)
 2. **Files under the data directory** (`~/.hearth` by default)
@@ -37,10 +37,10 @@ Worktrees created for runs can be rooted under `HEARTH_WORKTREES_DIR` when set (
 |---|---|---|
 | `HEARTH_DATA_DIR` | `~/.hearth` | Engine + UI state root |
 | `HEARTH_IPC_PORT` | `27654` | Localhost WebSocket port for UI ↔ engine |
-| `HEARTH_HARNESS` | _(unset → `raven`)_ | Engine default harness id for chats **without** a config row. Kebab-case: `raven`, `codex`, `grok`, `mock`. |
+| `HEARTH_HARNESS` | _(unset → `huginn`)_ | Engine default harness id for chats **without** a config row. Kebab-case: `huginn`, `codex`, `grok`, `mock`. The pre-rename `raven` value is still accepted as a Hearth data alias. |
 | `RUST_LOG` | headed/headless: `info` (loro quieted); one-shot CLI: `warn` | `tracing` filter |
 
-UI new-chat harness resolution prefers: chat config → sticky `composer-defaults.json` → first **offered** catalog entry (Raven is registered first among real agents when installed and enabled). The engine `HEARTH_HARNESS` default is a separate fallback for dispatch when a chat row has no harness.
+UI new-chat harness resolution prefers: chat config → sticky `composer-defaults.json` → first **offered** catalog entry (Huginn is registered first among real agents when installed and enabled). The engine `HEARTH_HARNESS` default is a separate fallback for dispatch when a chat row has no harness.
 
 ### Sync (opt-in, Tailscale)
 
@@ -72,7 +72,7 @@ Override the GitHub repo with `HEARTH_RELEASE_REPO` (default `raythurman2386/hea
 
 | Variable | Meaning |
 |---|---|
-| `RAVEN_EXECUTABLE` | Absolute path to the Raven binary (else PATH + known install dirs) |
+| `HUGINN_EXECUTABLE` | Absolute path to the Huginn binary (else PATH + known install dirs) |
 | `GROK_EXECUTABLE` | Grok Build ACP binary override |
 | `HEARTH_ADAPTERS_DIR` | Where managed npm adapters are installed |
 | `HEARTH_NO_LOGIN_SHELL` | Set to a non-empty value to skip login-shell PATH snapshotting when resolving agent CLIs |
@@ -109,7 +109,7 @@ Harnesses that wrap CLIs also honor their own vendor env (for example Codex / Gr
 ## Daemon service
 
 ```bash
-HEARTH_HARNESS=raven hearth daemon install
+HEARTH_HARNESS=huginn hearth daemon install
 hearth daemon status
 hearth daemon restart
 hearth daemon uninstall

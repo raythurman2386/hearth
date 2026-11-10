@@ -1,7 +1,7 @@
 //! ACP harness: spawns an Agent Client Protocol agent (JSON-RPC 2.0 over
 //! stdio, protocol v1) and maps its session updates onto [`AgentEvent`]s.
 //!
-//! Used for Raven (`raven --acp`) and Grok (`grok agent stdio`). Codex has a
+//! Used for Huginn (`huginn --acp`) and Grok (`grok agent stdio`). Codex has a
 //! native app-server driver ([`crate::CodexHarness`]).
 //!
 //! - `initialize` (protocolVersion 1, fs/terminal capabilities declined) →

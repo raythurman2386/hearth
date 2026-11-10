@@ -22,7 +22,7 @@ async fn cli_on_login_shell_path_only_is_resolved() {
     let shell_bin = dir.path().join("shell-bin");
     std::fs::create_dir(&shell_bin).unwrap();
     write_executable(&shell_bin.join("grok"), "#!/bin/sh\nexit 0\n");
-    write_executable(&shell_bin.join("raven"), "#!/bin/sh\nexit 0\n");
+    write_executable(&shell_bin.join("huginn"), "#!/bin/sh\nexit 0\n");
 
     // A $SHELL whose init shapes PATH — the shape resolution must survive.
     let fake_shell = dir.path().join("fake-shell");
@@ -46,7 +46,7 @@ async fn cli_on_login_shell_path_only_is_resolved() {
         std::env::set_var("HOME", dir.path());
         std::env::set_var("PATH", "/usr/bin:/bin");
         std::env::remove_var("GROK_EXECUTABLE");
-        std::env::remove_var("RAVEN_EXECUTABLE");
+        std::env::remove_var("HUGINN_EXECUTABLE");
         std::env::remove_var("HEARTH_NO_LOGIN_SHELL");
     }
 
@@ -65,8 +65,8 @@ async fn cli_on_login_shell_path_only_is_resolved() {
         .launch_program()
         .expect("grok resolves via login-shell PATH");
     assert_eq!(grok, shell_bin.join("grok"), "{grok:?}");
-    let raven = AcpHarness::raven()
+    let huginn = AcpHarness::huginn()
         .launch_program()
-        .expect("raven resolves via login-shell PATH");
-    assert_eq!(raven, shell_bin.join("raven"), "{raven:?}");
+        .expect("huginn resolves via login-shell PATH");
+    assert_eq!(huginn, shell_bin.join("huginn"), "{huginn:?}");
 }

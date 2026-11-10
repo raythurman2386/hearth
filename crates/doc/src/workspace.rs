@@ -351,7 +351,7 @@ pub(crate) struct RawChat {
     checkout_id: Option<String>,
     /// LENIENT: a config this build can't decode (a harness/reasoning/sandbox
     /// id from a NEWER peer) degrades to `None` instead of failing the row.
-    /// Retired harness ids (`claude-code`, `cursor`, …) deserialize as Raven
+    /// Retired harness ids (`claude-code`, `cursor`, …) deserialize as Huginn
     /// so old chats stay runnable. Truly unknown future ids still cost only
     /// the config, not the row.
     #[serde(default, deserialize_with = "lenient_chat_config")]

@@ -1200,7 +1200,7 @@ impl Render for AccountsPage {
         let provider_icon = |harness: HarnessId| match harness {
             HarnessId::Codex => (crate::icons::OPENAI_MARK, None),
             HarnessId::Grok => (crate::icons::GROK_MARK, None),
-            HarnessId::Raven | HarnessId::Mock => (crate::icons::RAVEN_MARK, None),
+            HarnessId::Huginn | HarnessId::Mock => (crate::icons::HUGINN_MARK, None),
         };
         // Brand mark inside a 24px centered box (hearth: `grid size-6
         // place-items-center [&_svg]:size-4`).
@@ -1553,6 +1553,6 @@ mod tests {
             ["x1", "x2"],
             "engine (creation) order holds — switching must not move a card"
         );
-        assert!(provider_accounts(&snapshot, HarnessId::Raven).is_empty());
+        assert!(provider_accounts(&snapshot, HarnessId::Huginn).is_empty());
     }
 }

@@ -6,7 +6,7 @@ use super::*;
 impl Pickers {
     /// The selected space's device when it differs from the connected
     /// engine's own — harness/model catalogs come from the device that RUNS
-    /// the agents (the CLIs live there; the viewer may have neither raven
+    /// the agents (the CLIs live there; the viewer may have neither huginn
     /// nor codex installed — user report: "can't load codex models/traits
     /// anywhere" from a Mac without codex).
     pub(super) fn space_target(&self, cx: &App) -> Option<String> {

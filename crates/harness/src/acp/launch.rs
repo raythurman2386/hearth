@@ -12,7 +12,7 @@ use tokio::process::{Child, Command};
 use crate::HarnessError;
 
 use super::AcpHarness;
-use super::spec::{AcpAgentSpec, grok_spec, raven_spec};
+use super::spec::{AcpAgentSpec, grok_spec, huginn_spec};
 
 const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(120);
 const DEFAULT_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -78,9 +78,9 @@ impl AcpHarness {
         Self::with_spec(grok_spec())
     }
 
-    /// Raven (`raven --acp`) — a local-first ACP agent.
-    pub fn raven() -> Self {
-        Self::with_spec(raven_spec())
+    /// Huginn (`huginn --acp`) — a local-first ACP agent.
+    pub fn huginn() -> Self {
+        Self::with_spec(huginn_spec())
     }
 
     /// Use a fixed agent binary instead of PATH/known-location resolution.

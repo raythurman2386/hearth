@@ -28,7 +28,7 @@ Thumbs.db
 *~
 
 # Local agent / app state (never commit)
-.raven/
+.huginn/
 .grok/
 .hearth/
 

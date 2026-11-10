@@ -18,7 +18,7 @@ const LAUNCHD_LABEL: &str = "sh.hearth.app";
 const SYSTEMD_UNIT: &str = "hearth.service";
 
 /// Environment captured into the unit file. `PATH` is always included (the
-/// engine spawns harness CLIs like `raven` and `codex`, which service managers' minimal
+/// engine spawns harness CLIs like `huginn` and `codex`, which service managers' minimal
 /// default PATH won't find); the `HEARTH_*`/logging vars only when set.
 const CAPTURED_ENV: &[&str] = &[
     "PATH",

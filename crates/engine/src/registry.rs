@@ -1,5 +1,5 @@
 //! HarnessRegistry — the engine's harness catalog: eager instances (mock) plus lazy
-//! slots resolved on first use (raven/grok ACP, native Codex). Lazy slots carry a
+//! slots resolved on first use (huginn/grok ACP, native Codex). Lazy slots carry a
 //! static descriptor so `ListHarnesses` never forces a spawn.
 //!
 //! Also owns the device's harness ENABLEMENT (Settings → Agents): which harnesses
@@ -320,11 +320,11 @@ impl HarnessRegistry {
 }
 
 /// The production registry: MockHarness (hidden from production pickers) plus
-/// lazy Raven/Codex/Grok slots resolved through `hearth_harness` on first use
+/// lazy Huginn/Codex/Grok slots resolved through `hearth_harness` on first use
 /// (subprocess discovery only happens when a run/model call actually needs it).
 pub fn default_registry() -> HarnessRegistry {
     // Warm the login-shell PATH snapshot in the background so the first
-    // raven/codex/grok resolve doesn't pay the shell-startup latency inline.
+    // huginn/codex/grok resolve doesn't pay the shell-startup latency inline.
     hearth_harness::shell_env::prewarm();
     let registry = HarnessRegistry::new();
     registry.register(Arc::new(MockHarness {
@@ -371,23 +371,23 @@ pub fn default_registry() -> HarnessRegistry {
             },
         ],
     }));
-    // Raven over ACP (`raven --acp`), same lazy pattern: the static
-    // descriptor mirrors AcpHarness::raven() exactly. Turn-boundary steering,
-    // no effort ladder (Raven's reasoning is model/provider-internal).
+    // Huginn over ACP (`huginn --acp`), same lazy pattern: the static
+    // descriptor mirrors AcpHarness::huginn() exactly. Turn-boundary steering,
+    // no effort ladder (Huginn's reasoning is model/provider-internal).
     // Registered FIRST among the real harnesses so the composer's new-chat
-    // "first offered" fallback (and the picker rail) default to Raven.
+    // "first offered" fallback (and the picker rail) default to Huginn.
     registry.register_lazy(
         HarnessDescriptor {
-            id: HarnessId::Raven,
-            name: "Raven".into(),
+            id: HarnessId::Huginn,
+            name: "Huginn".into(),
             supports_steering: true,
             steering_mode: SteeringMode::TurnBoundary,
             reasoning_levels: Vec::new(),
             installed: true,
             enabled: None,
         },
-        Box::new(|| hearth_harness::AcpHarness::raven().installed()),
-        Box::new(|| Ok(Arc::new(hearth_harness::AcpHarness::raven()) as Arc<dyn Harness>)),
+        Box::new(|| hearth_harness::AcpHarness::huginn().installed()),
+        Box::new(|| Ok(Arc::new(hearth_harness::AcpHarness::huginn()) as Arc<dyn Harness>)),
     );
     // Codex, same lazy pattern: the static descriptor mirrors CodexHarness
     // exactly (`describe()` after the first resolve must not change the
@@ -481,24 +481,24 @@ mod tests {
     }
 
     #[test]
-    fn default_registry_lists_mock_raven_codex_and_grok_slots() {
+    fn default_registry_lists_mock_huginn_codex_and_grok_slots() {
         let registry = default_registry();
         let ids: Vec<HarnessId> = registry.descriptors().iter().map(|d| d.id).collect();
         assert_eq!(
             ids,
             vec![
                 HarnessId::Mock,
-                HarnessId::Raven,
+                HarnessId::Huginn,
                 HarnessId::Codex,
                 HarnessId::Grok,
             ]
         );
         assert!(registry.resolve(HarnessId::Mock).is_ok());
-        let raven = registry.resolve(HarnessId::Raven).unwrap();
-        assert_eq!(raven.id(), HarnessId::Raven);
-        assert_eq!(raven.display_name(), "Raven");
-        assert_eq!(raven.steering_mode(), SteeringMode::TurnBoundary);
-        assert!(raven.reasoning_levels().is_empty());
+        let huginn = registry.resolve(HarnessId::Huginn).unwrap();
+        assert_eq!(huginn.id(), HarnessId::Huginn);
+        assert_eq!(huginn.display_name(), "Huginn");
+        assert_eq!(huginn.steering_mode(), SteeringMode::TurnBoundary);
+        assert!(huginn.reasoning_levels().is_empty());
         let codex = registry.resolve(HarnessId::Codex).unwrap();
         assert_eq!(codex.id(), HarnessId::Codex);
         let grok = registry.resolve(HarnessId::Grok).unwrap();
@@ -571,7 +571,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let registry = HarnessRegistry::new();
         registry.load_prefs(dir.path());
-        test_slot(&registry, HarnessId::Raven, true);
+        test_slot(&registry, HarnessId::Huginn, true);
         test_slot(&registry, HarnessId::Codex, true);
         test_slot(&registry, HarnessId::Grok, true);
 
@@ -585,7 +585,7 @@ mod tests {
         assert_eq!(
             flags,
             vec![
-                (HarnessId::Raven, Some(true)),
+                (HarnessId::Huginn, Some(true)),
                 (HarnessId::Codex, Some(true)),
                 (HarnessId::Grok, Some(true)),
             ]
@@ -597,7 +597,7 @@ mod tests {
         registry.set_enabled(HarnessId::Grok, true).unwrap();
         registry.set_enabled(HarnessId::Grok, true).unwrap();
         registry.set_enabled(HarnessId::Codex, false).unwrap();
-        registry.set_enabled(HarnessId::Raven, false).unwrap();
+        registry.set_enabled(HarnessId::Huginn, false).unwrap();
         // Grok is the last one standing — refusing keeps the composer usable.
         assert!(registry.set_enabled(HarnessId::Grok, false).is_err());
         assert_eq!(registry.enabled_set(), vec![HarnessId::Grok]);
@@ -605,7 +605,7 @@ mod tests {
         // A fresh registry over the same data dir reads the persisted opt-outs.
         let reloaded = HarnessRegistry::new();
         reloaded.load_prefs(dir.path());
-        test_slot(&reloaded, HarnessId::Raven, true);
+        test_slot(&reloaded, HarnessId::Huginn, true);
         test_slot(&reloaded, HarnessId::Codex, true);
         test_slot(&reloaded, HarnessId::Grok, true);
         assert_eq!(reloaded.enabled_set(), vec![HarnessId::Grok]);
@@ -621,7 +621,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let registry = HarnessRegistry::new();
         registry.load_prefs(dir.path());
-        test_slot(&registry, HarnessId::Raven, true);
+        test_slot(&registry, HarnessId::Huginn, true);
         test_slot(&registry, HarnessId::Codex, true);
         // Not installed yet — the probe flips when the user installs the CLI.
         let found = Arc::new(AtomicBool::new(false));
@@ -640,23 +640,23 @@ mod tests {
             Box::new(|| Err(HarnessError::NotInstalled("test slot".into()))),
         );
         registry.set_enabled(HarnessId::Codex, false).unwrap();
-        assert_eq!(registry.enabled_set(), vec![HarnessId::Raven]);
+        assert_eq!(registry.enabled_set(), vec![HarnessId::Huginn]);
 
         // The CLI appears mid-session; no restart, no visit to Settings.
         found.store(true, Ordering::SeqCst);
         assert_eq!(
             registry.enabled_set(),
-            vec![HarnessId::Raven, HarnessId::Grok]
+            vec![HarnessId::Huginn, HarnessId::Grok]
         );
         // The opt-out survives the reload that picks the new agent up.
         let reloaded = HarnessRegistry::new();
         reloaded.load_prefs(dir.path());
-        test_slot(&reloaded, HarnessId::Raven, true);
+        test_slot(&reloaded, HarnessId::Huginn, true);
         test_slot(&reloaded, HarnessId::Codex, true);
         test_slot(&reloaded, HarnessId::Grok, true);
         assert_eq!(
             reloaded.enabled_set(),
-            vec![HarnessId::Raven, HarnessId::Grok]
+            vec![HarnessId::Huginn, HarnessId::Grok]
         );
     }
 
@@ -689,11 +689,11 @@ mod tests {
         )
         .unwrap();
         let registry = HarnessRegistry::new();
-        test_slot(&registry, HarnessId::Raven, true);
+        test_slot(&registry, HarnessId::Huginn, true);
         test_slot(&registry, HarnessId::Codex, true);
         test_slot(&registry, HarnessId::Grok, true);
         registry.load_prefs(dir.path());
-        assert_eq!(registry.enabled_set(), vec![HarnessId::Raven]);
+        assert_eq!(registry.enabled_set(), vec![HarnessId::Huginn]);
 
         // The rewritten file is the new shape, and the legacy key is gone.
         let text = std::fs::read_to_string(dir.path().join("harness-prefs.json")).unwrap();
@@ -710,12 +710,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let registry = HarnessRegistry::new();
         registry.load_prefs(dir.path());
-        test_slot(&registry, HarnessId::Raven, false);
+        test_slot(&registry, HarnessId::Huginn, false);
         test_slot(&registry, HarnessId::Codex, false);
 
         assert_eq!(registry.enabled_set(), Vec::<HarnessId>::new());
         registry.set_enabled(HarnessId::Codex, false).unwrap();
-        registry.set_enabled(HarnessId::Raven, false).unwrap();
+        registry.set_enabled(HarnessId::Huginn, false).unwrap();
         assert_eq!(registry.enabled_set(), Vec::<HarnessId>::new());
 
         let reloaded = HarnessRegistry::new();
