@@ -40,7 +40,7 @@ pub fn blurb(harness: HarnessId) -> &'static str {
     match harness {
         HarnessId::Codex => "OpenAI's coding agent, driven through the Codex CLI.",
         HarnessId::Grok => "xAI's Grok Build agent (grok CLI).",
-        HarnessId::Raven => "A local-first coding-agent harness (raven CLI).",
+        HarnessId::Huginn => "A local-first coding-agent harness (huginn CLI).",
         HarnessId::Mock => "Scripted test harness.",
     }
 }
@@ -50,7 +50,7 @@ pub fn cli_name(harness: HarnessId) -> &'static str {
     match harness {
         HarnessId::Codex => "codex",
         HarnessId::Grok => "grok",
-        HarnessId::Raven => "raven",
+        HarnessId::Huginn => "huginn",
         HarnessId::Mock => "mock",
     }
 }

@@ -162,7 +162,7 @@ icon_assets![
     (CURSOR_MARK, "cursor-mark"),
     (GROK_MARK, "grok-mark"),
     (HERMES_MARK, "hermes-mark"),
-    (RAVEN_MARK, "raven-mark"),
+    (HUGINN_MARK, "huginn-mark"),
     (PI_MARK, "pi-mark"),
     (OPENCODE_MARK, "opencode-mark"),
 ];
