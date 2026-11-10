@@ -122,8 +122,14 @@ pub struct Transcript {
     /// Detail folds (output/diff) per chip, keyed `"{row_id}#d{ix}"` — full
     /// [`FoldState`]s so detail bodies tween open/closed exactly like the
     /// group fold. Render-local like `folds` — never part of the row
-    /// fingerprint.
+    /// fingerprint. Retained across chat switches (a revisited chat keeps its
+    /// open detail cards) and therefore bounded at [`MAX_TOOL_DETAILS`] by
+    /// [`prune_tool_details`] on every new key, least recently toggled first.
     tool_details: HashMap<SharedString, FoldState>,
+    /// Monotonic recency stamp shared by [`Transcript::tool_details`]; only
+    /// the relative order inside the cap-sized map matters (wrapping is
+    /// harmless).
+    tool_touch_counter: u64,
     /// Streaming fade veils, one per live markdown row (dropped on completion).
     veils: HashMap<SharedString, Rc<RefCell<RowVeil>>>,
     /// Live rows present in the transcript's REPLAY after (re)attaching to a
@@ -212,7 +218,10 @@ pub struct Transcript {
     /// chat2-sync A3). `Ready` holds the UPGRADED detail, built once on
     /// arrival — render swaps it in per chip; rows never rebuild for it.
     /// Deliberately NOT cleared on chat switch: refs are chat-qualified and a
-    /// fetched blob stays valid.
+    /// fetched blob stays valid. Bounded at [`MAX_BLOB_DETAILS`] by
+    /// [`prune_blob_cache`] on every insertion (see the eviction policy
+    /// there); escaping the cap would retain every sidecar body for the whole
+    /// process.
     blob_details: HashMap<SharedString, BlobFetch>,
     /// Monotonic fetch order per blob ref: when a tool has BOTH a diff and
     /// an output blob fetched, the chip shows the one requested most
@@ -228,6 +237,83 @@ enum BlobFetch {
     /// Failed with the affordance re-armed as a retry.
     Failed,
     Ready(Arc<ToolDetail>),
+}
+
+/// Cap on cached sidecar blob details (full diff/output bodies). The cache is
+/// deliberately NOT cleared on chat switch — refs are chat-qualified and a
+/// fetched blob stays valid — so a `Ready` entry would otherwise live for the
+/// whole process. One entry per fetched ref; the least recently requested one
+/// is evicted when a new fetch overflows the cap.
+pub(super) const MAX_BLOB_DETAILS: usize = 256;
+
+/// Oldest eviction candidate in the blob cache, or `None` when every key is
+/// the protected one (or only `Loading` slots are left and `settled_only`).
+fn oldest_blob_candidate(
+    details: &HashMap<SharedString, BlobFetch>,
+    order: &HashMap<SharedString, u64>,
+    keep: &SharedString,
+    settled_only: bool,
+) -> Option<SharedString> {
+    details
+        .iter()
+        .filter(|(blob_ref, fetch)| {
+            *blob_ref != keep && !(settled_only && matches!(fetch, BlobFetch::Loading(_)))
+        })
+        .min_by_key(|(blob_ref, _)| order.get(*blob_ref).copied().unwrap_or(0))
+        .map(|(blob_ref, _)| (*blob_ref).clone())
+}
+
+/// Evict the least-recently-fetched refs until the blob cache is within
+/// [`MAX_BLOB_DETAILS`]. Both maps are pruned together so a detail and its
+/// fetch-order stamp can never drift apart.
+///
+/// Policy:
+/// - the victim is the lowest `blob_fetch_order` (the same recency the chip
+///   uses for "most recently requested wins", bumped on every click);
+/// - `keep` — the ref being inserted — is never a candidate;
+/// - settled `Ready`/`Failed` entries are preferred. A `Loading` entry owns
+///   the in-flight fetch `Task`, so evicting it CANCELS that request; that is
+///   acceptable for the oldest slot (the chip's affordance re-arms as a
+///   retry), but it only happens when no settled entry is left to evict.
+fn prune_blob_cache(
+    details: &mut HashMap<SharedString, BlobFetch>,
+    order: &mut HashMap<SharedString, u64>,
+    keep: &SharedString,
+) {
+    while details.len() > MAX_BLOB_DETAILS {
+        let victim = oldest_blob_candidate(details, order, keep, true)
+            .or_else(|| oldest_blob_candidate(details, order, keep, false));
+        let Some(victim) = victim else {
+            break;
+        };
+        details.remove(&victim);
+        order.remove(&victim);
+    }
+}
+
+/// Cap on retained tool-detail fold states (one per detail card the user has
+/// opened). The map survives chat switches so a revisited chat still shows
+/// its open cards, which means it would otherwise keep one small entry for
+/// every chip ever expanded, for the whole process. The least recently
+/// toggled entries are evicted first; an evicted card simply falls back to
+/// the default (closed) fold — its content is re-foldable, not lost.
+pub(super) const MAX_TOOL_DETAILS: usize = 512;
+
+/// Evict the least recently toggled tool-detail folds until the map is
+/// within [`MAX_TOOL_DETAILS`]. `keep` — the key just inserted — is never the
+/// victim.
+fn prune_tool_details(folds: &mut HashMap<SharedString, FoldState>, keep: &SharedString) {
+    while folds.len() > MAX_TOOL_DETAILS {
+        let victim = folds
+            .iter()
+            .filter(|(key, _)| *key != keep)
+            .min_by_key(|(_, fold)| fold.touched)
+            .map(|(key, _)| key.clone());
+        let Some(victim) = victim else {
+            break;
+        };
+        folds.remove(&victim);
+    }
 }
 
 /// Shell-facing events (the transcript itself hosts no surfaces).
@@ -330,6 +416,7 @@ impl Transcript {
             tree_cache: HashMap::new(),
             folds: HashMap::new(),
             tool_details: HashMap::new(),
+            tool_touch_counter: 0,
             veils: HashMap::new(),
             veil_baseline: std::collections::HashSet::new(),
             veil_attach_pending: true,
@@ -667,6 +754,30 @@ impl Transcript {
         cx.notify();
     }
 
+    /// Fold state for one chip's detail card, stamped as the most recently
+    /// toggled and pruned to [`MAX_TOOL_DETAILS`] when it is a new key. The
+    /// click handler keeps writing the returned entry exactly as before.
+    fn tool_detail_fold_mut(&mut self, key: SharedString) -> &mut FoldState {
+        self.tool_touch_counter = self.tool_touch_counter.wrapping_add(1);
+        let touched = self.tool_touch_counter;
+        match self.tool_details.get_mut(&key) {
+            Some(entry) => entry.touched = touched,
+            None => {
+                self.tool_details.insert(
+                    key.clone(),
+                    FoldState {
+                        touched,
+                        ..FoldState::default()
+                    },
+                );
+                prune_tool_details(&mut self.tool_details, &key);
+            }
+        }
+        self.tool_details
+            .get_mut(&key)
+            .expect("tool detail fold was just inserted")
+    }
+
     /// Fetch a sidecar blob (full tool output or diff) and build its upgraded
     /// [`ToolDetail`] once, off the render path. Re-entry while Loading/Ready
     /// is a no-op; Failed re-arms as a retry (the affordance label says so).
@@ -687,6 +798,10 @@ impl Transcript {
             Some(BlobFetch::Failed) | None => {}
         }
         let Some(engine) = self.state.read(cx).engine().cloned() else {
+            // The recency bump above has no matching cache entry — drop it so
+            // `blob_fetch_order` cannot accumulate keys that no eviction can
+            // ever reach (the maps stay in lockstep).
+            self.blob_fetch_order.remove(&blob_ref);
             return;
         };
         let is_diff = blob_ref.ends_with(".diff");
@@ -713,11 +828,25 @@ impl Transcript {
                 Err(_) => BlobFetch::Failed,
             };
             this.update(cx, |this, cx| {
-                this.blob_details.insert(ref_key, fetched);
+                // The slot may have been evicted while this fetch was in
+                // flight. Eviction drops the `Task`, which normally cancels
+                // this very callback — guard anyway so a late result can
+                // never resurrect a key with no bounded slot.
+                if !this.blob_details.contains_key(&ref_key) {
+                    return;
+                }
+                this.blob_details.insert(ref_key.clone(), fetched);
+                prune_blob_cache(&mut this.blob_details, &mut this.blob_fetch_order, &ref_key);
                 cx.notify();
             })
             .ok();
         });
-        self.blob_details.insert(blob_ref, BlobFetch::Loading(task));
+        self.blob_details
+            .insert(blob_ref.clone(), BlobFetch::Loading(task));
+        prune_blob_cache(
+            &mut self.blob_details,
+            &mut self.blob_fetch_order,
+            &blob_ref,
+        );
     }
 }
