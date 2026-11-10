@@ -2942,7 +2942,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "tracing",
  "tracing-subscriber",
 ]
 
@@ -2983,7 +2982,6 @@ dependencies = [
  "nucleo-matcher",
  "portable-pty",
  "reqwest",
- "rusqlite",
  "serde",
  "serde_json",
  "sha2",
@@ -3000,14 +2998,10 @@ dependencies = [
 name = "hearth-harness"
 version = "0.2.11"
 dependencies = [
- "anyhow",
  "async-trait",
- "base64 0.23.1",
  "futures",
  "hearth-proto",
  "libc",
- "reqwest",
- "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
@@ -3024,14 +3018,12 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
- "uuid",
 ]
 
 [[package]]
 name = "hearth-rpc"
 version = "0.2.11"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures",
  "hearth-doc",
@@ -3058,7 +3050,6 @@ dependencies = [
  "hearth-doc",
  "hearth-proto",
  "loro",
- "loro-protocol",
  "reqwest",
  "rusqlite",
  "serde",
@@ -3122,7 +3113,6 @@ dependencies = [
  "gpui_tokio",
  "hearth-doc",
  "hearth-engine",
- "hearth-harness",
  "hearth-proto",
  "hearth-rpc",
  "hearth-syntax",
@@ -4078,12 +4068,6 @@ dependencies = [
  "tracing",
  "xxhash-rust",
 ]
-
-[[package]]
-name = "loro-protocol"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9f1697b501f505f286c411c38b062a73f080028157c766cd75f12e243239454"
 
 [[package]]
 name = "loro-rle"
