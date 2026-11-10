@@ -4,7 +4,10 @@
 //! lives in the titlebar's left control cluster while an existing session is
 //! selected. `UiSettings.open_tabs` is legacy — no longer read or written.
 
+use super::main_pane::header_icon_button;
 use super::*;
+use crate::icons::{self, icon};
+use gpui::AnyElement;
 
 /// Whether a chat belongs in the sidebar's Sessions list under `filter`
 /// (`None` = "All spaces"). Shared with [`Shell::render_active_rows`] so the

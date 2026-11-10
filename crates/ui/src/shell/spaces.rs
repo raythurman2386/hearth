@@ -9,9 +9,16 @@
 //! Child module of `shell` so it renders straight off `Shell`'s private state.
 
 use super::*;
+use crate::composer::ComposerInputEvent;
+use crate::icons::{self, icon};
+use crate::motion;
 use crate::pickers::{breadcrumbs, browser_rows, completion_prefix_len, parent_path};
+use crate::popover::Loadable;
+use crate::state::format_time_ago;
 use gpui::FocusHandle;
+use gpui::{AnyElement, MouseButton, MouseDownEvent};
 use hearth_proto::{ChatIndicator, Device, DriveEntry, DriveListing, FolderListing, Space};
+use hearth_rpc::methods;
 
 struct ActiveChatRow {
     status: ChatIndicator,
