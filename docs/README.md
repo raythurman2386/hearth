@@ -2,16 +2,16 @@
 
 User and contributor guides for **Hearth**. Start with the [root README](../README.md) for install and a short product overview.
 
-Hearth is a **local-first control surface** for coding agents (Raven, Codex, Grok). It is not itself an agent: agents run as subprocesses that Hearth drives over ACP or a native protocol.
+Hearth is a **local-first control surface** for coding agents (Huginn, Codex, Grok). It is not itself an agent: agents run as subprocesses that Hearth drives over ACP or a native protocol.
 
 ## Guides
 
 | Guide | Audience | Contents |
 |---|---|---|
-| [usage.md](usage.md) | Users | Day-to-day UI workflows, sessions, modes, worktrees, Raven |
+| [usage.md](usage.md) | Users | Day-to-day UI workflows, sessions, modes, worktrees, Huginn |
 | [configuration.md](configuration.md) | Users | Env vars, data dir, daemon, defaults, sync opt-in |
 | [harnesses.md](harnesses.md) | Users | Per-agent install notes, protocols, mode behavior |
-| [troubleshooting.md](troubleshooting.md) | Users | Common failures: read-only Raven, PATH, IPC, packaging |
+| [troubleshooting.md](troubleshooting.md) | Users | Common failures: read-only Huginn, PATH, IPC, packaging |
 | [contributing.md](contributing.md) | Contributors | Build, layout, style, how to change harnesses |
 | [testing.md](testing.md) | Contributors | Test layout, smoke commands, fixtures |
 | [security.md](security.md) | Security reviewers | Threat model, what Hearth does and does not confine |
@@ -32,7 +32,7 @@ These are **design notes**, not a getting-started path. Much of the content desc
 ## Quick links
 
 - [Install & run](../README.md#install--run)
-- [Using Raven](usage.md#using-raven)
+- [Using Huginn](usage.md#using-huginn)
 - [Plan / Agent / Chat modes](usage.md#interaction-modes-plan--agent--chat)
 - [Environment variables](configuration.md#environment-variables)
 - [Harness matrix](harnesses.md)

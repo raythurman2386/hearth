@@ -53,7 +53,7 @@ Some engine tests require extra binaries and are `#[ignore]` with instructions i
 For harness/mode/routing changes, a minimum bar that matches recent fixes:
 
 ```bash
-cargo test -p hearth-harness --lib raven_mode_config_option
+cargo test -p hearth-harness --lib huginn_mode_config_option
 cargo test -p hearth-harness --lib mode_config_option_prefers
 cargo test -p hearth-harness --test acp requested_mode_is_sent
 cargo test -p hearth-engine --lib live_routing_requires

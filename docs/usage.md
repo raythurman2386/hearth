@@ -4,9 +4,9 @@ Day-to-day workflows for **Hearth**. See the [root README](../README.md) for ins
 
 ## What Hearth is (and is not)
 
-Hearth is a **desktop control surface**: sessions, composer, transcripts, diffs, terminals, and harness pickers. Coding agents run **outside** Hearth (for example `raven --acp`, Codex, Grok). Hearth starts them, streams events into a chat document, and lets you steer or stop a run.
+Hearth is a **desktop control surface**: sessions, composer, transcripts, diffs, terminals, and harness pickers. Coding agents run **outside** Hearth (for example `huginn --mode plan --acp`, Codex, Grok). Hearth starts them, streams events into a chat document, and lets you steer or stop a run.
 
-Hearth’s CLI has **no** one-shot `-p` / `--mode` task flags. Those belong to agents such as Raven (`raven --mode agent -p "…"`). Running bare `hearth` opens the UI.
+Hearth’s CLI has **no** one-shot `-p` / `--mode` task flags. Those belong to agents such as Huginn (`huginn --mode agent -p "…"`). Running bare `hearth` opens the UI.
 
 ## Launch modes
 
@@ -24,10 +24,10 @@ Default IPC port: **27654** (`HEARTH_IPC_PORT`).
 
 ## First session
 
-1. Install Hearth ([README](../README.md#install--run)) and at least one agent CLI (for Raven: [raythurman2386/raven](https://github.com/raythurman2386/raven)).
+1. Install Hearth ([README](../README.md#install--run)) and at least one agent CLI (for Huginn: [raythurman2386/huginn](https://github.com/raythurman2386/huginn), for example `cargo install --path .` from a checkout).
 2. Run `hearth`.
 3. Pick a **space** (a folder on a device). New chats need a project folder on the new-chat canvas.
-4. Open the harness / model chips on the composer. Choose an installed agent (Raven is registered first among real harnesses and is the UI fallback when nothing is remembered yet and Raven is installed).
+4. Open the harness / model chips on the composer. Choose an installed agent (Huginn is registered first among real harnesses and is the UI fallback when nothing is remembered yet and Huginn is installed).
 5. Type a prompt and send.
 
 Sticky picks (harness, model, mode, favorites) live in `~/.hearth/composer-defaults.json` and restore on new chats. Enablement per device lives in `~/.hearth/harness-prefs.json` (Settings → Agents).
@@ -43,34 +43,34 @@ Attachments and `@` file mentions are supported on the composer; image bytes are
 
 ## Interaction modes (Plan / Agent / Chat)
 
-The composer **Mode** chip exposes `plan`, `agent`, and `chat`. Hearth sends the pick to ACP agents via `session/set_mode` and, when the agent advertises a plan/agent/chat config option (Raven does), also via `session/set_config_option`.
+The composer **Mode** chip exposes `plan`, `agent`, and `chat`. Hearth sends the pick to ACP agents via `session/set_mode` and, when the agent advertises a plan/agent/chat config option (Huginn does), also via `session/set_config_option`.
 
-These ids match **Raven’s** interaction modes:
+These ids match **Huginn’s** interaction modes:
 
-| Mode | Plan step? | Toolset (Raven) | Typical use |
+| Mode | Plan step? | Toolset (Huginn) | Typical use |
 |---|---|---|---|
-| **Plan** | Yes | Read-only until the plan is approved | Default in Raven: propose, then execute |
+| **Plan** | Yes | Read-only until the plan is approved | Hearth’s default for Huginn: propose, then execute |
 | **Agent** | No | Full write / shell tools | Direct coding work |
 | **Chat** | No | Read-only | Q&A without modifying the workspace |
 
 Important truths:
 
-- If the chip is still a dim **Mode** (no pick yet), Hearth sends `mode: null` and the **agent’s own default** applies. For Raven that default is **plan** (read-only tools until approval).
-- **Chat** and **Plan** both look “read-only” to the model until plan approval. Prefer **Agent** when you want Raven to edit files and run shell without a plan gate.
+- If the chip is still a dim **Mode** (no pick yet), Hearth sends `mode: null`; for Huginn it still launches with `--mode plan`, so **plan** (read-only tools until approval) remains the effective default.
+- **Chat** and **Plan** both look “read-only” to the model until plan approval. Prefer **Agent** when you want Huginn to edit files and run shell without a plan gate.
 - Changing mode on a **parked** ACP session restarts the harness runtime so the new mode is applied (same idea as changing model). Mid-turn steers only carry prompt text.
-- For Claude/Codex, the ACP `category: "mode"` surface is a **permission / sandbox** select (`bypassPermissions`, `agent-full-access`, …), not Raven’s plan/agent/chat list. Hearth still shows the Mode chip; permission auto-picks for unattended runs stay on that Claude/Codex path and are not overwritten by a Hearth “Agent” label.
+- For Claude/Codex, the ACP `category: "mode"` surface is a **permission / sandbox** select (`bypassPermissions`, `agent-full-access`, …), not Huginn’s plan/agent/chat list. Hearth still shows the Mode chip; permission auto-picks for unattended runs stay on that Claude/Codex path and are not overwritten by a Hearth “Agent” label.
 
-## Using Raven
+## Using Huginn
 
-Raven speaks ACP over stdio (`raven --acp`). Hearth spawns it as the **Raven** harness.
+Huginn speaks ACP over stdio (`huginn --acp`). Hearth spawns it as the **Huginn** harness with `--mode plan --acp`.
 
 ```bash
-# Install Raven (separate project), then:
+# Install Huginn (separate project; `cargo install --path .` from a checkout), then:
 hearth
-# Composer → harness Raven → Mode Agent → send
+# Composer → harness Huginn → Mode Agent → send
 ```
 
-Override the binary with `RAVEN_EXECUTABLE` if `raven` is not on PATH (Hearth also searches `~/.cargo/bin`, `~/.local/bin`, Homebrew paths). Model lists come from Raven’s ACP `model` config option (provider-qualified ids such as `ollama/…`). Provider credentials and endpoints are Raven’s concern (`~/.raven/config.toml`, `OLLAMA_API_KEY`, etc.) — see Raven’s own docs.
+Override the binary with `HUGINN_EXECUTABLE` if `huginn` is not on PATH (Hearth also searches `~/.cargo/bin`, `~/.local/bin`, Homebrew paths). Model lists come from Huginn’s ACP `model` config option (provider-qualified ids such as `ollama/…`). Provider credentials and endpoints are Huginn’s concern (`~/.huginn/config.toml`, `OLLAMA_API_KEY`, `HUGINN_API_KEY`, etc.) — see Huginn’s own docs.
 
 ## Worktrees, diffs, terminals
 

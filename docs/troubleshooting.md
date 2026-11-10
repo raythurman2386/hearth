@@ -4,13 +4,13 @@ If your issue is not listed, capture logs from `~/.hearth/logs/` (headed/headles
 
 ---
 
-## Raven says it only has read-only tools
+## Huginn says it only has read-only tools
 
 Usually one of:
 
-1. **Mode is Plan or Chat** (or unset). Raven’s default is **plan**, which is read-only until a plan is approved. **Chat** is also read-only. Pick **Agent** on the Mode chip, then send again.
+1. **Mode is Plan or Chat** (or unset). Hearth starts Huginn in **plan** mode, which is read-only until a plan is approved. **Chat** is also read-only. Pick **Agent** on the Mode chip, then send again.
 2. **Mode changed on a live parked session without a restart.** Current Hearth treats a mode change like a model change and should replace the runtime on the next `Run`. If you only steered mid-turn, the steer carries prompt text only — send a normal turn after the mode pick.
-3. **Stale binary.** Rebuild/reinstall Hearth if you are on a build from before the mode-routing fix (`session/set_mode` + Raven `mode` config option + runtime config includes mode).
+3. **Stale binary.** Rebuild/reinstall Hearth if you are on a build from before the mode-routing fix (`session/set_mode` + Huginn `mode` config option + runtime config includes mode).
 
 Verify the chip label shows **Agent** (not a dim **Mode**) before sending.
 
@@ -29,14 +29,14 @@ Draft picks clear when you change the selected chat. If a chip still looks wrong
 
 1. Settings → Agents — the harness may be disabled (`harness-prefs.json` opt-out).
 2. CLI not installed / not on PATH. Desktop launches often see a thinner PATH than your terminal; Hearth snapshots the **login shell** environment unless `HEARTH_NO_LOGIN_SHELL` is set.
-3. Set an override: `RAVEN_EXECUTABLE=/path/to/raven`, `GROK_EXECUTABLE=…`, etc.
+3. Set an override: `HUGINN_EXECUTABLE=/path/to/huginn`, `GROK_EXECUTABLE=…`, etc.
 4. For managed adapters (the Grok npm wrapper), ensure `npm` works; installs land under `~/.hearth/adapters` (or `HEARTH_ADAPTERS_DIR`).
 
 ---
 
 ## Agent not found / spawn failed
 
-- Run the CLI yourself in a terminal (`raven --acp`, `codex`, `grok agent stdio`, …) to confirm it starts.
+- Run the CLI yourself in a terminal (`huginn --mode plan --acp`, `codex`, `grok agent stdio`, …) to confirm it starts.
 - Check `~/.hearth/logs/` for the harness spawn error and stderr tail.
 - ACP agents must speak JSON-RPC over stdio; a binary that only opens a TUI will hang or fail the handshake.
 

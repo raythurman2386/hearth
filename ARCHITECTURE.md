@@ -133,7 +133,7 @@ hearth/
     sync/         hearth-sync     # loro room client (join/VV backfill/fragments/backoff),
                                  # ephemeral presence, DocsStore (SQLite snapshots +
                                  # processed-command ledger)
-    harness/      hearth-harness  # Harness trait + ACP (Raven, Grok),
+    harness/      hearth-harness  # Harness trait + ACP (Huginn, Grok),
                                  # Codex (app-server JSON-RPC), mock; steering mailbox,
                                  # requestInput, models/reasoning/options catalogs
     engine/       hearth-engine   # sessions engine (pub/sub, run journal, recovery, stall
@@ -213,7 +213,7 @@ Direct ports of hearth behaviors (spec: feature-inventory §3):
   diff sidecar, presence); warm-open recent chats (14d/cap 30); nudge-driven cold open; SQLite
   snapshot store.
 - **Harness** (research pending — `docs/research/harness.md`): trait mirroring hearth's
-  `HarnessShape`; Raven and Grok over ACP (`raven --acp`, `grok agent stdio`); Codex via
+  `HarnessShape`; Huginn and Grok over ACP (`huginn --acp`, `grok agent stdio`); Codex via
   app-server JSON-RPC; model/reasoning/option catalogs from each driver.
 - **Repos/diffs**: git2 or `git` subprocess (subprocess — matches hearth, avoids libgit2 edge
   cases); worktrees under `~/.hearth/worktrees`; fs watchers (`notify`) + 2min repair; diff
@@ -248,8 +248,8 @@ Loopback is allowed without whois (tests). Other peers must resolve through `tai
   tailnet `/rpc`; mobile app → out of scope for this repo.
 - **Kept verbatim**: session-doc schema shape + constants, command ledger rules, chat2/registry
   wire frames, render-parts privacy policy, UX behaviors and animation timings.
-- **Harness cut**: Claude Code, Cursor, Hermes, Pi, and OpenCode removed. Remaining: Raven (ACP,
-  default), Codex (native), Grok (ACP), Mock (tests). Retired wire ids deserialize as Raven.
+- **Harness cut**: Claude Code, Cursor, Hermes, Pi, and OpenCode removed. Remaining: Huginn (ACP,
+  default), Codex (native), Grok (ACP), Mock (tests). Retired wire ids deserialize as Huginn.
 
 ## 8. Milestones
 
