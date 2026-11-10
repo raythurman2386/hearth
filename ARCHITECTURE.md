@@ -25,7 +25,7 @@ gpui UI ─ localhost RPC ─ engine A ══ WS over tailnet ══ engine B (h
 
 - **Engine = backend** (was `@hearth/backend`): runs agents, owns auth, terminals, repos/worktrees,
   diff sync, doc hosting. Pure Rust daemon, fully functional headless.
-- **UI = viewport** (was Electron): gpui app rendering engine state. Talks the same typed RPC whether the engine is in-process or a separate daemon. Organized around **spaces** — (device, folder) pairs, local or synced according to the active profile. The sidebar is the data: an attention-sorted Sessions list, filtered by a searchable spaces dropdown ("All spaces" included) that also hosts space management. The horizontal tabs are a **device-local viewport** onto that list (`ui-settings.json` `openTabs`, cross-space): closing a tab is local-only — archiving is an explicit sidebar action — and a sidebar click (re)opens a session as a tab. The new-session canvas carries a space picker (defaulting to the sidebar filter, else the last selected space); new sessions are minted onto the picked space's device via relay-forwardable RPCs.
+- **UI = viewport** (was Electron): gpui app rendering engine state. Talks the same typed RPC whether the engine is in-process or a separate daemon. Organized around **spaces** — (device, folder) pairs in the runtime's profile. The sidebar is the data: an attention-sorted Sessions list, filtered by a searchable spaces dropdown ("All spaces" included) that also hosts space management. The horizontal tabs are a **device-local viewport** onto that list (`ui-settings.json` `openTabs`, cross-space): closing a tab is local-only — archiving is an explicit sidebar action — and a sidebar click (re)opens a session as a tab. The new-session canvas carries a space picker (defaulting to the sidebar filter, else the last selected space); new sessions are minted onto the picked space's device via relay-forwardable RPCs.
 - **Tailnet hub (Rust, `crates/sync`)**: the always-on host binds one TCP port and serves chat2
   rooms, registry rooms, optional `/releases/*`, and (on every device) direct `/rpc`. Identity is
   `tailscale whois`. There is no Cloudflare Worker, Durable Objects package, or WorkOS login on
@@ -45,44 +45,45 @@ Single binary `hearth`:
 
 ### Local-first workspace profiles
 
-Authentication and workspace selection are deliberately separate state machines:
+The device is its own identity: there is no account service, sign-in, or
+organization selection. Authentication is the tailnet (`tailscale whois` on the
+hub); a bare install simply never dials out.
 
-- `AuthState` is live credential state: `SignedOut`, `NeedsOrganization`, or `SignedIn`.
-- `WorkspaceScope` is the immutable storage and transport boundary captured once at engine startup: `Local`, `Synced`, or explicit `Development`.
+- `AuthState` is the live status broadcast the viewports share: `SignedOut` or `SignedIn { user }`. The engine boots signed in as the device identity.
+- `WorkspaceScope` is the immutable storage boundary captured once at engine startup: `Local` or explicit `Development` (the shipped device/tailnet profile).
 
-The engine never re-resolves an open store because `AuthState` changed. This prevents a sign-in or revocation from silently swapping databases or attaching online transports to a runtime that started local-only.
+The engine never re-resolves an open store because `AuthState` changed.
 
 | Startup condition | `WorkspaceScope` | Online transports |
 | --- | --- | --- |
-| No `HEARTH_TAILNET_HOST` (default) | `Local` | Disabled |
+| No `HEARTH_TAILNET_HOST` and no explicit bearer | `Development` | Disabled |
 | `HEARTH_TAILNET_HOST` set | `Development` (dummy bearer) | Enabled — dials the hub; hub bind when this host matches |
-| Legacy WorkOS session path (tests / unused product path) | `Synced` | Historical; not used when the tailnet host is set |
+| `HEARTH_EDGE_TOKEN` set without a tailnet host | `Development` | Enabled — dials `HEARTH_EDGE_*` / the configured endpoint |
 
-On the tailnet path, `hearth login` / `logout` are no-ops. Local-only installs stay on the `Local` profile until restarted with a tailnet host.
+`hearth status` reports the resolved scope, device identity, and tailnet posture.
 
 The resolved profile selects the session snapshots, registry snapshot, run journals, and attachment cache that may contain workspace data:
 
 | Scope | Store and journals | Uploads |
 | --- | --- | --- |
 | `Local` | `{data_dir}/profiles/local/` | `{data_dir}/profiles/local/uploads/` |
-| `Synced` | `{data_dir}/orgs/{org_id}/{user_id}/` | `{data_dir}/orgs/{org_id}/{user_id}/uploads/` |
 | `Development` | `{data_dir}/orgs/{org_id}/{user_id}/` | `{data_dir}/orgs/{org_id}/{user_id}/uploads/` |
 
-The synced and development store roots preserve the historical cloud layout while their attachment caches are account-scoped. Local identity lives in `{data_dir}/local-profile.json`; its UUID is stable across restarts and is not an account or development identity.
+The development store root preserves the historical account-scoped layout while its attachment cache is account-scoped. Local identity lives in `{data_dir}/local-profile.json`; its UUID is stable across restarts and is not the development identity.
 
-Older releases wrote every synced and development attachment to `{data_dir}/uploads/`, and persisted those absolute paths in transcripts. On upgrade, the first synced or development account that opens this legacy cache claims it in `{data_dir}/legacy-uploads-owner.json`. That account may read the cache as a compatibility fallback, but all new staging and commits use its account-scoped uploads root; other accounts cannot read or write the legacy cache.
+Older releases wrote every account-scoped attachment to `{data_dir}/uploads/`, and persisted those absolute paths in transcripts. On upgrade, the first development account that opens this legacy cache claims it in `{data_dir}/legacy-uploads-owner.json`. That account may read the cache as a compatibility fallback, but all new staging and commits use its account-scoped uploads root; other accounts cannot read or write the legacy cache.
 
 Device identity and machine resources remain device-scoped under the common data directory: `device-id`, repository registration, managed worktrees, agent credentials/accounts, and UI settings. They are available across profiles, but they do not contain or expose another profile's transcripts or attachments.
 
 #### Privacy boundary and follow-ups
 
-This first local-first change does not upload, import, link, or delete local sessions when a user signs in. Local attachments remain jailed under the local upload root and are not readable through the synced attachment cache. Returning to local-only mode reopens the same local identity and data.
+Local attachments remain jailed under the local upload root and are not readable through the development attachment cache. Local sessions are never uploaded implicitly: only the profile the runtime was assembled with is open.
 
 The following product work is intentionally deferred:
 
-1. Explicit session selection and copy between local and synced profiles, including attachment copying, provenance, and conflict behavior.
+1. Explicit session selection and copy between local and development profiles, including attachment copying, provenance, and conflict behavior.
 2. Browsing both scopes simultaneously or switching the visible scope without restarting the engine.
-3. A supported self-hosted backend contract covering authentication modes, room APIs, authorization, persistence, and blob storage. Current endpoint and bearer overrides remain development/deployment seams, not a promised compatibility surface.
+3. A supported self-hosted backend contract covering room APIs, authorization, persistence, and blob storage. Current endpoint and bearer overrides remain development/deployment seams, not a promised compatibility surface.
 
 ## 2. Data model — all Loro
 
@@ -97,7 +98,7 @@ Two persistent doc kinds. When sync is enabled, session docs ride the chat2 row 
    run journal), tail/diff sidecars. Constants carried over (`STREAM_COMMIT_MS=120`,
    `DO_FLUSH_MS=5s`, compaction at 8MB, retain 30d, tail 64).
 
-2. **Workspace registry doc** (per profile) — the `registry1` snapshot stores spaces (id, deviceId, path, name?, gitDetected, checkoutId), the chats index (id, deviceId, title, archived, cwd, branch, checkoutId, spaceId, lastSeenAt, lastMessagePreview/At, config), devices, session-status rows, and checkout-diff summary pointers. A space is a device+folder pair in the active profile; the owning device's `SpacesSync` stamps git presence so branch pickers and the diff sidebar can gate without another RPC. Local scope keeps the registry entirely in its profile store. Synced and development scopes join `/registry/{orgId}/ws`, backed by the private per-user room `reg1/{orgId}/{userId}`; rows are never visible to every member of an organization.
+2. **Workspace registry doc** (per profile) — the `registry1` snapshot stores spaces (id, deviceId, path, name?, gitDetected, checkoutId), the chats index (id, deviceId, title, archived, cwd, branch, checkoutId, spaceId, lastSeenAt, lastMessagePreview/At, config), devices, session-status rows, and checkout-diff summary pointers. A space is a device+folder pair in the active profile; the owning device's `SpacesSync` stamps git presence so branch pickers and the diff sidebar can gate without another RPC. Local scope keeps the registry entirely in its profile store. The development (tailnet) scope joins `/registry/{orgId}/ws`, backed by the private per-user room `reg1/{orgId}/{userId}`; rows are never visible to every member of an organization.
 
    Writer discipline: each device writes its own device and session-status rows, rows for chats it hosts, and git stamps for spaces it owns. Creates, renames, archives, and seen marks are LWW sets accepted from any device. `deleteSpace` tombstones the space and every chat/session row in it in one commit. Presence uses ephemeral room frames rather than durable heartbeat writes.
 

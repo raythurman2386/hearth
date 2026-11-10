@@ -43,9 +43,8 @@ Data directory: `~/.hearth` (override with `HEARTH_DATA_DIR`).
 ```bash
 hearth              # UI (embeds engine or attaches to HEARTH_IPC_PORT)
 hearth headless     # engine daemon
-hearth status       # workspace / auth / engine snapshot
+hearth status       # workspace / device identity / engine snapshot
 hearth sync         # sync room introspection (only useful if sync is enabled)
-hearth login|logout # opt into / out of sync for the next engine start
 hearth daemon …     # install/start/stop user service for headless
 hearth update       # apply release update (--check to report only)
 hearth release publish  # on the hub: publish GitHub/local artifacts to /releases
@@ -77,7 +76,7 @@ Details: [docs/usage.md](docs/usage.md), [docs/harnesses.md](docs/harnesses.md).
 
 ## Sync
 
-Sync is **off** by default. This fork syncs over **Tailscale** instead of WorkOS + Cloudflare: the tailnet is the trust boundary, and an always-on host (typically minis) serves the chat2/registry rooms.
+Sync is **off** by default. This fork syncs over **Tailscale** instead of a hosted account service: the tailnet is the trust boundary, and an always-on host (typically minis) serves the chat2/registry rooms.
 
 To opt in, set `HEARTH_TAILNET_HOST` to the hub's MagicDNS name (see [docs/configuration.md](docs/configuration.md)). A bare install never dials out.
 

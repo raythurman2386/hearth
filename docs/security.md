@@ -57,7 +57,7 @@ When documenting or changing harnesses, prefer **failing closed** on unknown mod
 
 - Default: **no** tailnet dial.
 - Opt-in via `HEARTH_TAILNET_HOST` (see [configuration](configuration.md)). The tailnet ACLs are the trust boundary; inbound peers are identified with `tailscale whois`.
-- `hearth login` / `logout` are unused on the tailnet path.
+- There is no account service or sign-in step: the device is the identity, and `hearth status` reports it.
 - Attachments stay on the chat’s host device and transfer over peer `/rpc`, not a shared blob store.
 
 ---
