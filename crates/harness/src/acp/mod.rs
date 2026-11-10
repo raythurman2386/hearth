@@ -420,14 +420,6 @@ impl AcpHarness {
         self
     }
 
-    /// Tune the model-probe bound (tests shrink it; OpenCode defaults to the
-    /// same five-minute, environment-overridable budget as its real startup).
-    #[doc(hidden)]
-    pub fn with_model_discovery_timeout(mut self, timeout: Duration) -> Self {
-        self.model_discovery_timeout = timeout;
-        self
-    }
-
     /// Test seam: the program `run` would spawn (the adapter binary, or —
     /// for a managed npm adapter — its installed entry, else npm as the
     /// installer that would run first).

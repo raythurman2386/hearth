@@ -133,13 +133,6 @@ pub struct Chat {
 }
 
 impl Chat {
-    /// True when this chat syncs over the chat2 dumb relay.
-    pub fn on_chat2(&self) -> bool {
-        self.room_gen.unwrap_or(1) >= 2
-    }
-}
-
-impl Chat {
     /// True when the chat has activity the user hasn't seen on any device.
     pub fn unseen(&self) -> bool {
         match (self.last_message_at, self.last_seen_at) {
@@ -165,7 +158,7 @@ pub enum ChatIndicator {
 
 /// Derive the display status. `live` must already be staleness-gated by the
 /// caller (the UI's 45s window) — pass `None` for a stale/absent session row.
-pub fn chat_indicator(chat: &Chat, live: Option<&Session>) -> ChatIndicator {
+pub(crate) fn chat_indicator(chat: &Chat, live: Option<&Session>) -> ChatIndicator {
     match live.map(|s| s.status) {
         Some(SessionStatus::Working) => ChatIndicator::Working,
         Some(SessionStatus::AwaitingInput) => ChatIndicator::AwaitingInput,

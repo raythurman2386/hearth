@@ -19,11 +19,11 @@ use gpui::{
     StyledText, TextRun, UnderlineStyle, Window, canvas, div, font, point, prelude::*, px, quad,
     size,
 };
-use hearth_syntax::{HighlightKind, HighlightSpan, HighlightedDocument};
+use hearth_syntax::{HighlightKind, HighlightSpan};
 
 use crate::theme::Theme;
 
-use super::parser::{Block, BlockTree, InlineRun, TableAlign};
+use super::parser::{Block, InlineRun, TableAlign};
 use super::veil::{RowVeil, apply_veil, slice_spans};
 
 /// Gap between markdown blocks inside one message (hearth mdBlockGap).
@@ -161,36 +161,6 @@ impl RenderCache {
 
 /// Per-line highlight tokens for a code block, or `None` while pending.
 pub type CodeHighlight<'a> = Option<&'a [Vec<HighlightSpan>]>;
-
-/// Render a whole tree stacked with the md block gap. `highlight` resolves
-/// tokens for a top-level block index (code blocks only).
-pub fn render_tree(
-    tree: &BlockTree,
-    opts: &RenderOptions,
-    theme: &Theme,
-    window: &Window,
-    highlight: &dyn Fn(usize) -> Option<std::sync::Arc<HighlightedDocument>>,
-) -> AnyElement {
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(MD_BLOCK_GAP))
-        .children(tree.blocks.iter().enumerate().map(|(ix, top)| {
-            let document = highlight(ix);
-            render_block(
-                &top.block,
-                ix,
-                ix,
-                opts,
-                theme,
-                window,
-                document
-                    .as_deref()
-                    .map(|document| document.lines.as_slice()),
-            )
-        }))
-        .into_any_element()
-}
 
 /// Render one block (top-level or nested). `top_ix` is the enclosing top-level
 /// block index (cache invalidation scope); `ix` the per-element discriminator.

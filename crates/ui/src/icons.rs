@@ -16,7 +16,7 @@
 
 use std::borrow::Cow;
 
-use gpui::{AssetSource, Hsla, Result, SharedString, Styled as _, Svg, svg};
+use gpui::{AssetSource, Result, SharedString, Styled as _, Svg, svg};
 
 macro_rules! icon_assets {
     ($(($const_name:ident, $path:literal)),+ $(,)?) => {
@@ -166,12 +166,6 @@ icon_assets![
     (PI_MARK, "pi-mark"),
     (OPENCODE_MARK, "opencode-mark"),
 ];
-
-/// The Claude mark's brand orange (`#D97757`) — hearth keeps it even on the
-/// monochrome surface.
-pub fn claude_brand() -> Hsla {
-    gpui::rgb(0xD97757).into()
-}
 
 /// An icon element for an embedded asset path. Size and colour are set by the
 /// caller (`.size(..)`, `.text_color(..)`), matching the web app's

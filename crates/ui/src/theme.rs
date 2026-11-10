@@ -50,10 +50,6 @@ impl Appearance {
         matches!(self, Self::Dark)
     }
 
-    pub fn is_light(self) -> bool {
-        matches!(self, Self::Light)
-    }
-
     /// Map a gpui window appearance onto ours (both vibrant variants are just
     /// the blurred flavour of the same tone).
     pub fn from_window(appearance: gpui::WindowAppearance) -> Self {
@@ -317,8 +313,6 @@ pub struct Theme {
     pub surface_overlay: Hsla,
     /// Hover wash for interactive rows/buttons.
     pub element_hover: Hsla,
-    /// Active/selected wash.
-    pub element_active: Hsla,
     /// Hairline border.
     pub border: Hsla,
     /// Stronger border for focused/raised edges.
@@ -414,9 +408,6 @@ pub struct Theme {
     pub font_sans: SharedString,
     /// Monospace family for code/terminal.
     pub font_mono: SharedString,
-    /// Explicit system fallbacks, for callers that want to skip the lookup.
-    pub font_sans_fallback: SharedString,
-    pub font_mono_fallback: SharedString,
 }
 
 impl Theme {
@@ -459,12 +450,9 @@ impl Theme {
     pub const TRANSCRIPT_FADE_BAND: f32 = 24.0;
     /// Message bubble corner radius.
     pub const BUBBLE_RADIUS: f32 = 16.0;
-    /// Panel / card corner radius.
-    pub const PANEL_RADIUS: f32 = 10.0;
     /// Small control radius (buttons, chips).
     pub const CONTROL_RADIUS: f32 = 6.0;
     /// Base spacing steps.
-    pub const SPACE_XS: f32 = 4.0;
     pub const SPACE_SM: f32 = 8.0;
     pub const SPACE_MD: f32 = 12.0;
     pub const SPACE_LG: f32 = 16.0;
@@ -619,7 +607,6 @@ impl Theme {
             surface_dialog: hex("222822"),  // bg — dialog plane
             surface_overlay: hex("2d3830"), // bg2 — popovers, the highest plane
             element_hover: hsla(0.13, 0.25, 0.55, 0.30), // warm translucent hover
-            element_active: hsla(0.13, 0.25, 0.55, 0.18),
             border: hsla(0.14, 0.15, 0.70, 0.12),
             border_strong: hsla(0.14, 0.15, 0.70, 0.18),
             text: hex("e8d5b7"),       // fg — warm beige
@@ -653,8 +640,6 @@ impl Theme {
             diff_hunk_bg: hsla(345.0 / 360.0, 0.08, 0.50, 0.10),
             font_sans: "Geist".into(),
             font_mono: "Geist Mono".into(),
-            font_sans_fallback: system_sans().into(),
-            font_mono_fallback: system_mono().into(),
         }
     }
 
@@ -677,7 +662,6 @@ impl Theme {
             surface_dialog: hex("fdf6e3"),
             surface_overlay: hex("fdf6e3"),
             element_hover: hsla(0.0, 0.0, 0.10, 0.05),
-            element_active: hsla(0.0, 0.0, 0.10, 0.09),
             border: hsla(0.0, 0.0, 0.0, 0.10),
             border_strong: hsla(0.0, 0.0, 0.0, 0.17),
             text: hex("3d4c53"),       // cool slate foreground
@@ -711,8 +695,6 @@ impl Theme {
             diff_hunk_bg: hsla(345.0 / 360.0, 0.08, 0.50, 0.07),
             font_sans: "Geist".into(),
             font_mono: "Geist Mono".into(),
-            font_sans_fallback: system_sans().into(),
-            font_mono_fallback: system_mono().into(),
         }
     }
 
@@ -760,26 +742,6 @@ impl Default for Theme {
 }
 
 impl Global for Theme {}
-
-fn system_sans() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "Helvetica"
-    } else if cfg!(target_os = "windows") {
-        "Segoe UI"
-    } else {
-        "DejaVu Sans"
-    }
-}
-
-fn system_mono() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "Menlo"
-    } else if cfg!(target_os = "windows") {
-        "Consolas"
-    } else {
-        "DejaVu Sans Mono"
-    }
-}
 
 /// A neutral (chroma 0) oklch tone as Hsla. Chroma 0 means r == g == b exactly,
 /// so this goes straight to an achromatic Hsla (skipping the hue math avoids

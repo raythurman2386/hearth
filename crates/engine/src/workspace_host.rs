@@ -649,7 +649,7 @@ impl WorkspaceHost {
     }
 
     /// Raw workspace session-status rows (all devices').
-    pub fn watch_session_rows(&self) -> watch::Receiver<Vec<Session>> {
+    fn watch_session_rows(&self) -> watch::Receiver<Vec<Session>> {
         self.inner.sessions_tx.subscribe()
     }
 

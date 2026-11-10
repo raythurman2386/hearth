@@ -10,13 +10,6 @@
 //! it from a frame delta or from wall-clock elapsed time and get identical
 //! output.
 
-/// Hearth loader pulse period.
-pub const HEARTH_PULSE_MS: u64 = 2_400;
-/// Gradient matrix spinner wave period.
-pub const GRADIENT_SPIN_MS: u64 = 750;
-
-/// Cells in the hearth wave loader.
-pub const HEARTH_CELLS: usize = 5;
 /// Side length of the gradient spinner matrix.
 pub const MATRIX_SIDE: usize = 3;
 
@@ -32,13 +25,6 @@ pub const PULSE_STAGGER: f32 = 0.15 / 2.4;
 pub const GSPIN_ROW_TINTS: [u32; MATRIX_SIDE] = [0xB6D3EF, 0xEDB185, 0xF888A0];
 /// Opacity a gradient-spinner cell rests at between pulses.
 pub const GSPIN_DIM: f32 = 0.1;
-
-/// Clockwise ring position of each `(row, col)` cell of the 2×3 mini spinner,
-/// top-left first: (0,0) → (0,1) → (1,1) → (2,1) → (2,0) → (1,0). Every cell of
-/// a 2×3 grid is on the ring, so the brightness chases around it.
-pub const MINI_RING: [[usize; 2]; 3] = [[0, 1], [5, 2], [4, 3]];
-/// Cells in the mini spinner's ring.
-pub const MINI_RING_LEN: f32 = 6.0;
 
 /// Linear interpolation.
 pub fn lerp(from: f32, to: f32, t: f32) -> f32 {
@@ -80,16 +66,6 @@ pub fn gspin_opacity(t: f32, dim: f32) -> f32 {
     }
 }
 
-/// The phase offset of a `(row, col)` cell in the 3×3 gradient spinner: the
-/// pulse enters at the bottom edge and converges toward the top-centre cell, so
-/// the wave reads as travelling upward.
-pub fn gspin_cell_phase(row: usize, col: usize) -> f32 {
-    let centre = (MATRIX_SIDE as f32 - 1.0) / 2.0;
-    let max = MATRIX_SIDE as f32 - 1.0 + centre;
-    let d = MATRIX_SIDE as f32 - 1.0 - row as f32 + (col as f32 - centre).abs();
-    if max == 0.0 { 0.0 } else { d / (max + 1.0) }
-}
-
 /// The hearth mark's pixels — `[x, y]` of each 100×100 cell on the 820×940
 /// canvas (hearth's `logo.tsx` CELLS), shared by the static mark and the
 /// animated loader.
@@ -112,11 +88,6 @@ pub const MARK_SPREAD: f32 = 0.55;
 pub fn mark_cell_stagger(x: f32, y: f32) -> f32 {
     let t = (820.0 - x + y) / 1660.0;
     (1.0 - t) * MARK_SPREAD
-}
-
-/// A mark cell's phase at loader phase `delta`.
-pub fn mark_phase(delta: f32, x: f32, y: f32) -> f32 {
-    (delta + mark_cell_stagger(x, y)).rem_euclid(1.0)
 }
 
 #[cfg(test)]
@@ -155,7 +126,7 @@ mod tests {
         );
         // Always inside the unit interval, for any input.
         for raw in [-4.2f32, -0.1, 0.0, 0.5, 7.9] {
-            for index in 0..HEARTH_CELLS {
+            for index in 0..8 {
                 let phase = staggered_phase(raw, index, PULSE_STAGGER);
                 assert!((0.0..1.0).contains(&phase), "{raw} {index} -> {phase}");
             }
@@ -176,17 +147,6 @@ mod tests {
     }
 
     #[test]
-    fn the_gradient_wave_travels_upward() {
-        // The bottom row leads and the top-centre cell trails, which is what
-        // makes the pulse read as rising.
-        let bottom = gspin_cell_phase(MATRIX_SIDE - 1, 1);
-        let top = gspin_cell_phase(0, 1);
-        assert!(bottom < top, "bottom {bottom} should lead top {top}");
-        // Symmetric about the centre column.
-        close(gspin_cell_phase(1, 0), gspin_cell_phase(1, 2), "symmetry");
-    }
-
-    #[test]
     fn the_mark_sweeps_from_tail_to_head() {
         // The stagger adds phase, so leading means a LARGER value: the tail tip
         // is already mid-cycle while the head is still at zero.
@@ -199,11 +159,6 @@ mod tests {
             MARK_SPREAD * (1.0 - 100.0 / 1660.0),
             "tail leads by the spread",
         );
-        // Every cell stays inside the unit interval once phased.
-        for (x, y) in MARK_CELLS {
-            let phase = mark_phase(0.3, x, y);
-            assert!((0.0..1.0).contains(&phase), "({x},{y}) -> {phase}");
-        }
         // Every cell's stagger stays inside the sweep window.
         for (x, y) in MARK_CELLS {
             let stagger = mark_cell_stagger(x, y);
@@ -212,12 +167,5 @@ mod tests {
                 "({x},{y}) -> {stagger}"
             );
         }
-    }
-
-    #[test]
-    fn the_mini_ring_visits_every_cell_once() {
-        let mut seen: Vec<usize> = MINI_RING.iter().flatten().copied().collect();
-        seen.sort_unstable();
-        assert_eq!(seen, (0..MINI_RING_LEN as usize).collect::<Vec<_>>());
     }
 }

@@ -32,16 +32,6 @@ use hearth_proto::{Chat, ChatConfig, Device, Session, SessionStatus, Space};
 
 use crate::schema::DocError;
 
-/// Workspace doc schema version. v2 = the spaces overhaul (spaces container,
-/// chat spaceId/lastSeenAt) — a destructive break shipped via a fresh doc/room
-/// (`workspace2` / `ws2/{orgId}`), so no v1 reader exists.
-pub const WORKSPACE_SCHEMA_VERSION: i64 = 2;
-
-/// Ephemeral presence key for a device (`presence/{deviceId}` → online timestamp).
-pub fn presence_key(device_id: &str) -> String {
-    format!("presence/{device_id}")
-}
-
 /// Everything in the workspace doc, materialized (`read_all`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -464,24 +454,6 @@ impl WorkspaceDoc {
     }
 
     // ── meta ────────────────────────────────────────────────────────────────
-
-    /// Stamp `meta.schemaVersion` when absent or lower (idempotent — steady
-    /// state adds nothing to the oplog). Returns the version now in the doc.
-    pub fn ensure_schema_version(&self) -> Result<i64, DocError> {
-        let meta = self.doc.get_map("meta");
-        let current = match meta.get("schemaVersion") {
-            Some(loro::ValueOrContainer::Value(LoroValue::I64(v))) => Some(v),
-            _ => None,
-        };
-        match current {
-            Some(v) if v >= WORKSPACE_SCHEMA_VERSION => Ok(v),
-            _ => {
-                meta.insert("schemaVersion", WORKSPACE_SCHEMA_VERSION)?;
-                self.doc.commit();
-                Ok(WORKSPACE_SCHEMA_VERSION)
-            }
-        }
-    }
 
     // ── row plumbing ────────────────────────────────────────────────────────
 
@@ -1054,21 +1026,6 @@ mod tests {
         let seen_b = b.chat("chat-1").unwrap().unwrap().last_seen_at;
         assert_eq!(seen_a, seen_b);
         assert!(matches!(seen_a, Some(t) if t == ts(9_000) || t == ts(9_001)));
-    }
-
-    #[test]
-    fn schema_version_stamp_is_idempotent() {
-        let ws = WorkspaceDoc::new();
-        assert_eq!(
-            ws.ensure_schema_version().unwrap(),
-            WORKSPACE_SCHEMA_VERSION
-        );
-        let before = ws.doc().oplog_vv();
-        assert_eq!(
-            ws.ensure_schema_version().unwrap(),
-            WORKSPACE_SCHEMA_VERSION
-        );
-        assert_eq!(ws.doc().oplog_vv(), before);
     }
 
     #[test]

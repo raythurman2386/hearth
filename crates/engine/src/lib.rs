@@ -37,12 +37,11 @@ pub mod uploads;
 pub mod workspace_host;
 
 pub use agent_accounts::{AgentAccounts, AgentAccountsConfig};
-pub use auth::{Auth, AuthConfig, AuthState, AuthUser, OrgMembership};
-pub use change_requests::{ChangeRequestCacheKey, CheckoutChangeRequests};
+pub use auth::{Auth, AuthConfig, AuthState, AuthUser};
+pub use change_requests::CheckoutChangeRequests;
 pub use diff_sync::{
-    CheckoutDiffSync, DiffFileTextPair, DiffSidecar, DiffSnapshot, TurnSnapshot,
-    capture_commit_diff, capture_diff, capture_diff_against, capture_turn_diff, merge_base,
-    read_diff_file_text, snapshot_tree, working_diff_base,
+    CheckoutDiffSync, capture_commit_diff, capture_diff, capture_diff_against, capture_turn_diff,
+    merge_base, read_diff_file_text, snapshot_tree, working_diff_base,
 };
 pub use doc_host::{ChatDocHandle, DocHost, DocHostConfig, EdgeConfig};
 pub use instance_lock::InstanceLock;
@@ -51,7 +50,7 @@ pub use registry::{HarnessDescriptor, HarnessRegistry, default_registry};
 pub use repos::{CheckoutIdentity, Repos, worktree_branch_from_title};
 pub use rpc::EngineRpc;
 pub use run_journal::{JournalError, RunJournal};
-pub use sessions::{JournaledEvent, SessionsEngine, SteerOutcome};
+pub use sessions::{SessionsEngine, SteerOutcome};
 pub use source_control::{
     BranchHeadContext, ChangeRequestError, ChangeRequestProvider, ChangeRequestResolution,
     ChangeRequestResolver, CheckoutChangeRequestLookup, CheckoutSourceContext, GitHubCli,
@@ -59,8 +58,8 @@ pub use source_control::{
 };
 pub use spaces::SpacesSync;
 pub use terminals::Terminals;
-pub use titles::TitleGenerator;
-pub use uploads::{AttachmentChunk, Uploads};
+pub(crate) use titles::TitleGenerator;
+pub use uploads::Uploads;
 pub use workspace_host::{
     DEFAULT_ORG_ID, DEFAULT_USER_ID, WORKSPACE_DOC_ID, WorkspaceHost, WorkspaceHostConfig,
 };

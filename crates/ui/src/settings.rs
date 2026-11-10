@@ -51,9 +51,6 @@ const FILE_NAME: &str = "ui-settings.json";
 pub struct UiSettings {
     pub sidebar_width: f32,
     pub sidebar_collapsed: bool,
-    /// Legacy: the grouped-by-project toggle predates spaces (which group by
-    /// folder inherently). Kept for file compatibility; no longer read.
-    pub sidebar_grouped: bool,
     /// The last selected space — restored on boot when the row still exists;
     /// also the new-tab default when the sidebar filter is "All".
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -68,14 +65,6 @@ pub struct UiSettings {
     /// Sidebar session filter: a space id, or `None` for "All spaces".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub space_filter: Option<String>,
-    /// Legacy: per-space tab order, from when tabs were the selected space's
-    /// non-archived sessions. Kept for file compatibility; no longer read.
-    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub tab_order: std::collections::HashMap<String, Vec<String>>,
-    /// Legacy: manual sidebar space order, from when spaces were a sidebar
-    /// list. Kept for file compatibility; no longer read.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub space_order: Vec<String>,
     /// Session notification chimes (done / awaiting-input). `HEARTH_DISABLE_SOUND`
     /// overrides.
     pub sound_enabled: bool,
@@ -86,13 +75,7 @@ pub struct UiSettings {
     /// the foreground case).
     pub notifications_background_only: bool,
     pub right_pane_width: f32,
-    /// Legacy: panel *open* flags are session-scoped in-memory state now
-    /// (`shell::SessionPanels`, hearth `sessionPanels` parity). Kept for file
-    /// compatibility; no longer read or written by the shell.
-    pub right_pane_open: bool,
     pub terminal_height: f32,
-    /// Legacy — see [`Self::right_pane_open`].
-    pub terminal_open: bool,
     /// Customizable shortcut combos (feature-inventory §1.4).
     pub keymap: KeymapConfig,
     /// Light/dark preference. Defaults to following the OS.
@@ -106,19 +89,14 @@ impl Default for UiSettings {
         Self {
             sidebar_width: SIDEBAR_DEFAULT,
             sidebar_collapsed: false,
-            sidebar_grouped: false,
             last_space_id: None,
             open_tabs: None,
             space_filter: None,
-            tab_order: std::collections::HashMap::new(),
-            space_order: Vec::new(),
             sound_enabled: true,
             notifications_enabled: true,
             notifications_background_only: true,
             right_pane_width: RIGHT_PANE_DEFAULT,
-            right_pane_open: false,
             terminal_height: TERMINAL_DEFAULT_HEIGHT,
-            terminal_open: false,
             keymap: KeymapConfig::default(),
             appearance: crate::appearance::AppearanceMode::default(),
             diff_split: false,
@@ -433,22 +411,14 @@ mod tests {
         let settings = UiSettings {
             sidebar_width: 300.0,
             sidebar_collapsed: true,
-            sidebar_grouped: true,
             last_space_id: Some("space-1".into()),
             open_tabs: Some(vec!["b".to_string(), "a".to_string()]),
             space_filter: Some("space-1".into()),
-            tab_order: std::collections::HashMap::from([(
-                "space-1".to_string(),
-                vec!["b".to_string(), "a".to_string()],
-            )]),
-            space_order: vec!["space-2".to_string(), "space-1".to_string()],
             sound_enabled: false,
             notifications_enabled: false,
             notifications_background_only: false,
             right_pane_width: 700.0,
-            right_pane_open: true,
             terminal_height: 320.0,
-            terminal_open: true,
             keymap: KeymapConfig {
                 toggle_sidebar: "mod-shift-s".into(),
                 ..KeymapConfig::default()
@@ -532,7 +502,7 @@ mod tests {
         assert_eq!(d.sidebar_width, 256.0);
         assert_eq!(d.right_pane_width, 520.0);
         assert_eq!(d.terminal_height, 280.0);
-        assert!(!d.sidebar_collapsed && !d.right_pane_open && !d.terminal_open);
+        assert!(!d.sidebar_collapsed);
     }
 
     #[test]
@@ -689,7 +659,6 @@ mod tests {
         std::fs::write(UiSettings::path(dir.path()), r#"{"sidebarWidth": 300}"#).unwrap();
         let loaded = UiSettings::load(dir.path());
         assert_eq!(loaded.keymap, KeymapConfig::default());
-        assert!(!loaded.sidebar_grouped);
     }
 
     #[test]
