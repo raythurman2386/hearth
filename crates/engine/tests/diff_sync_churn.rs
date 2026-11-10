@@ -9,11 +9,12 @@
 //! full capture whose row writes triggered the next reconcile. These tests pin
 //! the two dampers: memoized identity resolution and the orphan grace period.
 
+mod common;
+
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
-use hearth_engine::{CheckoutDiffSync, EngineCore, HarnessRegistry};
+use hearth_engine::{CheckoutDiffSync, EngineCore};
 use hearth_proto::CheckoutDiff;
 
 async fn git(cwd: &Path, args: &[&str]) {
@@ -47,13 +48,7 @@ async fn init_dirty_repo(dir: &Path) {
 
 fn assemble(dir: &Path) -> EngineCore {
     std::fs::create_dir_all(dir).expect("data dir");
-    EngineCore::assemble(
-        dir,
-        Arc::new(HarnessRegistry::new()),
-        hearth_proto::HarnessId::Mock,
-        None,
-    )
-    .expect("engine assembles")
+    common::assemble(dir)
 }
 
 /// Poll `sync`'s watch until a diff for some checkout appears (or panic).

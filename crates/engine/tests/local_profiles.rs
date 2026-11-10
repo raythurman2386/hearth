@@ -1,11 +1,12 @@
 //! Integrated regressions for local-first profile privacy and lifecycle boundaries.
 
+mod common;
+
 use std::path::Path;
 use std::sync::{Arc, Barrier, Mutex};
 
 use hearth_engine::{
     AuthState, Engine, EngineConfig, EngineCore, EngineProfile, HarnessId, WorkspaceScope,
-    default_registry,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -31,8 +32,7 @@ fn config(
 }
 
 fn assemble(profile: EngineProfile) -> EngineCore {
-    EngineCore::assemble_with_profile(profile, Arc::new(default_registry()), HarnessId::Mock, None)
-        .expect("assemble profile")
+    common::assemble_profile(profile)
 }
 
 async fn shutdown(core: EngineCore) {

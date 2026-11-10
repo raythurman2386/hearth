@@ -7,6 +7,8 @@
 // `Response` — its size is not ours to shrink.
 #![allow(clippy::result_large_err)]
 
+mod common;
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -187,9 +189,7 @@ fn registry() -> Arc<HarnessRegistry> {
 }
 
 fn assemble(dir: &std::path::Path, device_id: &str) -> EngineCore {
-    std::fs::create_dir_all(dir).expect("create data dir");
-    std::fs::write(dir.join("device-id"), device_id).expect("write device id");
-    EngineCore::assemble(dir, registry(), HarnessId::Mock, None).expect("engine assembles")
+    common::assemble_with_device(dir, registry(), device_id)
 }
 
 struct StaticChangeRequestLookup {

@@ -2,14 +2,16 @@
 //! workspace row's `archived` flag back off for message-bearing commands (Run,
 //! Steer) — and only those; an Interrupt leaves the archive state alone.
 
+mod common;
+use common::*;
+
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use hearth_doc::{MessageRole, MessageStatus, SessionCommandPayload, SessionMessageEntry};
+use hearth_doc::SessionCommandPayload;
 use hearth_engine::{EngineCore, HarnessRegistry};
 use hearth_harness::{Harness, HarnessError, RunControls};
 use hearth_proto::{
@@ -68,33 +70,6 @@ impl Harness for AckHarness {
         ];
         Ok(futures::stream::iter(events).boxed())
     }
-}
-
-async fn wait_for<F>(mut predicate: F, what: &str)
-where
-    F: FnMut() -> bool,
-{
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while !predicate() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(15)).await;
-    }
-}
-
-fn complete_assistant_count(core: &EngineCore) -> usize {
-    let entries: Vec<SessionMessageEntry> = core
-        .doc_host
-        .open(CHAT)
-        .ok()
-        .and_then(|h| h.doc().read_entries().ok())
-        .unwrap_or_default();
-    entries
-        .iter()
-        .filter(|e| e.role == MessageRole::Assistant && e.status == Some(MessageStatus::Complete))
-        .count()
 }
 
 fn run_payload(message_id: &str) -> SessionCommandPayload {
@@ -168,7 +143,11 @@ async fn sending_a_message_unarchives_the_chat() {
         !archived(&core),
         "sending a message must unarchive the chat"
     );
-    wait_for(|| complete_assistant_count(&core) == 1, "turn to complete").await;
+    wait_for(
+        || complete_assistant_count(&core, CHAT) == 1,
+        "turn to complete",
+    )
+    .await;
 
     // A non-message command must NOT revive it.
     core.workspace

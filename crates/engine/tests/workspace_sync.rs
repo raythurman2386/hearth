@@ -5,6 +5,9 @@
 //! updates (`export(updates)`) between the two engines' workspace docs on a timer,
 //! which is exactly what `RegistryClient` + the hub registry room do over the wire.
 
+mod common;
+use common::*;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -111,9 +114,7 @@ fn registry() -> Arc<HarnessRegistry> {
 
 /// Assemble an engine with a fixed device id under its own data dir (offline).
 fn assemble(dir: &std::path::Path, device_id: &str) -> EngineCore {
-    std::fs::create_dir_all(dir).expect("create data dir");
-    std::fs::write(dir.join("device-id"), device_id).expect("write device id");
-    EngineCore::assemble(dir, registry(), HarnessId::Mock, None).expect("engine core assembles")
+    common::assemble_with_device(dir, registry(), device_id)
 }
 
 /// The in-process room: an in-memory registry server speaking the DO's JSON
@@ -129,35 +130,17 @@ async fn bridge(
     server
 }
 
-async fn wait_for<F>(mut predicate: F, what: &str)
+async fn wait_for<F>(predicate: F, what: &str)
 where
     F: FnMut() -> bool,
 {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while !predicate() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-}
-
-fn run_request(prompt: &str) -> RunRequest {
-    RunRequest {
-        mode: None,
-        prompt: prompt.into(),
-        harness: None,
-        model: None,
-        reasoning: None,
-        model_options: Default::default(),
-        cwd: "/tmp".into(),
-        sandbox: SandboxLevel::WorkspaceWrite,
-        auto_approve: true,
-        attachments: Vec::new(),
-        worktree: None,
-        resume: None,
-    }
+    common::wait_for_with(
+        predicate,
+        what,
+        Duration::from_secs(10),
+        Duration::from_millis(10),
+    )
+    .await;
 }
 
 /// Queue a run command into a chat doc the way a remote viewer would (ledger rule 1).

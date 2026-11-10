@@ -5,6 +5,9 @@
 //! until an app restart (the exact "sync fails and the chat never updates"
 //! report).
 
+mod common;
+use common::*;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,8 +15,8 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use hearth_doc::{MessageRole, MessageStatus, SessionCommandPayload};
-use hearth_engine::{EdgeConfig, EngineCore, HarnessRegistry};
+use hearth_doc::{MessageRole, SessionCommandPayload};
+use hearth_engine::{EngineCore, HarnessRegistry};
 use hearth_harness::{Harness, HarnessError, RunControls};
 use hearth_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ReasoningLevel, RunRequest, SandboxLevel,
@@ -80,32 +83,20 @@ fn registry() -> Arc<HarnessRegistry> {
 }
 
 fn assemble(dir: &std::path::Path, device_id: &str, hub: &str) -> EngineCore {
-    std::fs::create_dir_all(dir).expect("create data dir");
-    std::fs::write(dir.join("device-id"), device_id).expect("write device id");
-    let edge = Some(EdgeConfig::with_static_token(hub, "tailnet").with_device(device_id));
-    EngineCore::assemble_with_identity(
-        dir,
-        registry(),
-        HarnessId::Mock,
-        edge,
-        "reopen-org",
-        "alice",
-    )
-    .expect("engine core assembles")
+    common::assemble_with_identity(dir, registry(), device_id, hub, "reopen-org")
 }
 
-async fn wait_for<F>(mut predicate: F, what: &str)
+async fn wait_for<F>(predicate: F, what: &str)
 where
     F: FnMut() -> bool,
 {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
-    while !predicate() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    common::wait_for_with(
+        predicate,
+        what,
+        Duration::from_secs(20),
+        Duration::from_millis(25),
+    )
+    .await;
 }
 
 /// Wait until the engine instance lock on `dir` is free (the prior engine's
@@ -121,17 +112,6 @@ fn wait_lock_released(dir: &std::path::Path) {
         );
         std::thread::sleep(Duration::from_millis(25));
     }
-}
-
-fn complete_assistant(core: &EngineCore) -> usize {
-    core.doc_host
-        .open(CHAT)
-        .ok()
-        .and_then(|h| h.doc().read_entries().ok())
-        .unwrap_or_default()
-        .iter()
-        .filter(|e| e.role == MessageRole::Assistant && e.status == Some(MessageStatus::Complete))
-        .count()
 }
 
 fn user_entries(core: &EngineCore) -> Vec<String> {
@@ -218,10 +198,14 @@ async fn viewer_reopen_converges_on_host_written_transcript() {
             },
         )
         .expect("queue first run");
-    wait_for(|| complete_assistant(&a) == 1, "host first turn completes").await;
+    wait_for(
+        || complete_assistant_count(&a, CHAT) == 1,
+        "host first turn completes",
+    )
+    .await;
     // The viewer's snapshot converges (the room carries the row).
     wait_for(
-        || complete_assistant(&b) == 1,
+        || complete_assistant_count(&b, CHAT) == 1,
         "viewer converged on first turn before reopen",
     )
     .await;
@@ -246,7 +230,7 @@ async fn viewer_reopen_converges_on_host_written_transcript() {
     // The reopened viewer must converge on the transcript written BEFORE
     // the reopen (its stale snapshot + cursor path).
     wait_for(
-        || complete_assistant(&b2) >= 1,
+        || complete_assistant_count(&b2, CHAT) >= 1,
         "reopened viewer converges on pre-reopen transcript",
     )
     .await;

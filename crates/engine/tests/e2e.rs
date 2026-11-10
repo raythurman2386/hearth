@@ -2,6 +2,9 @@
 //! journal + broadcast + folded doc entries, plus interrupt/recovery/idempotence
 //! and the RPC surface over the in-memory transport.
 
+mod common;
+use common::*;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,7 +16,7 @@ use hearth_doc::{
     MessagePart, MessageRole, MessageStatus, SegmentWriter, SessionCommandEntry,
     SessionCommandPayload, SessionCommandStatus, SessionDoc, SessionMessageEntry,
 };
-use hearth_engine::{EngineCore, HarnessRegistry, RunJournal};
+use hearth_engine::{EngineCore, RunJournal};
 use hearth_harness::mock::MockHarness;
 use hearth_harness::{Harness, HarnessError, RunControls};
 use hearth_proto::{
@@ -24,32 +27,6 @@ use hearth_sync::DocsStore;
 
 const CHAT: &str = "chat-e2e";
 const VIEWER: &str = "viewer-device";
-
-fn run_request(prompt: &str) -> RunRequest {
-    RunRequest {
-        mode: None,
-        prompt: prompt.into(),
-        harness: None,
-        model: None,
-        reasoning: None,
-        model_options: Default::default(),
-        cwd: "/tmp".into(),
-        sandbox: SandboxLevel::WorkspaceWrite,
-        auto_approve: true,
-        attachments: Vec::new(),
-        worktree: None,
-        resume: None,
-    }
-}
-
-fn done(status: DoneStatus) -> AgentEvent {
-    AgentEvent::Done {
-        status,
-        result: None,
-        error: None,
-        session_id: Some("hs-1".into()),
-    }
-}
 
 fn mock_script() -> Vec<AgentEvent> {
     vec![
@@ -137,15 +114,8 @@ impl Harness for ScriptedHarness {
     }
 }
 
-fn registry_with(harness: Arc<dyn Harness>) -> Arc<HarnessRegistry> {
-    let registry = HarnessRegistry::new();
-    registry.register(harness);
-    Arc::new(registry)
-}
-
 fn assemble(dir: &std::path::Path, harness: Arc<dyn Harness>) -> EngineCore {
-    EngineCore::assemble(dir, registry_with(harness), HarnessId::Mock, None)
-        .expect("engine core assembles")
+    common::assemble_with_harness(dir, harness)
 }
 
 /// Queue a command into the chat doc the way a REMOTE viewer device would: an immutable
@@ -173,7 +143,7 @@ fn queue_as_viewer(doc: &SessionDoc, id: &str, payload: SessionCommandPayload) {
     .expect("queue command");
 }
 
-async fn wait_for<F>(mut predicate: F, what: &str)
+async fn wait_for<F>(predicate: F, what: &str)
 where
     F: FnMut() -> bool,
 {
@@ -181,14 +151,7 @@ where
     // A 10s deadline flaked on a loaded CI runner (18 concurrent tokio
     // runtimes) while the same assertions passed in <1s locally — the poll
     // budget must never be the failure mode.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-    while !predicate() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(15)).await;
-    }
+    common::wait_for_secs(predicate, what, 60).await;
 }
 
 fn entries(core: &EngineCore) -> Vec<SessionMessageEntry> {
@@ -204,11 +167,7 @@ fn entries(core: &EngineCore) -> Vec<SessionMessageEntry> {
 /// segment writer's `push_container` and its field writes deserializes with
 /// fields missing — treat that instant as "not yet" instead of panicking.
 fn entries_now(core: &EngineCore) -> Vec<SessionMessageEntry> {
-    core.doc_host
-        .open(CHAT)
-        .ok()
-        .and_then(|h| h.doc().read_entries().ok())
-        .unwrap_or_default()
+    common::entries(core, CHAT)
 }
 
 fn command_status(core: &EngineCore, id: &str) -> Option<(SessionCommandStatus, Option<String>)> {
@@ -1795,20 +1754,6 @@ async fn real_codex_sees_uploaded_image_inline() {
         "claude should name the image's color; got: {reply:?}"
     );
     core.shutdown().await;
-}
-
-async fn wait_for_within_secs<F>(mut predicate: F, what: &str, secs: u64)
-where
-    F: FnMut() -> bool,
-{
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
-    while !predicate() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
 }
 
 // ---------------------------------------------------------------------------

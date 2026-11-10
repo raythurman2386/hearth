@@ -1,17 +1,17 @@
 //! M5a integration: repos/worktrees, folder listing, checkout-diff capture + sync,
 //! terminals, and the RPC dispatch for each new method over the memory transport.
 
+mod common;
+
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 
 use hearth_engine::{
-    EngineCore, HarnessRegistry, Repos, Terminals, capture_commit_diff, capture_diff,
-    capture_diff_against, capture_turn_diff, merge_base, read_diff_file_text, snapshot_tree,
-    working_diff_base,
+    EngineCore, Repos, Terminals, capture_commit_diff, capture_diff, capture_diff_against,
+    capture_turn_diff, merge_base, read_diff_file_text, snapshot_tree, working_diff_base,
 };
 use hearth_proto::{GitHistoryRefKind, TerminalEvent};
 use hearth_rpc::methods;
@@ -70,13 +70,7 @@ fn test_repos(data_dir: &Path) -> Repos {
 
 fn assemble(dir: &Path) -> EngineCore {
     std::fs::create_dir_all(dir).expect("data dir");
-    EngineCore::assemble(
-        dir,
-        Arc::new(HarnessRegistry::new()),
-        hearth_proto::HarnessId::Mock,
-        None,
-    )
-    .expect("engine assembles")
+    common::assemble(dir)
 }
 
 fn decoded(events: &[TerminalEvent]) -> String {

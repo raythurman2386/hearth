@@ -3,6 +3,9 @@
 //! no `{edge}/device/{id}/nudge` HTTP route — matching production Tailscale
 //! assembly where `HostRelay` is never started.
 
+mod common;
+use common::*;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,8 +13,8 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use hearth_doc::{MessageRole, MessageStatus, SessionCommandPayload};
-use hearth_engine::{EdgeConfig, EngineCore, HarnessId, HarnessRegistry};
+use hearth_doc::{MessageRole, SessionCommandPayload};
+use hearth_engine::{EngineCore, HarnessId, HarnessRegistry};
 use hearth_harness::{Harness, HarnessError, RunControls};
 use hearth_proto::{
     AgentEvent, Device, DoneStatus, Model, ReasoningLevel, RunRequest, SandboxLevel, SteeringMode,
@@ -78,22 +81,7 @@ fn registry() -> Arc<HarnessRegistry> {
 }
 
 fn assemble(dir: &std::path::Path, device_id: &str, hub: &str) -> EngineCore {
-    std::fs::create_dir_all(dir).expect("create data dir");
-    std::fs::write(dir.join("device-id"), device_id).expect("write device id");
-    let edge = Some(EdgeConfig::with_static_token(hub, "tailnet").with_device(device_id));
-    EngineCore::assemble_with_identity(dir, registry(), HarnessId::Mock, edge, "wake-org", "alice")
-        .expect("engine assembles")
-}
-
-fn complete_assistant_count(core: &EngineCore) -> usize {
-    core.doc_host
-        .open(CHAT)
-        .ok()
-        .and_then(|h| h.doc().read_entries().ok())
-        .unwrap_or_default()
-        .iter()
-        .filter(|e| e.role == MessageRole::Assistant && e.status == Some(MessageStatus::Complete))
-        .count()
+    common::assemble_with_identity(dir, registry(), device_id, hub, "wake-org")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -224,7 +212,7 @@ async fn remote_host_wakes_via_peer_open_chat_without_device_room() {
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
-        if complete_assistant_count(&core_b) == 1 {
+        if complete_assistant_count(&core_b, CHAT) == 1 {
             break;
         }
         assert!(

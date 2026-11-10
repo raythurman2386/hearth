@@ -4,18 +4,17 @@
 //! the on-disk stand-in for the legacy s2 room used in production). The doc
 //! must fill back in without any run, command, or user action.
 
-use std::sync::Arc;
+mod common;
+
 use std::time::Duration;
 
 use hearth_doc::{MessagePart, MessageRole, MessageStatus, SessionDoc, SessionMessageEntry};
-use hearth_engine::{EngineCore, HarnessRegistry};
-use hearth_proto::HarnessId;
+use hearth_engine::EngineCore;
 
 const CHAT: &str = "chat-salvage";
 
 fn assemble(dir: &std::path::Path) -> EngineCore {
-    EngineCore::assemble(dir, Arc::new(HarnessRegistry::new()), HarnessId::Mock, None)
-        .expect("engine core assembles")
+    common::assemble(dir)
 }
 
 fn entry(
