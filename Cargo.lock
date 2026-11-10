@@ -3027,7 +3027,6 @@ dependencies = [
  "async-trait",
  "futures",
  "hearth-doc",
- "hearth-proto",
  "hearth-sync",
  "serde",
  "serde_json",
