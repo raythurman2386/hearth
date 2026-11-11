@@ -17,12 +17,10 @@ use crate::state::App;
 use crate::theme::Theme;
 
 use super::panels::{self, conversation_width, right_target, sidebar_target};
-use super::tabs::right_pane_expand_icon;
 use super::titlebar::platform_cluster_inset;
 use super::{
     RightSurface, Route, add_diff_surface, add_terminal_surface, open_settings,
-    resolved_right_active, right_pane_open, terminal_open, toggle_right_pane,
-    toggle_right_pane_expand,
+    resolved_right_active, right_pane_open, terminal_open,
 };
 
 /// The boot splash's bare page under the overlay.
@@ -406,19 +404,6 @@ fn right_pane(app: &App, theme: &Theme) -> El {
                 .grow(1.0),
         );
     }
-    header = header
-        .child(
-            icon(right_pane_expand_icon(app.shell.right_pane_expanded), 14.0)
-                .color(theme.text_muted)
-                .cursor(Cursor::Pointer)
-                .on_press(|app: &mut App| toggle_right_pane_expand(app)),
-        )
-        .child(
-            icon(&icons::CLOSE, 12.0)
-                .color(theme.text_muted)
-                .cursor(Cursor::Pointer)
-                .on_press(|app: &mut App| toggle_right_pane(app)),
-        );
 
     col()
         .key("right-pane-body")
