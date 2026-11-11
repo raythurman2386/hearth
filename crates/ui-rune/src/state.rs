@@ -312,6 +312,16 @@ impl App {
             .unwrap_or(&[])
     }
 
+    /// Optimistic echoes for the selected chat, shown until the doc frame
+    /// carrying the same message id arrives.
+    pub fn pending_echoes(&self) -> &[SessionMessageEntry] {
+        self.selected_chat
+            .as_deref()
+            .and_then(|id| self.echoes.get(id))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
     pub fn watch_subagent_doc(&mut self, doc_id: String) {
         if self.sub_watch_guards.contains_key(&doc_id) {
             return;

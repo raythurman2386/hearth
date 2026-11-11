@@ -14,46 +14,59 @@
 
 use rune::{Key, KeyEvent, Tx};
 
+use crate::settings::ShortcutId;
 use crate::state::App;
 
 use super::{open_new_session, spaces, toggle_right_pane, toggle_sidebar, toggle_terminal};
 
 /// Handle a window key the focused control passed on. True when the shell took it.
-pub fn on_key(app: &mut App, ev: &KeyEvent, _tx: &mut Tx) -> bool {
+pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     // Overlays own Escape while their modal is mounted; if focus is elsewhere, close the
     // shell's own popups rather than leaving one stranded.
     if matches!(ev.key, Key::Escape) && close_popups(app) {
         return true;
     }
 
-    // Ctrl+Tab / Ctrl+Shift+Tab cycle the sidebar's sessions (chat route only).
-    if matches!(ev.key, Key::Tab) && ev.mods.ctrl {
-        super::tabs::cycle_session(app, !ev.mods.shift);
+    // Session cycling, honoring the user's persisted bindings.
+    if chord_matches(app, ShortcutId::NextSession, ev, tx) {
+        super::tabs::cycle_session(app, true);
+        return true;
+    }
+    if chord_matches(app, ShortcutId::PrevSession, ev, tx) {
+        super::tabs::cycle_session(app, false);
         return true;
     }
 
-    // The customizable shortcuts use the primary modifier (⌘ / Ctrl).
-    for c in ['n', 's', 'b', 'j', 'k'] {
-        if !ev.is_command(c) {
-            continue;
+    // The customizable command shortcuts.
+    let bindings: [(ShortcutId, fn(&mut App)); 4] = [
+        (ShortcutId::NewSession, open_new_session),
+        (ShortcutId::ToggleSidebar, toggle_sidebar),
+        (ShortcutId::ToggleChanges, toggle_right_pane),
+        (ShortcutId::ToggleTerminal, toggle_terminal),
+    ];
+    for (id, action) in bindings {
+        if chord_matches(app, id, ev, tx) {
+            action(app);
+            return true;
         }
-        match c {
-            'n' => open_new_session(app),
-            's' => toggle_sidebar(app),
-            'b' => toggle_right_pane(app),
-            'j' => toggle_terminal(app),
-            'k' => {
-                if app.shell.add_space.is_some() {
-                    spaces::close_add_space(app);
-                } else {
-                    spaces::open_add_space(app);
-                }
-            }
-            _ => unreachable!(),
+    }
+
+    // ⌘K / Ctrl+K toggles the add-space palette (not user-bindable).
+    if ev.is_command('k') {
+        if app.shell.add_space.is_some() {
+            spaces::close_add_space(app);
+        } else {
+            spaces::open_add_space(app);
         }
         return true;
     }
     false
+}
+
+/// Does `ev` match the combo persisted for `id`?
+fn chord_matches(app: &App, id: ShortcutId, ev: &KeyEvent, tx: &Tx) -> bool {
+    let combo = app.settings.keymap.get(id);
+    rune::Chord::parse(&super::rune_chord(combo)).is_ok_and(|chord| chord.matches_tx(ev, tx))
 }
 
 /// Close any open shell popup. Returns true when one was open.

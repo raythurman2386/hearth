@@ -323,6 +323,9 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
     } else {
         body
     };
+    // Composer popups (pickers, @ mentions, / commands, lightbox) mount above
+    // the shell's own overlays.
+    crate::composer::popups(app, theme, &mut layer);
     rune_kit::root(body, layer)
 }
 

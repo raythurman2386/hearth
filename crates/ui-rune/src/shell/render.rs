@@ -20,7 +20,7 @@ use super::panels::{self, conversation_width, resize_handle, right_target, sideb
 use super::tabs::right_pane_expand_icon;
 use super::titlebar::platform_cluster_inset;
 use super::{
-    RightSurface, Route, add_diff_surface, add_terminal_surface, close_right_surface,
+    RightSurface, Route, add_diff_surface, add_terminal_surface,
     open_settings, resolved_right_active, right_pane_open, right_surface_rows, set_right_active,
     terminal_open, toggle_right_pane, toggle_right_pane_expand,
 };
@@ -236,70 +236,11 @@ pub fn main_outlet(app: &App, theme: &Theme) -> El {
 }
 
 pub fn transcript_slot(app: &App, theme: &Theme) -> El {
-    let rows = app.transcript.len();
-    let hint = if rows == 0 {
-        "The transcript lands with the transcript module."
-    } else {
-        "Transcript rows are ready; the transcript module renders them."
-    };
-    el().key("transcript-slot")
-        .w_full()
-        .grow(1.0)
-        .min_h(0.0)
-        .scroll(rune::ScrollSpec { stick_bottom: true })
-        .scroll_edge_fade(Theme::TRANSCRIPT_FADE_BAND)
-        .child(
-            col()
-                .w_full()
-                .padding(Theme::SPACE_LG)
-                .gap(Theme::SPACE_SM)
-                .child(
-                    text(format!("{} messages", rows))
-                        .font(TextStyle::new(12.0, 500.0))
-                        .color(theme.text_muted.alpha(0.6)),
-                )
-                .child(
-                    text(hint)
-                        .font(TextStyle::new(13.0, 400.0))
-                        .color(theme.text_faint),
-                ),
-        )
+    crate::transcript::render(app, theme)
 }
 
 pub fn composer_slot(app: &App, theme: &Theme) -> El {
-    let placeholder = if app.selected_chat.is_some() {
-        "Message Hearth…"
-    } else {
-        "Send a message to start a session"
-    };
-    el().key("composer-slot")
-        .w_full()
-        .padding(Theme::SPACE_LG)
-        .pt(Theme::SPACE_SM)
-        .child(
-            row()
-                .w_full()
-                .min_h(46.0)
-                .px(14.0)
-                .py(10.0)
-                .radius(Theme::BUBBLE_RADIUS)
-                .fill(theme.input_glass_bg())
-                .border(1.0, theme.border)
-                .center_y()
-                .child(
-                    text(placeholder)
-                        .font(TextStyle::new(14.0, 400.0))
-                        .color(theme.text_muted.alpha(0.65)),
-                )
-                .child(el().grow(1.0))
-                .child(
-                    el().size(24.0, 24.0)
-                        .radius(12.0)
-                        .center()
-                        .fill(theme.solid.alpha(0.35))
-                        .child(icon(&icons::ARROW_UP, 14.0).color(theme.on_solid.alpha(0.7))),
-                ),
-        )
+    crate::composer::render(app, theme)
 }
 
 fn onboarding_canvas(app: &App, theme: &Theme) -> El {
@@ -489,19 +430,17 @@ pub fn right_surface_outlet(app: &App, theme: &Theme, active: RightSurface) -> E
             crate::terminal::render_embedded(&app.terminal, app, theme)
         }
         RightSurface::Subagent(id) => {
-            let title = app
+            let doc_id = app
                 .shell
                 .subagent_tabs
                 .get(&id)
-                .map(|tab| tab.title.clone())
-                .unwrap_or_else(|| "Subagent".to_string());
-            surface_placeholder(
-                theme,
-                &icons::BOT,
-                &title,
-                "A subagent's read-only transcript lands with the transcript module.",
-                move |app: &mut App| close_right_surface(app, RightSurface::Subagent(id)),
-            )
+                .map(|tab| tab.doc_id.clone())
+                .unwrap_or_default();
+            if doc_id.is_empty() {
+                el().w_full().h_full()
+            } else {
+                crate::transcript::render_subagent(app, theme, &doc_id)
+            }
         }
     }
 }
@@ -582,6 +521,7 @@ fn picker_card(
         )
 }
 
+#[allow(dead_code)]
 fn surface_placeholder(
     theme: &Theme,
     glyph: &'static rune::Icon,

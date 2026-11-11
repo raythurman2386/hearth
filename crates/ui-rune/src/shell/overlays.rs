@@ -273,10 +273,9 @@ fn dialog_button(theme: &Theme, label: &str, primary: bool) -> El {
         )
 }
 
-/// WAVE 2 HOOK: whether the transcript wants the "Scroll to bottom" pill. The transcript module
-/// owns the scroll state; until it lands this is always false.
-pub fn transcript_jump_shown(_app: &App) -> bool {
-    false
+/// Whether the transcript wants the "Scroll to bottom" pill.
+pub fn transcript_jump_shown(app: &App) -> bool {
+    crate::transcript::transcript_jump_shown(app)
 }
 
 /// The "↓ Scroll to bottom" pill: a labelled rounded-full chip floating above the composer.
@@ -302,8 +301,8 @@ pub fn render_jump_to_bottom(app: &App, theme: &Theme, stack_h: f32) -> Option<E
             theme.surface_raised
         })
         .hover(theme.surface_raised_hover)
-        .on_press(|_app: &mut App| {
-            // WAVE 2 HOOK: app.transcript_state.scroll_to_bottom(app, ...)
+        .on_press_tx(|app: &mut App, tx: &mut rune::Tx| {
+            crate::transcript::scroll_to_bottom(app, tx)
         })
         .child(
             text("↓")

@@ -61,37 +61,12 @@ pub fn section_icon(section: SettingsSection) -> &'static Icon {
 
 /// Render the selected settings page. The pages own their state under [`App::settings_ui`];
 /// this is the shell's outlet.
-pub fn settings_outlet(app: &App, section: SettingsSection, theme: &Theme) -> El {
-    let page: El = match section {
-        SettingsSection::Devices => {
-            crate::settings::devices::render(&app.settings_ui.devices, app, theme)
-        }
-        SettingsSection::Harnesses => {
-            crate::settings::harnesses::render(&app.settings_ui.harnesses, app, theme)
-        }
-        SettingsSection::Agents => {
-            crate::settings::accounts::render(&app.settings_ui.accounts, app, theme)
-        }
-        SettingsSection::Appearance => {
-            crate::settings::appearance::render(&app.settings_ui.appearance, app, theme)
-        }
-        SettingsSection::Notifications => {
-            crate::settings::notifications::render(&app.settings_ui.notifications, app, theme)
-        }
-        SettingsSection::Shortcuts => {
-            crate::settings::shortcuts::render(&app.settings_ui.shortcuts, app, theme)
-        }
-        SettingsSection::Archived => {
-            crate::settings::archived::render(&app.settings_ui.archived, app, theme)
-        }
-    };
+pub fn settings_outlet(app: &App, _section: SettingsSection, theme: &Theme) -> El {
     col()
         .key("settings-outlet")
         .w_full()
         .h_full()
-        .padding(Theme::SPACE_LG)
-        .gap(Theme::SPACE_MD)
-        .child(page)
+        .child(crate::settings::render(app, theme))
 }
 
 #[cfg(test)]

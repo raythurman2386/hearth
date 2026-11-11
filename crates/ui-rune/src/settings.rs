@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::state::App;
+use crate::theme::Theme;
+
 // Settings page views live beside the shell and are declared in `shell/mod.rs`
 // until the port reaches them; the persisted model below is framework-free.
 
@@ -25,6 +28,141 @@ pub struct SettingsUi {
     pub notifications: crate::settings::notifications::NotificationsPage,
     pub shortcuts: crate::settings::shortcuts::ShortcutsPage,
     pub archived: crate::settings::archived::ArchivedPage,
+}
+
+impl SettingsUi {
+    /// Drain every page's async job results. Call once per frame from
+    /// `App::poll`; true when visible state changed.
+    pub fn poll(&mut self) -> bool {
+        let mut changed = false;
+        changed |= self.devices.poll();
+        changed |= self.harnesses.poll();
+        changed |= self.accounts.poll();
+        changed |= self.appearance.poll();
+        changed |= self.notifications.poll();
+        changed |= self.shortcuts.poll();
+        changed |= self.archived.poll();
+        changed
+    }
+
+    /// Copy live shell data into page-local snapshot slots. Optional: the pages
+    /// render from `App` directly; this keeps the Devices page's `Loadable`
+    /// snapshot in step for the pages that pattern-match on it.
+    pub fn sync(&mut self, devices: &[hearth_proto::Device]) {
+        self.devices.sync(devices);
+    }
+
+    /// A URL the Accounts login flow wants opened in the system browser. Call
+    /// from `App::poll` (which has a `Tx`) and `tx.open_url(&url)`. Without
+    /// wiring this the login dialog still offers a clickable reopen link.
+    pub fn take_open_url(&mut self) -> Option<String> {
+        self.accounts.take_open_url()
+    }
+}
+
+/// The settings sidebar navigation (the shell's settings-mode sidebar).
+pub fn nav(app: &App, theme: &Theme) -> rune::El {
+    use rune::{Cursor, TextStyle, col, icon, row, text};
+
+    let section = app.shell.route.section().unwrap_or(app.settings_ui.section);
+    let mut nav = col()
+        .key("settings-nav")
+        .w_full()
+        .h_full()
+        .child(
+            col()
+                .grow(1.0)
+                .min_h(0.0)
+                .px(Theme::SPACE_SM)
+                .child(
+                    text("Settings")
+                        .font(TextStyle::new(11.0, 500.0))
+                        .color(theme.text_muted.alpha(0.6))
+                        .px(Theme::SPACE_SM)
+                        .pt(12.0)
+                        .pb(4.0),
+                )
+                .child(
+                    col()
+                        .gap(2.0)
+                        .children(SettingsSection::ALL.into_iter().map(|item| {
+                            let selected = item == section;
+                            row()
+                                .key(format!("settings-nav-{}", item.label()))
+                                .w_full()
+                                .gap(8.0)
+                                .radius(8.0)
+                                .px(Theme::SPACE_SM)
+                                .py(6.0)
+                                .center_y()
+                                .cursor(Cursor::Pointer)
+                                .fill(if selected {
+                                    crate::theme::glass_selected_bg(theme.appearance)
+                                } else {
+                                    theme.ink(0.0)
+                                })
+                                .hover(theme.glass_hover())
+                                .on_press(move |app: &mut App| {
+                                    crate::shell::open_settings(app, item)
+                                })
+                                .child(
+                                    icon(crate::shell::routes::section_icon(item), 16.0)
+                                        .color(theme.text_muted),
+                                )
+                                .child(
+                                    text(item.label())
+                                        .font(TextStyle::new(
+                                            13.0,
+                                            if selected { 500.0 } else { 400.0 },
+                                        ))
+                                        .color(if selected {
+                                            theme.text
+                                        } else {
+                                            theme.text_muted
+                                        }),
+                                )
+                        })),
+                ),
+        )
+        .child(
+            rune::el().px(Theme::SPACE_SM).pb(12.0).child(
+                row()
+                    .key("settings-back")
+                    .w_full()
+                    .gap(6.0)
+                    .radius(8.0)
+                    .px(Theme::SPACE_SM)
+                    .py(6.0)
+                    .center_y()
+                    .cursor(Cursor::Pointer)
+                    .hover(theme.glass_hover())
+                    .on_press(|app: &mut App| crate::shell::close_settings(app))
+                    .child(icon(&crate::icons::ALT_ARROW_LEFT, 16.0).color(theme.text_muted))
+                    .child(
+                        text("Back")
+                            .font(TextStyle::new(13.0, 400.0))
+                            .color(theme.text_muted),
+                    ),
+            ),
+        );
+    nav = nav.pt(Theme::TITLEBAR_HEIGHT);
+    nav
+}
+
+/// The active settings page.
+pub fn render(app: &App, theme: &Theme) -> rune::El {
+    let section = app.shell.route.section().unwrap_or(app.settings_ui.section);
+    match section {
+        SettingsSection::Devices => devices::render(&app.settings_ui.devices, app, theme),
+        SettingsSection::Harnesses => harnesses::render(&app.settings_ui.harnesses, app, theme),
+        SettingsSection::Agents => accounts::render(&app.settings_ui.accounts, app, theme),
+        SettingsSection::Appearance => appearance::render(&app.settings_ui.appearance, app, theme),
+        SettingsSection::Notifications => {
+            notifications::render(&app.settings_ui.notifications, app, theme)
+        }
+        SettingsSection::Shortcuts => shortcuts::render(&app.settings_ui.shortcuts, app, theme),
+        SettingsSection::Archived => archived::render(&app.settings_ui.archived, app, theme),
+    }
 }
 
 /// Settings sections, in sidebar order.
