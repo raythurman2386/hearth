@@ -384,77 +384,64 @@ fn row_el(
     };
 
     let is_user_row = matches!(row.kind, RowKind::User { .. });
-    let hovered = state
-        .hovered_entry
-        .as_ref()
-        .is_some_and(|(_, entry)| entry == &row.entry_id);
     let copied_message = state.copied_message.as_ref() == Some(&row.entry_id);
     let copy_text = row.copy_text.clone();
     let copy_entry = row.entry_id.clone();
     let strip = row.timestamp.map(|ms| {
-        let mut strip = rrow().h(32.0).pt(8.0).w_full().items_center().gap(8.0);
+        // A reserved 32pt lane: the timestamp/copy affordance is always laid
+        // out and only its opacity follows the row's hover group, so the
+        // pointer crossing rows never commits the view.
+        let mut strip = rrow()
+            .h(32.0)
+            .pt(8.0)
+            .w_full()
+            .items_center()
+            .gap(8.0)
+            .group_opacity(0.0, 1.0);
         if is_user_row {
             strip = strip.justify_end();
         }
-        if hovered {
+        strip = strip.child(
+            text(format_timestamp(ms, &chrono::Local))
+                .font(TextStyle::new(12.0, 400.0))
+                .color(theme.text_muted.alpha(0.55)),
+        );
+        if let Some(copy_text) = copy_text {
+            let entry = copy_entry.clone();
             strip = strip.child(
-                text(format_timestamp(ms, &chrono::Local))
-                    .font(TextStyle::new(12.0, 400.0))
-                    .color(theme.text_muted.alpha(0.55)),
+                el().size(Theme::SPACE_MD * 2.0, Theme::SPACE_MD * 2.0)
+                    .center()
+                    .radius(Theme::CONTROL_RADIUS)
+                    .hover(theme.ink(0.08))
+                    .cursor(rune::Cursor::Pointer)
+                    .help("Copy message")
+                    .on_press_tx(move |app: &mut App, tx: &mut rune::Tx| {
+                        tx.copy(copy_text.clone());
+                        app.transcript_state.copied_message = Some(entry.clone());
+                    })
+                    .child(
+                        rune::icon(
+                            if copied_message {
+                                &crate::icons::CHECK
+                            } else {
+                                &crate::icons::COPY
+                            },
+                            14.0,
+                        )
+                        .color(theme.text_muted),
+                    ),
             );
-            if let Some(copy_text) = copy_text {
-                let entry = copy_entry.clone();
-                strip = strip.child(
-                    el().size(Theme::SPACE_MD * 2.0, Theme::SPACE_MD * 2.0)
-                        .center()
-                        .radius(Theme::CONTROL_RADIUS)
-                        .hover(theme.ink(0.08))
-                        .cursor(rune::Cursor::Pointer)
-                        .help("Copy message")
-                        .on_press_tx(move |app: &mut App, tx: &mut rune::Tx| {
-                            tx.copy(copy_text.clone());
-                            app.transcript_state.copied_message = Some(entry.clone());
-                        })
-                        .child(
-                            rune::icon(
-                                if copied_message {
-                                    &crate::icons::CHECK
-                                } else {
-                                    &crate::icons::COPY
-                                },
-                                14.0,
-                            )
-                            .color(theme.text_muted),
-                        ),
-                );
-            }
         }
         strip
     });
 
-    let row_id = row.id.clone();
-    let entry_id = row.entry_id.clone();
     rrow()
         .w_full()
         .justify_center()
+        .hover_group()
         .pt(top_gap)
         .pb(bottom_pad)
         .px(48.0)
-        .on_hover_change(move |app: &mut App, inside, _tx| {
-            if inside {
-                let next = Some((row_id.clone(), entry_id.clone()));
-                if app.transcript_state.hovered_entry != next {
-                    app.transcript_state.hovered_entry = next;
-                }
-            } else if app
-                .transcript_state
-                .hovered_entry
-                .as_ref()
-                .is_some_and(|(row, _)| row == &row_id)
-            {
-                app.transcript_state.hovered_entry = None;
-            }
-        })
         .child(
             col()
                 .w_full()

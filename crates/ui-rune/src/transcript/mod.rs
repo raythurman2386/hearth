@@ -180,8 +180,6 @@ pub struct TranscriptState {
     /// transcript's bottom.
     pub bottom_clearance: f32,
 
-    /// `(row id, entry id)` under the pointer.
-    pub hovered_entry: Option<(String, String)>,
     /// Code block showing "Copied" feedback: `(row id, block ix)`.
     pub copied_code: Option<(String, usize)>,
     /// Entry whose hover action is showing copied feedback.
@@ -229,7 +227,6 @@ impl Default for TranscriptState {
             rail_enabled: true,
             rail_hover: None,
             bottom_clearance: 0.0,
-            hovered_entry: None,
             copied_code: None,
             copied_message: None,
             attachment_preview: None,
