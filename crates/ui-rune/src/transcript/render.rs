@@ -264,12 +264,8 @@ fn render_rows(app: &App, theme: &Theme, rows: Arc<Vec<Row>>, subagent: bool, ve
         ));
     }
 
-    // Interim in-tree mount: the proper home is the shell's overlay layer
-    // (see [`lightbox_overlay`], wired next to `composer::popups`); kept here so
-    // the preview still works until that line lands.
-    if let Some(overlay) = lightbox_overlay(app, theme) {
-        root = root.child(overlay);
-    }
+    // The preview is mounted once, by the shell's overlay layer (see
+    // `lightbox_overlay` next to `composer::popups`).
     root
 }
 

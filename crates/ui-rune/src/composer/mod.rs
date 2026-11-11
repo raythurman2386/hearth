@@ -397,6 +397,11 @@ impl ComposerState {
         self.last_seen_width
     }
 
+    /// The compact/expanded layout the composer is in.
+    pub fn is_expanded(&self) -> bool {
+        self.expanded_mode
+    }
+
     /// The input's last measured content height (wrapped lines × 22.75).
     pub fn field_height(&self) -> f32 {
         self.field_height
@@ -595,7 +600,13 @@ impl ComposerState {
 /// outcomes (send hand-back, wizard advance). Returns true when visible state
 /// changed.
 pub fn poll(app: &mut App) -> bool {
+    let was_expanded = app.composer.is_expanded();
     let mut changed = sync(app);
+    if app.composer.is_expanded() != was_expanded {
+        // The flip rebuilds the field's layout; keep the caret in it.
+        app.shell.focus_composer = true;
+        changed = true;
+    }
     // Feed the measured pill width into the pickers' compact-traits
     // presentation (one frame stale, threshold-crossing only).
     let width = app.composer.pill_width();

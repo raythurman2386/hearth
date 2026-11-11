@@ -440,6 +440,7 @@ pub fn toggle_sidebar(app: &mut App) {
         app.shell.user_menu_open = false;
         app.shell.spaces_menu = None;
     }
+    app.shell.focus_composer = true;
     app.save_settings();
 }
 
@@ -468,6 +469,7 @@ pub fn toggle_right_pane(app: &mut App) {
     if !open {
         app.shell.right_pane_expanded = false;
     }
+    app.shell.focus_composer = true;
 }
 
 /// Flip the bottom terminal drawer for the current session.
@@ -485,6 +487,7 @@ pub fn toggle_terminal(app: &mut App) {
 /// Expand/restore right-pane takeover.
 pub fn toggle_right_pane_expand(app: &mut App) {
     app.shell.right_pane_expanded = !app.shell.right_pane_expanded;
+    app.shell.focus_composer = true;
 }
 
 /// Whether the right pane shows: chat-scoped, never on the new-session canvas.
@@ -575,6 +578,7 @@ pub fn apply_nav(app: &mut App, entry: NavEntry) {
             if app.selected_chat != target {
                 app.select_chat(target);
             }
+            app.shell.focus_composer = true;
         }
         NavEntry::Settings(section) => {
             app.shell.route = Route::Settings(section);

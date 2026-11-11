@@ -422,6 +422,9 @@ fn expanded_pill(app: &App, theme: &Theme, height: f32, morphing: bool, strips: 
 
 fn compact_pill(app: &App, theme: &Theme, height: f32, morphing: bool, strips: El) -> El {
     let send_button = send_button(app, theme);
+    // A narrow pill can't fit the picker cluster beside the text; keep the
+    // field usable by collapsing the cluster to attach + send.
+    let narrow = app.composer.pill_width() < 360.0;
     pill_shell(theme)
         .h(height)
         .motion(if morphing {
@@ -437,7 +440,7 @@ fn compact_pill(app: &App, theme: &Theme, height: f32, morphing: bool, strips: E
                 .center_y()
                 .child(
                     el().grow(1.0)
-                        .min_w(0.0)
+                        .min_w(if narrow { 80.0 } else { 0.0 })
                         .pl(16.0)
                         .pr(8.0)
                         .child(text_input_element(app, theme)),
@@ -452,11 +455,13 @@ fn compact_pill(app: &App, theme: &Theme, height: f32, morphing: bool, strips: E
                             row()
                                 .center_y()
                                 .gap(ACTION_UTILITY_GAP)
-                                .child(el().h(32.0).clip_soft(0.0).child(pickers::render_cluster(
-                                    &app.pickers,
-                                    app,
-                                    theme,
-                                )))
+                                .children(if narrow {
+                                    None
+                                } else {
+                                    Some(el().h(32.0).clip_soft(0.0).child(
+                                        pickers::render_cluster(&app.pickers, app, theme),
+                                    ))
+                                })
                                 .child(attach_button(theme)),
                         )
                         .child(send_button),

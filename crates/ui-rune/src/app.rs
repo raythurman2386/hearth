@@ -53,6 +53,14 @@ static SCENES: &[Scene] = &[
         demo_scene(app);
         app.shell.route = crate::shell::Route::Settings(crate::settings::SettingsSection::Devices);
     }),
+    ("narrow", |app| {
+        demo_scene(app);
+        app.settings.sidebar_width = 256.0;
+        let key = app.shell.panel_key(app);
+        app.shell
+            .panels
+            .update(&key, |panels| panels.changes_open = true);
+    }),
 ];
 
 /// A populated chat for layout snapshots: one project, one session, a user

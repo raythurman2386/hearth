@@ -718,6 +718,10 @@ impl App {
         for guard in self.watch_guards.drain(..) {
             guard.cancel();
         }
+        let sub_docs: Vec<String> = self.sub_transcripts.keys().cloned().collect();
+        for (_doc_id, guard) in self.sub_watch_guards.drain() {
+            guard.cancel();
+        }
         if let Some(old) = self.engine.take() {
             let old_mode = old.mode();
             let new_mode = handle.mode();
@@ -818,9 +822,14 @@ impl App {
         if let Some(chat_id) = self.selected_chat.clone() {
             self.transcript_guard = Some(spawn_transcript_watch(
                 &self.bridge,
-                handle,
+                handle.clone(),
                 chat_id,
             ));
+        }
+        // Re-attach subagent tabs to the new engine's docs.
+        for doc_id in sub_docs {
+            let guard = spawn_subagent_watch(&self.bridge, handle.clone(), doc_id.clone());
+            self.sub_watch_guards.insert(doc_id, guard);
         }
     }
 
