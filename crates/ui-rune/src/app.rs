@@ -56,6 +56,11 @@ static SCENES: &[Scene] = &[
         demo_scene(app);
         app.shell.route = crate::shell::Route::Settings(crate::settings::SettingsSection::Devices);
     }),
+    ("appearance", |app| {
+        demo_scene(app);
+        app.shell.route =
+            crate::shell::Route::Settings(crate::settings::SettingsSection::Appearance);
+    }),
     ("narrow", |app| {
         demo_scene(app);
         let key = app.shell.panel_key(app);

@@ -216,6 +216,9 @@ pub struct ChangesState {
     pub history: Vec<GitHistoryCommit>,
     pub history_loading: bool,
     pub history_error: Option<String>,
+    /// The first page was requested before the engine connected; retry once
+    /// when it does instead of leaving the pane on a stale error.
+    history_waiting_engine: bool,
     pub history_cursor: Option<usize>,
     pub history_lead_count: Option<usize>,
     pub history_total: Option<usize>,
@@ -292,6 +295,7 @@ impl Default for ChangesState {
             history: Vec::new(),
             history_loading: false,
             history_error: None,
+            history_waiting_engine: false,
             history_cursor: None,
             history_lead_count: None,
             history_total: None,
@@ -717,6 +721,7 @@ impl ChangesState {
         self.history = commits;
         self.history_loading = false;
         self.history_error = None;
+        self.history_waiting_engine = false;
         self.history_cursor = None;
         self.head_sha = head_sha;
         self.history_for = Some(format!("local:{cwd}"));
@@ -1396,9 +1401,10 @@ impl ChangesState {
             self.scoped_error = None;
         }
         let Some(engine) = env.engine.clone() else {
+            // Leave `scoped_for` unset: the first frame after the engine
+            // connects must fetch, not sit on this error.
             self.scoped = None;
             self.scoped_error = Some("Diff needs a running engine.".to_string());
-            self.scoped_for = Some(key);
             return;
         };
         let mode = self.scope.mode().to_string();
@@ -1496,6 +1502,13 @@ impl ChangesState {
         let Some(key) = self.history_key() else {
             return;
         };
+        // The first request can run before the engine has connected. Retry it
+        // once the engine is available instead of sitting on that error.
+        if self.history_waiting_engine && self.env.as_ref().is_some_and(|env| env.engine.is_some())
+        {
+            self.history_waiting_engine = false;
+            self.history_for = None;
+        }
         let stale = self.history_for.as_deref() != Some(key.as_str());
         if stale {
             self.history_for = Some(key);
@@ -1525,6 +1538,7 @@ impl ChangesState {
         };
         let Some(engine) = env.engine.clone() else {
             self.history_loading = false;
+            self.history_waiting_engine = true;
             self.history_error = Some("History needs a running engine.".to_string());
             return;
         };
