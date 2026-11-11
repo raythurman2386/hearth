@@ -7,11 +7,14 @@
 //! composer just calls [`popovers`] after building its body. Colors come from
 //! [`crate::theme::Theme`]; layout numbers match the gpui constants.
 //!
-//! The Rune port has no icon catalogue yet (`crate::icons` is a stub), so
+//! Harness brands use the shared icon catalogue in the rail and model rows; the
+//! compact chip keeps a two-letter mark where a full icon would crowd the label.
 //! harness brands draw as a compact two-letter monogram (`harness_mark`) rather
 //! than the gpui SVG marks. Everything else keeps the gpui geometry.
 
-use rune::{Color, El, GrowthSpec, Key, KeyEvent, ScrollSpec, TextStyle, Tx, col, el, row, text};
+use rune::{
+    Color, El, GrowthSpec, Key, KeyEvent, ScrollSpec, TextStyle, Tx, col, el, icon, row, text,
+};
 use rune_kit::{Placement, TextInput, popover};
 
 use hearth_proto::SessionMode;
@@ -946,13 +949,13 @@ fn model_popover_body(state: &PickersState, app: &App, theme: &Theme) -> El {
                 .radius(8.0)
                 .center()
                 .child(
-                    text(harness_mark(harness).to_string())
-                        .font(text_style(10.0, 600.0))
-                        .color(if is_viewed {
+                    icon(crate::shell::titlebar::harness_mark(harness, theme).0, 18.0).color(
+                        if is_viewed {
                             theme.text
                         } else {
                             theme.text_muted
-                        }),
+                        },
+                    ),
                 );
             if is_disabled {
                 tab = tab.opacity(0.35);
@@ -1091,7 +1094,10 @@ fn model_row(
     let mut subline = row()
         .gap(6.0)
         .center_y()
-        .child(mark_badge(theme, harness_mark(harness), 11.0))
+        .child(
+            icon(crate::shell::titlebar::harness_mark(harness, theme).0, 11.0)
+                .color(theme.text_muted),
+        )
         .child(
             text(row_data.harness_name.clone())
                 .font(text_style(11.0, 400.0))

@@ -406,9 +406,8 @@ pub fn normalize_model_rows(_harness: HarnessId, models: Vec<Model>) -> Vec<Mode
         .collect()
 }
 
-/// The two-letter mark shown where the gpui UI drew a harness brand icon. The
-/// Rune port has no icon catalogue yet (`crate::icons` is still a stub), so a
-/// compact monogram keeps the rail legible without a dependency.
+/// The two-letter mark used inside the compact model chip. The rail and model
+/// rows draw the real brand icon through [`crate::icons`] instead.
 pub fn harness_mark(harness: HarnessId) -> &'static str {
     match harness {
         HarnessId::Codex => "CX",

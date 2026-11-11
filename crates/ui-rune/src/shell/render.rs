@@ -6,9 +6,8 @@
 //! and an absolute titlebar band. Columns that must not underlap pad themselves down by
 //! [`Theme::TITLEBAR_HEIGHT`].
 //!
-//! Outlet hooks for wave 2 are marked `WAVE 2 HOOK` and kept as small functions:
-//! [`main_outlet`], [`transcript_slot`], [`composer_slot`], [`terminal_slot`],
-//! [`right_surface_outlet`].
+//! The module seams are small functions: [`main_outlet`], [`transcript_slot`],
+//! [`composer_slot`], [`terminal_slot`] and [`right_surface_outlet`].
 
 use rune::{Cursor, El, TextStyle, col, el, icon, row, text};
 
@@ -234,8 +233,8 @@ fn seam(kind: panels::ResizeKind, viewport: f32, viewport_h: f32, theme: &Theme,
 
 /// The chat route's content: transcript + composer, or the new-session canvas.
 ///
-/// WAVE 2 HOOK: [`transcript_slot`] becomes `crate::transcript::render(app, ..)` and
-/// [`composer_slot`] becomes `crate::composer::render(app, ..)`.
+/// The chat route's content: the transcript module's viewport and the composer
+/// module's input, or the new-session canvas.
 pub fn main_outlet(app: &App, theme: &Theme) -> El {
     let has_selection = app.selected_chat.is_some();
     let has_spaces = !app.spaces.is_empty();
@@ -499,7 +498,8 @@ fn surface_icon(surface: RightSurface) -> &'static rune::Icon {
     }
 }
 
-/// WAVE 2 HOOK: diff/terminal/subagent bodies. Each arm becomes its module's render call.
+/// The right-pane surface bodies: diff/history, the embedded terminal, and a
+/// subagent's read-only transcript.
 pub fn right_surface_outlet(app: &App, theme: &Theme, active: RightSurface) -> El {
     match active {
         RightSurface::Shared => right_picker(app, theme),
