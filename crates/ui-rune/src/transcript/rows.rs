@@ -432,7 +432,14 @@ impl TranscriptState {
         let mut tree_cache = self.tree_cache.borrow_mut();
         let mut parse = |key: &str, text: &str| -> Arc<BlockTree> {
             let doc_key = format!("{doc_id}\u{1}{key}");
-            parse_for_row(streaming, &doc_key, text, &mut live_parsers, &mut tree_cache).0
+            parse_for_row(
+                streaming,
+                &doc_key,
+                text,
+                &mut live_parsers,
+                &mut tree_cache,
+            )
+            .0
         };
         let rows = rows_for_entry(entry, false, &mut parse);
         drop(parse);

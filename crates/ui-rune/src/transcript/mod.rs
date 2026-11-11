@@ -33,7 +33,7 @@ use crate::state::App;
 use chips::{FoldState, blob_detail};
 use highlights::HighlightStore;
 use viewport::{
-    OwnTurnAnchor, OWN_SEND_SCROLL_SLACK_PX, OWN_SEND_TOP_INSET_PX, SavedViewport,
+    OWN_SEND_SCROLL_SLACK_PX, OWN_SEND_TOP_INSET_PX, OwnTurnAnchor, SavedViewport,
     SavedViewportCache, TranscriptReplayState, own_turn_reservation,
 };
 
@@ -266,9 +266,11 @@ impl TranscriptState {
             // Read the incoming snapshot BEFORE inserting the outgoing one: a
             // full cache may evict its oldest entry, which can be exactly the
             // chat being reopened.
-            let incoming = selected
-                .as_ref()
-                .and_then(|chat_id| self.saved_viewports.borrow_mut().get_cloned_and_touch(chat_id));
+            let incoming = selected.as_ref().and_then(|chat_id| {
+                self.saved_viewports
+                    .borrow_mut()
+                    .get_cloned_and_touch(chat_id)
+            });
             let keep_own_turn = self
                 .own_turn
                 .borrow()
@@ -350,9 +352,7 @@ impl TranscriptState {
             self.own_turn.borrow().as_ref(),
         );
         if let Some(saved) = saved {
-            self.saved_viewports
-                .borrow_mut()
-                .insert(chat_id, saved);
+            self.saved_viewports.borrow_mut().insert(chat_id, saved);
         }
     }
 
@@ -387,9 +387,7 @@ impl TranscriptState {
                     distance_from_bottom: 0.0,
                     own_turn: None,
                 }),
-                SavedViewport::Anchored { .. } => {
-                    pending.resolve(rows, replay.allows_fallback())
-                }
+                SavedViewport::Anchored { .. } => pending.resolve(rows, replay.allows_fallback()),
             };
             let Some(restored) = restored else {
                 return;
@@ -642,8 +640,8 @@ impl TranscriptState {
         let base_pad = self.bottom_clearance + crate::theme::Theme::TRANSCRIPT_FADE_BAND + 8.0;
         let usable = (viewport_h - inset - base_pad + OWN_SEND_SCROLL_SLACK_PX).max(0.0);
         let last_ix = rows.len().saturating_sub(1);
-        let measured = rune::memo::layout(&rows[prompt_ix].id)
-            .zip(rune::memo::layout(&rows[last_ix].id));
+        let measured =
+            rune::memo::layout(&rows[prompt_ix].id).zip(rune::memo::layout(&rows[last_ix].id));
         let target = match measured {
             Some((prompt, last)) => {
                 // The runway and bottom clearance are a spacer after the list,

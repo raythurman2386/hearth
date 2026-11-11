@@ -4,7 +4,7 @@ How to build and extend **Hearth**. For product behavior see [usage](usage.md); 
 
 ## Build
 
-Requires a recent **stable** Rust toolchain (`rust-toolchain.toml` pins `stable` with `rustfmt` and `clippy`). gpui needs a working graphics stack (Vulkan/Metal as appropriate for the host).
+Requires a recent **stable** Rust toolchain (`rust-toolchain.toml` pins `stable` with `rustfmt` and `clippy`). Rune needs a working graphics stack (Vulkan/Metal as appropriate for the host).
 
 ```bash
 # Debug
@@ -47,7 +47,7 @@ crates/
   engine/             # Sessions, registry, docs host, repos, terminals, uploads
   rpc/                # Localhost JSON-RPC / WebSocket between UI and engine
   sync/               # Optional tailnet room clients + hub (off by default)
-  ui/                 # gpui shell, composer, pickers, transcript, settings
+  ui-rune/            # Rune shell, composer, pickers, transcript, settings
   syntax/             # Highlighting helpers
   update/             # Self-update helpers
 docs/                 # Product + research docs

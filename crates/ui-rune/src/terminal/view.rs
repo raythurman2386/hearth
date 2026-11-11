@@ -669,7 +669,10 @@ mod tests {
             ctrl: true,
             ..mods()
         };
-        assert_eq!(keystroke_bytes("c", Some("c"), &ctrl, false), Some(vec![0x03]));
+        assert_eq!(
+            keystroke_bytes("c", Some("c"), &ctrl, false),
+            Some(vec![0x03])
+        );
     }
 
     #[test]
@@ -886,7 +889,11 @@ mod tests {
     #[test]
     fn side_splits_the_cell_at_its_midpoint() {
         assert_eq!(hit(21.0, 0.0).side, Side::Left);
-        assert_eq!(hit(25.0, 0.0).side, Side::Left, "the midpoint itself is left");
+        assert_eq!(
+            hit(25.0, 0.0).side,
+            Side::Left,
+            "the midpoint itself is left"
+        );
         assert_eq!(hit(26.0, 0.0).side, Side::Right);
         assert_eq!(hit(21.0, 0.0).col, 2);
         assert_eq!(hit(29.0, 0.0).col, 2);

@@ -5,8 +5,8 @@
 //! this crate replaces `crates/ui` (gpui) with a Rune implementation.
 
 pub mod app;
-pub mod appearance;
 pub mod app_menus;
+pub mod appearance;
 pub mod attachments;
 pub mod badges;
 pub mod bridge;
@@ -81,9 +81,7 @@ pub fn run_app(config: UiConfig) {
             traffic_lights: Some((14.0, 14.0)),
             drag_regions: true,
         })
-        .titlebar(
-            rune::Titlebar::new(app::titlebar_height()).traffic_lights(14.0, 14.0),
-        )
+        .titlebar(rune::Titlebar::new(app::titlebar_height()).traffic_lights(14.0, 14.0))
         .on_focus(|app, focused, _tx| {
             shell::on_focus(app, focused);
         })
@@ -93,11 +91,9 @@ pub fn run_app(config: UiConfig) {
             // the bridge runtime here is safe and bounded.
             if let Some(engine) = app.engine.clone() {
                 app.bridge.runtime().block_on(async move {
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(2),
-                        engine.shutdown(),
-                    )
-                    .await;
+                    let _ =
+                        tokio::time::timeout(std::time::Duration::from_secs(2), engine.shutdown())
+                            .await;
                 });
             }
         })

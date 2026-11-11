@@ -2,7 +2,7 @@
 
 A **local-first** control surface for coding agents (Huginn, Codex, Grok) on Linux, macOS, and Windows.
 
-Hearth is a fork of [**Zeron**](https://github.com/zeronsh/comet) — a native rewrite (Rust + [gpui](https://github.com/zed-industries/zed)) of a multi-device agent controller. This fork keeps the part that matters on a single machine: a fast, private harness runner you drive locally. No hosted account, no cloud sync, and no telemetry is required for normal use.
+Hearth is a fork of [**Zeron**](https://github.com/zeronsh/comet) — a native rewrite (Rust + [Rune](https://github.com/anomalyco/rune)) of a multi-device agent controller. This fork keeps the part that matters on a single machine: a fast, private harness runner you drive locally. No hosted account, no cloud sync, and no telemetry is required for normal use.
 
 ## What it is
 

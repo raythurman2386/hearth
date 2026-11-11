@@ -6,8 +6,8 @@ use std::time::Duration;
 use crate::comments::{CommentSide, DiffComment};
 
 use super::{
-    file_notices, BODY_BOTTOM_PAD, DIFF_LINE_HEIGHT, FILE_HEADER_HEIGHT, HUNK_HEADER_HEIGHT,
-    NOTICE_HEIGHT, DiffLine, DiffMode, FileDiff, LineKind,
+    BODY_BOTTOM_PAD, DIFF_LINE_HEIGHT, DiffLine, DiffMode, FILE_HEADER_HEIGHT, FileDiff,
+    HUNK_HEADER_HEIGHT, LineKind, NOTICE_HEIGHT, file_notices,
 };
 
 /// Analytic expanded-body height — drives the 180 ms fold tween without
@@ -438,7 +438,7 @@ impl FileFold {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::changes::{parse_patch, PATCH};
+    use crate::changes::{PATCH, parse_patch};
 
     #[test]
     fn rows_flatten_to_line_granularity() {

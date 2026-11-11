@@ -1,8 +1,9 @@
 //! Loader motion — the pure math behind hearth's loading indicators.
 //!
-//! These are the curves and constants the gpui viewport animates with
-//! (`hearth-ui/src/motion.rs`, `hearth-ui/src/loaders.rs`), lifted here so any
-//! surface animates the *same* loaders rather than inventing its own spinner.
+//! These are the curves and constants the Rune viewport animates with
+//! (`hearth-ui-rune/src/motion.rs`, `hearth-ui-rune/src/loaders.rs`), lifted
+//! here so any surface animates the *same* loaders rather than inventing its
+//! own spinner.
 //! A loading indicator is a brand surface; two of them that disagree read as
 //! two products.
 //!

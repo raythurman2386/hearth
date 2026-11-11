@@ -155,7 +155,10 @@ impl DiffMode {
 
 /// The diff shown for a chat: `checkout_id` match first, then device+cwd,
 /// then cwd alone (§1.11).
-pub fn resolve_diff<'a>(diffs: &'a [hearth_proto::CheckoutDiff], chat: &hearth_proto::Chat) -> Option<&'a hearth_proto::CheckoutDiff> {
+pub fn resolve_diff<'a>(
+    diffs: &'a [hearth_proto::CheckoutDiff],
+    chat: &hearth_proto::Chat,
+) -> Option<&'a hearth_proto::CheckoutDiff> {
     resolve_diff_parts(
         diffs,
         chat.checkout_id.as_deref(),
@@ -178,8 +181,8 @@ pub fn resolve_diff_parts<'a>(
         return Some(diff);
     }
     let cwd = cwd?;
-    let device_match = device_id
-        .and_then(|device| diffs.iter().find(|d| d.device_id == device && d.cwd == cwd));
+    let device_match =
+        device_id.and_then(|device| diffs.iter().find(|d| d.device_id == device && d.cwd == cwd));
     device_match.or_else(|| diffs.iter().find(|d| d.cwd == cwd))
 }
 
@@ -312,7 +315,10 @@ pub fn clean_message(scope: DiffScope, base: Option<&str>) -> String {
 /// list (replace) or a single `CheckoutDiff` (upsert by checkout id) — the
 /// contract streams `CheckoutDiff` items, but list frames cost nothing to
 /// support. Returns whether anything changed.
-pub fn apply_diff_frame(diffs: &mut Vec<hearth_proto::CheckoutDiff>, value: serde_json::Value) -> bool {
+pub fn apply_diff_frame(
+    diffs: &mut Vec<hearth_proto::CheckoutDiff>,
+    value: serde_json::Value,
+) -> bool {
     if let Ok(all) = serde_json::from_value::<Vec<hearth_proto::CheckoutDiff>>(value.clone()) {
         if *diffs != all {
             *diffs = all;

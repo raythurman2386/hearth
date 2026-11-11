@@ -9,7 +9,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use rune::{col, el, row, text, Align, Color, El, GrowthSpec, ScrollSpec, Side, TextStyle};
+use rune::{Align, Color, El, GrowthSpec, ScrollSpec, Side, TextStyle, col, el, row, text};
 
 use crate::state::App;
 use crate::theme::Theme;
@@ -33,19 +33,22 @@ pub fn render(state: &ChangesState, app: &App, theme: &Theme) -> El {
     let phase = state.phase(app);
 
     let content = if let Some((message, warn)) = scoped_notice(state, app) {
-        centered(message, if warn { theme.warning } else { theme.text_faint }, theme)
+        centered(
+            message,
+            if warn {
+                theme.warning
+            } else {
+                theme.text_faint
+            },
+            theme,
+        )
     } else {
         match phase {
-            DiffPhase::Preparing => col()
-                .w_full()
-                .h_full()
-                .center()
-                .gap(Theme::SPACE_SM)
-                .child(
-                    text("Preparing diff…")
-                        .font(TextStyle::new(12.0, 400.0))
-                        .color(theme.text_faint),
-                ),
+            DiffPhase::Preparing => col().w_full().h_full().center().gap(Theme::SPACE_SM).child(
+                text("Preparing diff…")
+                    .font(TextStyle::new(12.0, 400.0))
+                    .color(theme.text_faint),
+            ),
             DiffPhase::Clean => centered(
                 clean_message(scope, base.as_deref()),
                 theme.text_faint,
@@ -109,15 +112,20 @@ fn scoped_notice(state: &ChangesState, app: &App) -> Option<(String, bool)> {
 }
 
 fn centered(message: String, color: Color, theme: &Theme) -> El {
-    col().w_full().h_full().center().px(Theme::SPACE_LG).child(
-        text(message)
-            .font(TextStyle::new(12.0, 400.0))
-            .color(color)
-            .align(Align::Center)
-            .wrap()
-            .min_w(0.0),
-    )
-    .fill(theme.bg)
+    col()
+        .w_full()
+        .h_full()
+        .center()
+        .px(Theme::SPACE_LG)
+        .child(
+            text(message)
+                .font(TextStyle::new(12.0, 400.0))
+                .color(color)
+                .align(Align::Center)
+                .wrap()
+                .min_w(0.0),
+        )
+        .fill(theme.bg)
 }
 
 fn list_view(state: &ChangesState, theme: &Theme) -> El {
@@ -153,7 +161,9 @@ fn list_view(state: &ChangesState, theme: &Theme) -> El {
         .w_full()
         .grow(1.0)
         .min_h(0.0)
-        .scroll(ScrollSpec { stick_bottom: false })
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
         .child(rows);
     col()
         .w_full()
@@ -292,7 +302,11 @@ fn row_el(app: &App, ix: usize, theme: &Theme) -> El {
             let Some(file_diff) = files.get(file as usize) else {
                 return el();
             };
-            let fold = state.folds.get(&file_diff.path).copied().unwrap_or_default();
+            let fold = state
+                .folds
+                .get(&file_diff.path)
+                .copied()
+                .unwrap_or_default();
             let to = fold.to.max(0.0);
             let cap = fold.from.max(fold.to).clamp(0.0, FOLD_TWEEN_MAX_PX);
             let body = render_file_body_upto(state, file_diff, theme, cap, state.mode);
@@ -331,18 +345,17 @@ fn file_header(state: &ChangesState, ix: usize, file: &FileDiff, theme: &Theme) 
         ))
         .on_press(move |app: &mut App| app.changes.toggle_fold_path(&path))
         .children((ix > 0).then(|| {
-            el().absolute(0.0, 0.0).w_full().h(1.0).fill(theme.hairline(0.04))
+            el().absolute(0.0, 0.0)
+                .w_full()
+                .h(1.0)
+                .fill(theme.hairline(0.04))
         }))
         .child(
-            row()
-                .size(14.0, 14.0)
-                .shrink()
-                .center()
-                .child(
-                    text(chevron)
-                        .font(TextStyle::new(11.0, 500.0).mono())
-                        .color(theme.text_muted.alpha(0.7)),
-                ),
+            row().size(14.0, 14.0).shrink().center().child(
+                text(chevron)
+                    .font(TextStyle::new(11.0, 500.0).mono())
+                    .color(theme.text_muted.alpha(0.7)),
+            ),
         )
         .child(
             text(file.path.clone())
@@ -427,8 +440,7 @@ fn diff_line_el(state: &ChangesState, file: &FileDiff, line: &DiffLine, theme: &
     }
     root = root
         .child(
-            el()
-                .w(ACCENT_BAR_WIDTH)
+            el().w(ACCENT_BAR_WIDTH)
                 .h_full()
                 .shrink()
                 .fill(accent.unwrap_or(Color::TRANSPARENT)),
@@ -452,15 +464,11 @@ fn diff_line_el(state: &ChangesState, file: &FileDiff, line: &DiffLine, theme: &
             gutter_px,
         ))
         .child(
-            row()
-                .w(MARKER_WIDTH)
-                .shrink()
-                .center()
-                .child(
-                    text(marker)
-                        .font(TextStyle::new(DIFF_TEXT_SIZE, 400.0).mono())
-                        .color(marker_color),
-                ),
+            row().w(MARKER_WIDTH).shrink().center().child(
+                text(marker)
+                    .font(TextStyle::new(DIFF_TEXT_SIZE, 400.0).mono())
+                    .color(marker_color),
+            ),
         )
         .child(code_line_el(
             line,
@@ -475,12 +483,10 @@ fn diff_line_el(state: &ChangesState, file: &FileDiff, line: &DiffLine, theme: &
     };
     let path = file.path.clone();
     if state.hovering(&path, (side, line_no)) {
-        root = root.child(
-            render_comment_adder(&path, side, line_no, theme).absolute(
-                comment_adder_left(side, gutter_px),
-                (DIFF_LINE_HEIGHT - COMMENT_ADDER_SIZE) / 2.0,
-            ),
-        );
+        root = root.child(render_comment_adder(&path, side, line_no, theme).absolute(
+            comment_adder_left(side, gutter_px),
+            (DIFF_LINE_HEIGHT - COMMENT_ADDER_SIZE) / 2.0,
+        ));
     }
     let hover_path = path;
     root.on_hover_change(move |app: &mut App, hovered, _tx: &mut rune::Tx| {
@@ -536,28 +542,22 @@ fn code_line_el(
             .pl(pad)
             .spans(spans);
     }
-    row()
-        .grow(1.0)
-        .min_w(0.0)
-        .h(DIFF_LINE_HEIGHT)
-        .child(
-            el()
-                .grow(1.0)
-                .min_w(0.0)
-                .h_full()
-                .scroll_x()
-                .child(
-                    text(line.text.clone())
-                        .font(mono(DIFF_TEXT_SIZE, 400.0))
-                        .color(theme.text.alpha(0.92))
-                        .single_line()
-                        .pl(pad)
-                        .spans(spans),
-                ),
-        )
+    row().grow(1.0).min_w(0.0).h(DIFF_LINE_HEIGHT).child(
+        el().grow(1.0).min_w(0.0).h_full().scroll_x().child(
+            text(line.text.clone())
+                .font(mono(DIFF_TEXT_SIZE, 400.0))
+                .color(theme.text.alpha(0.92))
+                .single_line()
+                .pl(pad)
+                .spans(spans),
+        ),
+    )
 }
 
-fn line_colors(kind: LineKind, theme: &Theme) -> (&'static str, Color, Option<Color>, Option<Color>, Color) {
+fn line_colors(
+    kind: LineKind,
+    theme: &Theme,
+) -> (&'static str, Color, Option<Color>, Option<Color>, Color) {
     let add_bg = tint(theme.diff_add, 0.055);
     let del_bg = tint(theme.diff_del, 0.055);
     match kind {
@@ -629,11 +629,7 @@ fn split_line_el(
         .flatten()
         .find(|line| line.kind == LineKind::Meta)
     {
-        return meta_line_row(
-            &line.text,
-            theme,
-            2.0 * (ACCENT_BAR_WIDTH + gutter_px),
-        );
+        return meta_line_row(&line.text, theme, 2.0 * (ACCENT_BAR_WIDTH + gutter_px));
     }
     let highlights = state.highlight_for(&file.path);
     let left_cell = left
@@ -665,23 +661,21 @@ fn split_line_el(
         let (side, line_no) = anchor;
         let path = file.path.clone();
         if state.hovering(&path, anchor) {
-            right_cell = right_cell.child(
-                render_comment_adder(&path, side, line_no, theme).absolute(
+            right_cell =
+                right_cell.child(render_comment_adder(&path, side, line_no, theme).absolute(
                     split_adder_left(gutter_px),
                     (DIFF_LINE_HEIGHT - COMMENT_ADDER_SIZE) / 2.0,
-                ),
-            );
+                ));
         }
         let hover_path = path;
-        right_cell = right_cell.on_hover_change(
-            move |app: &mut App, hovered, _tx: &mut rune::Tx| {
+        right_cell =
+            right_cell.on_hover_change(move |app: &mut App, hovered, _tx: &mut rune::Tx| {
                 if hovered {
                     app.changes.set_hover(&hover_path, Some(anchor));
                 } else {
                     app.changes.clear_hover(&hover_path, anchor);
                 }
-            },
-        );
+            });
     }
     let mut outer = row().w_full().shrink().items_stretch();
     outer = if wrap {
@@ -692,8 +686,7 @@ fn split_line_el(
     outer
         .child(left_cell)
         .child(
-            el()
-                .w(SPLIT_DIVIDER_WIDTH)
+            el().w(SPLIT_DIVIDER_WIDTH)
                 .h_full()
                 .shrink()
                 .fill(theme.hairline(0.06)),
@@ -710,17 +703,12 @@ fn split_line_cell(
     wrap: bool,
 ) -> El {
     let (marker, marker_color, row_bg, accent, number_color) = line_colors(line.kind, theme);
-    let mut cell = row()
-        .grow(1.0)
-        .min_w(0.0)
-        .h_full()
-        .center_y();
+    let mut cell = row().grow(1.0).min_w(0.0).h_full().center_y();
     if let Some(bg) = row_bg {
         cell = cell.fill(bg);
     }
     cell.child(
-        el()
-            .w(ACCENT_BAR_WIDTH)
+        el().w(ACCENT_BAR_WIDTH)
             .h_full()
             .shrink()
             .fill(accent.unwrap_or(Color::TRANSPARENT)),
@@ -740,25 +728,17 @@ fn split_line_cell(
             ),
     )
     .child(
-        row()
-            .w(SPLIT_MARKER_WIDTH)
-            .shrink()
-            .center()
-            .child(
-                text(marker)
-                    .font(mono(DIFF_TEXT_SIZE, 400.0))
-                    .color(marker_color),
-            ),
+        row().w(SPLIT_MARKER_WIDTH).shrink().center().child(
+            text(marker)
+                .font(mono(DIFF_TEXT_SIZE, 400.0))
+                .color(marker_color),
+        ),
     )
     .child(code_line_el(line, highlights, theme, 6.0, wrap))
 }
 
 fn split_filler(theme: &Theme) -> El {
-    el()
-        .grow(1.0)
-        .min_w(0.0)
-        .h_full()
-        .fill(theme.ink(0.03))
+    el().grow(1.0).min_w(0.0).h_full().fill(theme.ink(0.03))
 }
 
 // ---------------------------------------------------------------------------
@@ -822,8 +802,7 @@ fn stacked_line(
         root = root.fill(bg);
     }
     root.child(
-        el()
-            .w(ACCENT_BAR_WIDTH)
+        el().w(ACCENT_BAR_WIDTH)
             .h_full()
             .shrink()
             .fill(accent.unwrap_or(Color::TRANSPARENT)),
@@ -939,8 +918,7 @@ fn render_file_body_upto(
                                 };
                                 pair.child(cell(left, true))
                                     .child(
-                                        el()
-                                            .w(SPLIT_DIVIDER_WIDTH)
+                                        el().w(SPLIT_DIVIDER_WIDTH)
                                             .h_full()
                                             .shrink()
                                             .fill(theme.hairline(0.06)),
@@ -955,7 +933,11 @@ fn render_file_body_upto(
         }
     }
 
-    col().w_full().shrink().pb(BODY_BOTTOM_PAD).children(children)
+    col()
+        .w_full()
+        .shrink()
+        .pb(BODY_BOTTOM_PAD)
+        .children(children)
 }
 
 // ---------------------------------------------------------------------------
@@ -984,11 +966,7 @@ pub fn header_controls(state: &ChangesState, app: &App, theme: &Theme) -> El {
                     .radius(5.0)
                     .center_y()
                     .fill(theme.ink(0.05))
-                    .child(
-                        text(short)
-                            .font(mono(10.5, 400.0))
-                            .color(theme.text_muted),
-                    ),
+                    .child(text(short).font(mono(10.5, 400.0)).color(theme.text_muted)),
             )
             .child(
                 text(commit.subject.clone())
@@ -1000,7 +978,7 @@ pub fn header_controls(state: &ChangesState, app: &App, theme: &Theme) -> El {
             )
             .child(split_toggle(state, theme))
             .child(wrap_toggle(state, theme))
-            .child(fold_all_button(theme))
+            .child(fold_all_button(theme));
     }
 
     let scope = state.scope;
@@ -1041,12 +1019,7 @@ pub fn header_controls(state: &ChangesState, app: &App, theme: &Theme) -> El {
             .child(fold_all_button(theme))
     };
 
-    let mut strip = row()
-        .w_full()
-        .h_full()
-        .center_y()
-        .gap(6.0)
-        .child(trigger);
+    let mut strip = row().w_full().h_full().center_y().gap(6.0).child(trigger);
     if let Some(menu) = state.scope_menu_open.then(|| scope_menu(state, theme)) {
         strip = strip.child(menu);
     }
@@ -1089,11 +1062,7 @@ fn header_button(id: &'static str, glyph: &'static str, active: bool, theme: &Th
     button = if active {
         button
             .fill(theme.wash(0.14))
-            .child(
-                text(glyph)
-                    .font(mono(12.0, 500.0))
-                    .color(theme.text),
-            )
+            .child(text(glyph).font(mono(12.0, 500.0)).color(theme.text))
     } else {
         button.hover(theme.wash(0.14)).child(
             text(glyph)
@@ -1136,7 +1105,11 @@ fn scope_menu(state: &ChangesState, theme: &Theme) -> El {
             item.child(
                 text(scope.label())
                     .font(TextStyle::new(12.0, 400.0))
-                    .color(if current { theme.text } else { theme.text_muted }),
+                    .color(if current {
+                        theme.text
+                    } else {
+                        theme.text_muted
+                    }),
             )
         }))
 }
@@ -1214,7 +1187,9 @@ fn ref_menu(state: &ChangesState, theme: &Theme) -> El {
             .w_full()
             .max_h(240.0)
             .gap(2.0)
-            .scroll(ScrollSpec { stick_bottom: false })
+            .scroll(ScrollSpec {
+                stick_bottom: false,
+            })
             .children(rows.into_iter().map(|branch_ix| {
                 let name = state.branches[branch_ix].clone();
                 let selected = current.as_deref() == Some(name.as_str());
@@ -1256,18 +1231,15 @@ fn ref_menu(state: &ChangesState, theme: &Theme) -> El {
         .shadow(8.0, 24.0, theme.hairline(0.15))
         .anchored("app/changes/ref-trigger", Side::Bottom, Align::Start, 6.0)
         .child(
-            rune::text_input(
-                &state.ref_search,
-                TextStyle::new(12.0, 400.0).lh(18.0),
-            )
-            .key("app/changes/ref-search")
-            .w_full()
-            .h(26.0)
-            .shrink()
-            .single_line()
-            .placeholder("Search branches…", theme.text_faint)
-            .caret(theme.caret, theme.selection)
-            .on_edit(|app: &mut App| &mut app.changes.ref_search),
+            rune::text_input(&state.ref_search, TextStyle::new(12.0, 400.0).lh(18.0))
+                .key("app/changes/ref-search")
+                .w_full()
+                .h(26.0)
+                .shrink()
+                .single_line()
+                .placeholder("Search branches…", theme.text_faint)
+                .caret(theme.caret, theme.selection)
+                .on_edit(|app: &mut App| &mut app.changes.ref_search),
         )
         .child(list)
 }

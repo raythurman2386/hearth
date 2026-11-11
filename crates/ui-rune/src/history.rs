@@ -15,8 +15,8 @@ use std::collections::HashSet;
 use chrono::DateTime;
 use hearth_proto::{GitHistoryCommit, GitHistoryRef, GitHistoryRefKind};
 use rune::{
-    canvas, col, el, icon, rich, row, text, Align, Color, Cursor, El, GrowthSpec, LineCap,
-    ScrollSpec, Shape, TextStyle,
+    Align, Color, Cursor, El, GrowthSpec, LineCap, ScrollSpec, Shape, TextStyle, canvas, col, el,
+    icon, rich, row, text,
 };
 
 use crate::changes::{ChangesState, DiffScope};
@@ -473,9 +473,11 @@ fn column_header(lane_count: usize, theme: &Theme) -> El {
 }
 
 fn column_label(label: &'static str, width: f32, theme: &Theme) -> El {
-    el().w(width)
-        .shrink()
-        .child(text(label).font(TextStyle::new(9.5, 400.0)).color(theme.text_faint))
+    el().w(width).shrink().child(
+        text(label)
+            .font(TextStyle::new(9.5, 400.0))
+            .color(theme.text_faint),
+    )
 }
 
 fn history_list(
@@ -484,8 +486,8 @@ fn history_list(
     graph_rows: Vec<GraphRow>,
     theme: &Theme,
 ) -> El {
-    let load_more =
-        state.history_cursor.is_some() || (state.history_error.is_some() && !state.history.is_empty());
+    let load_more = state.history_cursor.is_some()
+        || (state.history_error.is_some() && !state.history.is_empty());
     let count = state.history.len() + usize::from(load_more);
     let row_theme = theme.clone();
     let row_graph = graph_rows;
@@ -521,13 +523,11 @@ fn history_list(
         .w_full()
         .grow(1.0)
         .min_h(0.0)
-        .scroll(ScrollSpec { stick_bottom: false })
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
         .child(rows);
-    col()
-        .w_full()
-        .grow(1.0)
-        .min_h(0.0)
-        .child(viewport)
+    col().w_full().grow(1.0).min_h(0.0).child(viewport)
 }
 
 // ---------------------------------------------------------------------------
@@ -628,7 +628,11 @@ fn commit_row(
                 .child(
                     text(if copied { "Copied".to_string() } else { short })
                         .font(TextStyle::new(10.5, 400.0).mono())
-                        .color(if copied { theme.accent } else { theme.text_muted }),
+                        .color(if copied {
+                            theme.accent
+                        } else {
+                            theme.text_muted
+                        }),
                 ),
         )
 }
@@ -671,12 +675,7 @@ fn load_more_row(state: &ChangesState, theme: &Theme) -> El {
                 }
             });
     }
-    row()
-        .w_full()
-        .h(48.0)
-        .shrink()
-        .center()
-        .child(button)
+    row().w_full().h(48.0).shrink().center().child(button)
 }
 
 // ---------------------------------------------------------------------------
@@ -730,15 +729,8 @@ fn graph_cell(graph_row: &GraphRow, lane_count: usize, theme: &Theme) -> El {
         );
     }
     cell.child(
-        el()
-            .absolute(
-                node_x - HISTORY_NODE_RADIUS,
-                middle - HISTORY_NODE_RADIUS,
-            )
-            .size(
-                HISTORY_NODE_RADIUS * 2.0,
-                HISTORY_NODE_RADIUS * 2.0,
-            )
+        el().absolute(node_x - HISTORY_NODE_RADIUS, middle - HISTORY_NODE_RADIUS)
+            .size(HISTORY_NODE_RADIUS * 2.0, HISTORY_NODE_RADIUS * 2.0)
             .radius(HISTORY_NODE_RADIUS)
             .fill(color),
     )
@@ -764,10 +756,7 @@ fn segment_points(segment: &GraphSegment) -> Vec<[f32; 2]> {
         ),
         SegmentShape::Through => {
             let start = [from_x, -HISTORY_GRAPH_ROW_OVERLAP];
-            let end = [
-                to_x,
-                HISTORY_ROW_HEIGHT + HISTORY_GRAPH_ROW_OVERLAP,
-            ];
+            let end = [to_x, HISTORY_ROW_HEIGHT + HISTORY_GRAPH_ROW_OVERLAP];
             if segment.from_lane == segment.to_lane {
                 vec![start, end]
             } else {
@@ -828,18 +817,11 @@ fn ref_area(refs: &[GitHistoryRef], row_index: usize, available_width: f32, them
         }))
 }
 
-fn ref_badge(
-    reference: &GitHistoryRef,
-    row_index: usize,
-    ref_index: usize,
-    theme: &Theme,
-) -> El {
+fn ref_badge(reference: &GitHistoryRef, row_index: usize, ref_index: usize, theme: &Theme) -> El {
     let color = ref_color(reference, theme);
     let description = ref_description(reference);
     row()
-        .key(format!(
-            "app/changes/history/ref/{row_index}/{ref_index}"
-        ))
+        .key(format!("app/changes/history/ref/{row_index}/{ref_index}"))
         .h(16.0)
         .max_w(HISTORY_REF_BADGE_MAX_WIDTH)
         .px(5.0)

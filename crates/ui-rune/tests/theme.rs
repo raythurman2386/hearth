@@ -7,9 +7,7 @@
 //! painted, constants unchanged).
 
 use hearth_syntax::HighlightKind;
-use hearth_ui_rune::theme::{
-    self, Appearance, Theme, contrast_ratio, flatten, relative_luminance,
-};
+use hearth_ui_rune::theme::{self, Appearance, Theme, contrast_ratio, flatten, relative_luminance};
 
 fn both() -> [Theme; 2] {
     [Theme::dark(), Theme::light()]
@@ -154,7 +152,10 @@ fn light_planes_recede_then_float_at_cream_level() {
     }
     // With no strong lightness step, the stronger border is the separator.
     let border = contrast_ratio(flatten(l.border_strong, l.bg), l.bg);
-    assert!(border > 1.15, "light border_strong only registers {border:.3}");
+    assert!(
+        border > 1.15,
+        "light border_strong only registers {border:.3}"
+    );
 }
 
 #[test]
@@ -243,9 +244,18 @@ fn the_palette_keeps_its_family_relationships() {
         assert_eq!(p.color(HighlightKind::Punctuation), p.comment);
         assert_eq!(p.color(HighlightKind::Embedded), p.comment);
         assert_eq!(p.color(HighlightKind::Parameter), t.text);
-        assert_eq!(p.color(HighlightKind::String), p.color(HighlightKind::Number));
-        assert_eq!(p.color(HighlightKind::Type), p.color(HighlightKind::Constructor));
-        assert_eq!(p.color(HighlightKind::Function), p.color(HighlightKind::FunctionBuiltin));
+        assert_eq!(
+            p.color(HighlightKind::String),
+            p.color(HighlightKind::Number)
+        );
+        assert_eq!(
+            p.color(HighlightKind::Type),
+            p.color(HighlightKind::Constructor)
+        );
+        assert_eq!(
+            p.color(HighlightKind::Function),
+            p.color(HighlightKind::FunctionBuiltin)
+        );
         // Keyword and invalid share the danger tone; both are error/emphasis.
         assert_eq!(p.color(HighlightKind::Keyword), t.danger);
         assert_eq!(p.color(HighlightKind::Invalid), t.danger);
@@ -255,14 +265,14 @@ fn the_palette_keeps_its_family_relationships() {
 #[test]
 fn code_and_diff_tones_are_readable() {
     for t in both() {
-        for (name, fg) in [("code_text", t.code_text), ("diff_add", t.diff_add), ("diff_del", t.diff_del)] {
+        for (name, fg) in [
+            ("code_text", t.code_text),
+            ("diff_add", t.diff_add),
+            ("diff_del", t.diff_del),
+        ] {
             let floor = if name == "code_text" { 4.5 } else { 3.0 };
             let ratio = contrast_ratio(fg, t.bg);
-            assert!(
-                ratio >= floor,
-                "{} {name} is {ratio:.2}:1 on bg",
-                label(&t)
-            );
+            assert!(ratio >= floor, "{} {name} is {ratio:.2}:1 on bg", label(&t));
         }
         let caret = contrast_ratio(t.caret, t.bg);
         assert!(caret >= 3.0, "{} caret is {caret:.2}:1", label(&t));
@@ -299,7 +309,11 @@ fn the_kit_page_is_the_panel_background() {
 #[test]
 fn appearance_selection_builds_the_matching_theme() {
     assert!(Theme::for_appearance(Appearance::Dark).appearance.is_dark());
-    assert!(!Theme::for_appearance(Appearance::Light).appearance.is_dark());
+    assert!(
+        !Theme::for_appearance(Appearance::Light)
+            .appearance
+            .is_dark()
+    );
     assert_eq!(Appearance::Dark.inverted(), Appearance::Light);
     assert_eq!(Appearance::Light.inverted(), Appearance::Dark);
 }

@@ -42,8 +42,7 @@ static SCENES: &[Scene] = &[
         app.connection = crate::state::ConnectionStatus::Ready;
     }),
     ("failure", |app| {
-        app.connection =
-            crate::state::ConnectionStatus::Failed("engine unreachable".to_string());
+        app.connection = crate::state::ConnectionStatus::Failed("engine unreachable".to_string());
     }),
     ("empty", |app| {
         app.connection = crate::state::ConnectionStatus::Ready;
@@ -188,7 +187,8 @@ fn poll(app: &mut App, _now: f64, tx: &mut Tx) -> bool {
     changed |= crate::pickers::pump(app);
     changed |= crate::composer::poll(app);
     if let Some(sent) = crate::composer::take_sent(app) {
-        app.transcript_state.on_own_send(sent.chat_id, sent.message_id);
+        app.transcript_state
+            .on_own_send(sent.chat_id, sent.message_id);
         changed = true;
     }
 

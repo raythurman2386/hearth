@@ -9,10 +9,10 @@
 use chrono::Utc;
 use hearth_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
 use hearth_proto::{Chat, Device, Space, WorkspaceScope};
+use hearth_ui_rune::UiConfig;
 use hearth_ui_rune::engine::{EngineBootConfig, EngineHandle};
 use hearth_ui_rune::shell::{self, Route, SplashPhase};
 use hearth_ui_rune::state::App;
-use hearth_ui_rune::UiConfig;
 use rune::{Env, Key, KeyEvent, Mods, Runtime};
 
 struct Harness {
@@ -226,7 +226,10 @@ fn the_user_menu_opens_settings() {
         rt.state.shell.route
     );
     assert!(rt.find("settings-outlet").is_some());
-    assert!(!rt.state.shell.user_menu_open, "the popover closes behind it");
+    assert!(
+        !rt.state.shell.user_menu_open,
+        "the popover closes behind it"
+    );
 }
 
 #[test]
@@ -257,7 +260,9 @@ fn escape_dismisses_the_rename_dialog() {
 #[test]
 fn typing_reaches_the_composer_text_model() {
     let mut rt = runtime(harness().app);
-    let (x, y) = rt.find("composer/input").expect("the composer field is drawn");
+    let (x, y) = rt
+        .find("composer/input")
+        .expect("the composer field is drawn");
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     rt.frame(1.0 / 60.0);

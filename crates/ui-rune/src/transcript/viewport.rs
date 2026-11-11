@@ -233,7 +233,11 @@ impl SavedViewport {
     /// A restored runway is always *released*: navigation never silently
     /// re-arms the own-turn hold, and a turn whose prompt vanished in replay
     /// (a failed send) drops its stale runway entirely.
-    pub fn resolve(&self, rows: &[super::model::Row], allow_fallback: bool) -> Option<RestoredViewport> {
+    pub fn resolve(
+        &self,
+        rows: &[super::model::Row],
+        allow_fallback: bool,
+    ) -> Option<RestoredViewport> {
         let Self::Anchored {
             anchor,
             distance_from_bottom,
@@ -431,7 +435,10 @@ mod tests {
             "an unrelated echo is not an authoritative index fallback"
         );
         assert_eq!(
-            saved.resolve(&echo_only, true).expect("populated replay").row_id,
+            saved
+                .resolve(&echo_only, true)
+                .expect("populated replay")
+                .row_id,
             "echo"
         );
         assert!(TranscriptReplayState::Empty.authoritative_empty());

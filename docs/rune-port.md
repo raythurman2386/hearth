@@ -1,7 +1,8 @@
 # Hearth — Rune UI port
 
-Status: **foundation landed** on `port/rune`. `crates/ui-rune` compiles and renders
-headlessly; `crates/ui` (gpui) stays as the reference until parity, then is deleted.
+Status: **ported and shipped on `port/rune`**. `crates/ui-rune` is the headed
+viewport; `crates/ui` (gpui) has been removed and `apps/hearth` links
+`hearth-ui-rune`. Rune is pinned to `dev` rev `424e0f5`.
 
 ## Goal
 
@@ -101,14 +102,24 @@ wires it into `shell/mod.rs` / `state.rs`.
 
 ```sh
 cargo check -p hearth-ui-rune
-cargo test  -p hearth-ui-rune
-# headless snapshots (state scenes: ready, failure, empty)
-cargo run -p hearth-ui-rune --example smoke -- --snap /tmp/hearth.png --scene ready --size 1320x880 --scale 2
-cargo run -p hearth-ui-rune --example smoke -- --tree /tmp/tree.json --scene ready
+cargo test  -p hearth-ui-rune          # 541 lib + integration tests
+cargo clippy -p hearth-ui-rune --all-targets -- -D warnings
+# headless snapshots (state scenes: ready, failure, empty, demo, settings, narrow)
+cargo run -p hearth-ui-rune --example smoke -- --snap /tmp/hearth.png --scene demo --size 1320x880 --scale 2
+cargo run -p hearth-ui-rune --example smoke -- --snap /tmp/narrow.png --scene narrow --size 941x700 --scale 2
+cargo run -p hearth-ui-rune --example smoke -- --tree /tmp/tree.json --scene demo
 ```
 
 The tree JSON is the layout regression net: check rects, not just pixels.
-`cargo test -p hearth-ui-rune` runs the ported pure-logic tests.
+`cargo test -p hearth-ui-rune` runs the ported pure-logic tests, the state/theme
+tests, and the Runtime interaction/layout tests.
+
+Headed check:
+
+```sh
+HEARTH_DATA_DIR=/tmp/hearth-run HEARTH_HARNESS=mock HEARTH_IPC_PORT=27699 \
+  cargo run -p hearth
+```
 
 ## Porting rules
 

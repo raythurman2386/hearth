@@ -10,8 +10,8 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use hearth_proto::{CheckoutDiff, GitHistoryCommit, GitHistoryPage};
@@ -119,20 +119,44 @@ pub struct HighlightSlot {
 /// Results posted by background work. Every request carries its identity key
 /// so a late result from a previous chat/scope is dropped instead of applied.
 enum ChangesEvent {
-    Diffs { generation: u64, value: serde_json::Value },
-    WatchError { generation: u64, message: String },
-    Branches { key: String, result: Result<Vec<String>, String> },
-    Scoped { key: String, result: Result<CheckoutDiff, String> },
-    Parsed { key: String, files: Vec<FileDiff> },
+    Diffs {
+        generation: u64,
+        value: serde_json::Value,
+    },
+    WatchError {
+        generation: u64,
+        message: String,
+    },
+    Branches {
+        key: String,
+        result: Result<Vec<String>, String>,
+    },
+    Scoped {
+        key: String,
+        result: Result<CheckoutDiff, String>,
+    },
+    Parsed {
+        key: String,
+        files: Vec<FileDiff>,
+    },
     Highlights {
         path: String,
         fingerprint: u64,
         full: bool,
         result: Option<Arc<DiffHighlights>>,
     },
-    History { key: String, reset: bool, result: Result<GitHistoryPage, String> },
-    FetchedAll { key: String, result: Result<(), String> },
-    CopiedExpired { sha: String },
+    History {
+        key: String,
+        reset: bool,
+        result: Result<GitHistoryPage, String>,
+    },
+    FetchedAll {
+        key: String,
+        result: Result<(), String>,
+    },
+    CopiedExpired {
+        sha: String,
+    },
     SettleFolds,
 }
 
@@ -386,7 +410,10 @@ impl ChangesState {
                 let had_error = self.error.take().is_some();
                 apply_diff_frame(&mut self.diffs, value) || had_error
             }
-            ChangesEvent::WatchError { generation, message } => {
+            ChangesEvent::WatchError {
+                generation,
+                message,
+            } => {
                 if generation != self.watch_generation {
                     return false;
                 }
@@ -500,11 +527,7 @@ impl ChangesState {
                     (true, None) => false,
                 }
             }
-            ChangesEvent::History {
-                key,
-                reset,
-                result,
-            } => {
+            ChangesEvent::History { key, reset, result } => {
                 if self.history_for.as_deref() != Some(key.as_str()) {
                     return false;
                 }
@@ -602,12 +625,7 @@ impl ChangesState {
         if let Some(diff) = self.resolved() {
             return Some(diff.cwd.clone());
         }
-        self.env
-            .as_ref()?
-            .chat
-            .as_ref()?
-            .cwd
-            .clone()
+        self.env.as_ref()?.chat.as_ref()?.cwd.clone()
     }
 
     /// The diff the pane currently displays: the watch stream for the working
@@ -636,7 +654,12 @@ impl ChangesState {
     }
 
     fn parse_key(&self, diff: &CheckoutDiff) -> String {
-        format!("{}:{}:{}", diff.checkout_id, diff.checksum, self.scope_key())
+        format!(
+            "{}:{}:{}",
+            diff.checkout_id,
+            diff.checksum,
+            self.scope_key()
+        )
     }
 
     fn current_parse_key(&self) -> Option<String> {
@@ -901,8 +924,8 @@ impl ChangesState {
         let mut changed = false;
         for file_ix in (0..self.row_ranges.len()).rev() {
             let range = self.row_ranges[file_ix].clone();
-            let folding =
-                self.rows.get(range.start + 1) == Some(&DiffRow::FoldingBody {
+            let folding = self.rows.get(range.start + 1)
+                == Some(&DiffRow::FoldingBody {
                     file: file_ix as u32,
                 });
             if !folding {
@@ -1297,7 +1320,10 @@ impl ChangesState {
             base.as_deref().unwrap_or(""),
             commit_sha.as_deref().unwrap_or("")
         );
-        let watch_sum = self.resolved().map(|d| d.checksum.clone()).unwrap_or_default();
+        let watch_sum = self
+            .resolved()
+            .map(|d| d.checksum.clone())
+            .unwrap_or_default();
         let key = format!("{context}|{watch_sum}");
         if self.scoped_for.as_deref() == Some(key.as_str())
             || self.scoped_inflight.as_deref() == Some(key.as_str())
@@ -1440,7 +1466,10 @@ impl ChangesState {
             let mut params = serde_json::Map::new();
             params.insert("cwd".into(), serde_json::Value::String(cwd));
             params.insert("cursor".into(), serde_json::json!(cursor));
-            params.insert("limit".into(), serde_json::json!(crate::history::HISTORY_PAGE_SIZE));
+            params.insert(
+                "limit".into(),
+                serde_json::json!(crate::history::HISTORY_PAGE_SIZE),
+            );
             if let Some(target) = target {
                 params.insert("targetDeviceId".into(), serde_json::Value::String(target));
             }
@@ -1498,7 +1527,11 @@ impl ChangesState {
             let Some(file) = files.get(file_ix) else {
                 continue;
             };
-            if self.folds.get(&file.path).is_some_and(|fold| fold.collapsed) {
+            if self
+                .folds
+                .get(&file.path)
+                .is_some_and(|fold| fold.collapsed)
+            {
                 continue;
             }
             let Some(language) = hearth_syntax::language_for_path(&file.path) else {
@@ -1573,10 +1606,7 @@ impl ChangesState {
                     .and_then(|value| value.as_object().cloned())
                     .unwrap_or_default();
                 if let Some(target) = target {
-                    params.insert(
-                        "targetDeviceId".into(),
-                        serde_json::Value::String(target),
-                    );
+                    params.insert("targetDeviceId".into(), serde_json::Value::String(target));
                 }
                 let response = engine
                     .client
@@ -1636,10 +1666,7 @@ fn spawn_diff_watch(
             {
                 Ok(mut rx) => {
                     while let Some(value) = rx.recv().await {
-                        let _ = tx.send(ChangesEvent::Diffs {
-                            generation,
-                            value,
-                        });
+                        let _ = tx.send(ChangesEvent::Diffs { generation, value });
                         bridge.wake();
                     }
                     let _ = tx.send(ChangesEvent::WatchError {

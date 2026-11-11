@@ -19,18 +19,18 @@ use hearth_proto::{
 };
 use hearth_update::UpdateStatus;
 
+use crate::UiConfig;
 use crate::appearance::AppearanceState;
 use crate::bridge::{Bridge, EngineEvent, WatchGuard};
+use crate::changes::ChangesState;
 use crate::composer::ComposerState;
 use crate::engine::{EngineBootConfig, EngineHandle};
-use crate::changes::ChangesState;
 use crate::pickers::PickersState;
-use crate::shell::ShellState;
 use crate::settings::UiSettings;
+use crate::shell::ShellState;
 use crate::terminal::TerminalState;
 use crate::theme::{Appearance, Theme};
 use crate::transcript::TranscriptState;
-use crate::UiConfig;
 
 pub use hearth_proto::version_triple;
 pub use hearth_proto::view::{
@@ -393,11 +393,7 @@ impl App {
         }
     }
 
-    pub fn begin_upload_progress(
-        &mut self,
-        total: u64,
-        done: Arc<std::sync::atomic::AtomicU64>,
-    ) {
+    pub fn begin_upload_progress(&mut self, total: u64, done: Arc<std::sync::atomic::AtomicU64>) {
         self.upload_progress = Some(UploadProgress { done, total });
     }
 
@@ -519,9 +515,9 @@ impl App {
     /// The send has sat unadopted past the grace window: surface the explicit
     /// failed state instead of faking progress or forgetting it.
     pub fn send_undelivered(&self, chat_id: &str, now: DateTime<Utc>) -> bool {
-        self.pending_sends.get(chat_id).is_some_and(|p| {
-            (now - p.started).num_milliseconds() > UNDELIVERED_GRACE_MS
-        })
+        self.pending_sends
+            .get(chat_id)
+            .is_some_and(|p| (now - p.started).num_milliseconds() > UNDELIVERED_GRACE_MS)
     }
 
     /// Retry pressed: restart the grace clock so the overlay returns to its
@@ -534,11 +530,7 @@ impl App {
 
     /// When the in-flight send (if any) was fired — the elapsed-timer base
     /// while the overlay reads as Working.
-    pub fn pending_send_started(
-        &self,
-        chat_id: &str,
-        now: DateTime<Utc>,
-    ) -> Option<DateTime<Utc>> {
+    pub fn pending_send_started(&self, chat_id: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
         self.pending_sends
             .get(chat_id)
             .filter(|p| {
@@ -750,9 +742,11 @@ impl App {
             client.clone(),
             hearth_rpc::methods::WATCH_CHATS,
             serde_json::json!({}),
-            |v| serde_json::from_value::<Vec<Chat>>(v)
-                .map(EngineEvent::Chats)
-                .ok(),
+            |v| {
+                serde_json::from_value::<Vec<Chat>>(v)
+                    .map(EngineEvent::Chats)
+                    .ok()
+            },
         ));
         self.watch_guards.push(spawn_typed_watch(
             &self.bridge,
@@ -836,11 +830,7 @@ impl App {
     fn respawn_transcript_watch(&mut self) {
         self.transcript_guard = None;
         if let (Some(chat_id), Some(handle)) = (self.selected_chat.clone(), self.engine.clone()) {
-            self.transcript_guard = Some(spawn_transcript_watch(
-                &self.bridge,
-                handle,
-                chat_id,
-            ));
+            self.transcript_guard = Some(spawn_transcript_watch(&self.bridge, handle, chat_id));
         }
     }
 
@@ -954,11 +944,7 @@ where
     bridge.spawn_watch(client, method, params, map)
 }
 
-fn spawn_transcript_watch(
-    bridge: &Bridge,
-    handle: EngineHandle,
-    chat_id: String,
-) -> WatchGuard {
+fn spawn_transcript_watch(bridge: &Bridge, handle: EngineHandle, chat_id: String) -> WatchGuard {
     let client = handle.client.clone();
     let params = serde_json::json!({ "chatId": chat_id });
     bridge.spawn_watch(
@@ -976,11 +962,7 @@ fn spawn_transcript_watch(
     )
 }
 
-fn spawn_subagent_watch(
-    bridge: &Bridge,
-    handle: EngineHandle,
-    doc_id: String,
-) -> WatchGuard {
+fn spawn_subagent_watch(bridge: &Bridge, handle: EngineHandle, doc_id: String) -> WatchGuard {
     let client = handle.client.clone();
     let params = serde_json::json!({ "chatId": doc_id });
     bridge.spawn_watch(
@@ -1007,9 +989,7 @@ mod tests {
     use super::*;
     use chrono::TimeDelta;
     use hearth_doc::{MessageRole, SessionMessageEntry};
-    use hearth_proto::{
-        ChatConnectivity, ChatIndicator, ConnectivityState, SessionStatus,
-    };
+    use hearth_proto::{ChatConnectivity, ChatIndicator, ConnectivityState, SessionStatus};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     fn base() -> DateTime<Utc> {
@@ -1028,12 +1008,7 @@ mod tests {
         })
     }
 
-    fn chat(
-        id: &str,
-        device: &str,
-        created_min: i64,
-        last_message_min: Option<i64>,
-    ) -> Chat {
+    fn chat(id: &str, device: &str, created_min: i64, last_message_min: Option<i64>) -> Chat {
         Chat {
             id: id.into(),
             device_id: device.into(),
@@ -1275,9 +1250,15 @@ mod tests {
             },
         ]);
 
-        assert!(app.device_online("me", base()), "this device is always here");
+        assert!(
+            app.device_online("me", base()),
+            "this device is always here"
+        );
         assert!(app.device_online("fresh", base()));
-        assert!(app.device_online("edge", base()), "70s is still inside the window");
+        assert!(
+            app.device_online("edge", base()),
+            "70s is still inside the window"
+        );
         assert!(!app.device_online("stale", base()));
         assert!(app.device_online("never", base()), "no clock, no claim");
         assert!(
@@ -1548,7 +1529,10 @@ mod tests {
         app.push_echo("a", entry("m4"));
         app.apply_transcript(vec![entry("m3")]);
         assert_eq!(
-            app.pending_echoes().iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            app.pending_echoes()
+                .iter()
+                .map(|e| e.id.as_str())
+                .collect::<Vec<_>>(),
             ["m4"],
             "only the confirmed echo retires"
         );
@@ -1558,7 +1542,10 @@ mod tests {
     #[test]
     fn ack_clears_only_the_selected_chats_matching_send() {
         let mut app = app();
-        app.apply_chats(vec![chat("a", "dev", 0, Some(0)), chat("b", "dev", 0, Some(0))]);
+        app.apply_chats(vec![
+            chat("a", "dev", 0, Some(0)),
+            chat("b", "dev", 0, Some(0)),
+        ]);
         app.selected_chat = Some("a".into());
         app.begin_pending_send("a", "msg-a", base());
         app.begin_pending_send("b", "msg-b", base());
@@ -1624,12 +1611,7 @@ mod tests {
         let mut app = app();
         app.add_diff_comment(
             "a.rs",
-            crate::comments::DiffComment::new(
-                "a.rs",
-                crate::comments::CommentSide::New,
-                1,
-                "x",
-            ),
+            crate::comments::DiffComment::new("a.rs", crate::comments::CommentSide::New, 1, "x"),
         );
         app.purge_diff_comments("a.rs");
         assert!(app.diff_comments("a.rs").is_empty());

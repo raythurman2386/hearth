@@ -507,7 +507,9 @@ impl ImageCache {
                     _ => None,
                 })
                 .min();
-            let Some((_, victim, bytes)) = oldest else { break };
+            let Some((_, victim, bytes)) = oldest else {
+                break;
+            };
             self.map.remove(&victim);
             self.total_bytes = self.total_bytes.saturating_sub(bytes);
         }
@@ -865,8 +867,16 @@ mod tests {
         }
         // Three entries at > half the budget each: the oldest goes.
         assert!(cache.total_bytes <= MAX_CACHED_IMAGE_BYTES);
-        assert!(!cache.map.contains_key(&("dev".to_string(), "p0".to_string())));
-        assert!(cache.map.contains_key(&("dev".to_string(), "p2".to_string())));
+        assert!(
+            !cache
+                .map
+                .contains_key(&("dev".to_string(), "p0".to_string()))
+        );
+        assert!(
+            cache
+                .map
+                .contains_key(&("dev".to_string(), "p2".to_string()))
+        );
     }
 
     #[test]
@@ -888,7 +898,11 @@ mod tests {
                 bytes: MAX_CACHED_IMAGE_BYTES,
             },
         );
-        assert!(cache.map.contains_key(&("dev".to_string(), "new".to_string())));
+        assert!(
+            cache
+                .map
+                .contains_key(&("dev".to_string(), "new".to_string()))
+        );
         assert!(cache.total_bytes <= MAX_CACHED_IMAGE_BYTES || cache.map.len() == 1);
     }
 }

@@ -20,8 +20,8 @@ use super::panels::{self, conversation_width, resize_handle, right_target, sideb
 use super::tabs::right_pane_expand_icon;
 use super::titlebar::platform_cluster_inset;
 use super::{
-    RightSurface, Route, add_diff_surface, add_terminal_surface,
-    open_settings, resolved_right_active, right_pane_open, terminal_open, toggle_right_pane,
+    RightSurface, Route, add_diff_surface, add_terminal_surface, open_settings,
+    resolved_right_active, right_pane_open, terminal_open, toggle_right_pane,
     toggle_right_pane_expand,
 };
 
@@ -260,8 +260,7 @@ pub fn transcript_slot(app: &App, theme: &Theme) -> El {
 }
 
 pub fn composer_slot(app: &App, theme: &Theme) -> El {
-    el()
-        .w_full()
+    el().w_full()
         .on_layout(|app: &mut App, [_, _, _, h]| {
             app.shell.bottom_stack = h;
         })
@@ -341,9 +340,10 @@ fn new_chat_canvas(app: &App, theme: &Theme) -> El {
                 // new-chat canvas. Their popovers mount from
                 // `composer::popups` like the composer's own pickers.
                 .child(
-                    el().w_full().max_w(460.0).mt(16.0).child(
-                        crate::pickers::render_new_session(&app.pickers, app, theme),
-                    ),
+                    el().w_full()
+                        .max_w(460.0)
+                        .mt(16.0)
+                        .child(crate::pickers::render_new_session(&app.pickers, app, theme)),
                 )
                 .child(
                     text(helper)
@@ -385,7 +385,10 @@ pub fn terminal_slot(app: &App, theme: &Theme, height: f32, viewport_h: f32) -> 
         .h(height)
         .clip_soft(0.0)
         .motion(crate::motion::RESIZE)
-        .border_sides([1.0 / app.scale.get().max(1.0), 0.0, 0.0, 0.0], theme.border)
+        .border_sides(
+            [1.0 / app.scale.get().max(1.0), 0.0, 0.0, 0.0],
+            theme.border,
+        )
         .child(panels::terminal_handle(
             theme,
             viewport_h,
@@ -411,7 +414,10 @@ fn right_pane(app: &App, theme: &Theme) -> El {
         .gap(6.0)
         .center_y()
         .clip_soft(0.0)
-        .border_sides([0.0, 0.0, 1.0 / app.scale.get().max(1.0), 0.0], theme.border)
+        .border_sides(
+            [0.0, 0.0, 1.0 / app.scale.get().max(1.0), 0.0],
+            theme.border,
+        )
         .child(icon(surface_icon(active), 12.0).color(theme.text_muted));
     if matches!(active, RightSurface::Diff(_)) {
         // Scope / base ref / split / wrap / fold-all live in the pane header.

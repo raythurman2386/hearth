@@ -458,9 +458,13 @@ fn compact_pill(app: &App, theme: &Theme, height: f32, morphing: bool, strips: E
                                 .children(if narrow {
                                     None
                                 } else {
-                                    Some(el().h(32.0).clip_soft(0.0).child(
-                                        pickers::render_cluster(&app.pickers, app, theme),
-                                    ))
+                                    Some(
+                                        el().h(32.0).clip_soft(0.0).child(pickers::render_cluster(
+                                            &app.pickers,
+                                            app,
+                                            theme,
+                                        )),
+                                    )
                                 })
                                 .child(attach_button(theme)),
                         )

@@ -6,7 +6,7 @@
 
 use std::hash::{Hash, Hasher};
 
-use rune::{el, row, text, text_input, El, TextStyle, TextEdit};
+use rune::{El, TextEdit, TextStyle, el, row, text, text_input};
 
 use crate::comments::{CommentSide, DiffComment};
 use crate::state::App;
@@ -103,8 +103,8 @@ pub(super) fn commit_draft(app: &mut App) {
         app.changes.comments_changed();
         return;
     }
-    let comment = DiffComment::new(draft.path, draft.side, draft.line, body)
-        .renamed_from(draft.old_path);
+    let comment =
+        DiffComment::new(draft.path, draft.side, draft.line, body).renamed_from(draft.old_path);
     // `draft.key`, not the live one: the note stages onto the composer it was
     // written against even if the selection moved under it.
     app.add_diff_comment(&draft.key, comment);
@@ -141,18 +141,9 @@ pub fn split_adder_left(gutter_px: f32) -> f32 {
 
 pub const COMMENT_ADDER_SIZE: f32 = 16.0;
 
-pub(super) fn render_comment_adder(
-    path: &str,
-    side: CommentSide,
-    line: u32,
-    theme: &Theme,
-) -> El {
+pub(super) fn render_comment_adder(path: &str, side: CommentSide, line: u32, theme: &Theme) -> El {
     let target = path.to_string();
-    el()
-        .key(format!(
-            "app/changes/cmt-add/{path}/{}/{line}",
-            side.tag()
-        ))
+    el().key(format!("app/changes/cmt-add/{path}/{}/{line}", side.tag()))
         .size(COMMENT_ADDER_SIZE, COMMENT_ADDER_SIZE)
         .center()
         .radius(4.0)
@@ -211,8 +202,7 @@ pub(super) fn render_comment_card(comment: &DiffComment, theme: &Theme) -> El {
                                 .grow(1.0),
                         )
                         .child(
-                            el()
-                                .key(format!("app/changes/cmt-remove/{}", comment.id))
+                            el().key(format!("app/changes/cmt-remove/{}", comment.id))
                                 .size(16.0, 16.0)
                                 .center()
                                 .radius(4.0)
@@ -284,18 +274,15 @@ pub(super) fn render_comment_draft(draft: &CommentDraft, theme: &Theme) -> El {
                         ),
                 )
                 .child(
-                    text_input(
-                        &draft.edit,
-                        TextStyle::new(12.0, 400.0).lh(18.0),
-                    )
-                    .key("app/changes/draft-input")
-                    .w_full()
-                    .h(46.0)
-                    .shrink()
-                    .placeholder("Request a change…", theme.text_faint)
-                    .caret(theme.caret, theme.selection)
-                    .on_edit(|app: &mut App| app.changes.draft_edit())
-                    .on_submit(|app: &mut App, _tx: &mut rune::Tx| commit_draft(app)),
+                    text_input(&draft.edit, TextStyle::new(12.0, 400.0).lh(18.0))
+                        .key("app/changes/draft-input")
+                        .w_full()
+                        .h(46.0)
+                        .shrink()
+                        .placeholder("Request a change…", theme.text_faint)
+                        .caret(theme.caret, theme.selection)
+                        .on_edit(|app: &mut App| app.changes.draft_edit())
+                        .on_submit(|app: &mut App, _tx: &mut rune::Tx| commit_draft(app)),
                 )
                 .child(
                     row()
@@ -380,7 +367,10 @@ mod tests {
         );
         // An open draft is part of the key.
         let draft = ("src/main.rs".to_string(), CommentSide::New, 1);
-        assert_ne!(one, comment_state_key(std::slice::from_ref(&a), Some(&draft)));
+        assert_ne!(
+            one,
+            comment_state_key(std::slice::from_ref(&a), Some(&draft))
+        );
     }
 
     #[test]

@@ -102,11 +102,15 @@ pub fn render_subagent(app: &App, theme: &Theme, doc_id: &str) -> El {
 /// while that line is pending (see docs/rune-port.md).
 pub fn lightbox_overlay(app: &App, theme: &Theme) -> Option<El> {
     let preview = app.transcript_state.attachment_preview.clone()?;
-    Some(crate::attachments::lightbox(theme, &preview, |app: &mut App| {
-        app.transcript_state.attachment_preview = None;
-        // The shell's poll hands focus back to the composer on the next frame.
-        app.shell.focus_composer = true;
-    }))
+    Some(crate::attachments::lightbox(
+        theme,
+        &preview,
+        |app: &mut App| {
+            app.transcript_state.attachment_preview = None;
+            // The shell's poll hands focus back to the composer on the next frame.
+            app.shell.focus_composer = true;
+        },
+    ))
 }
 
 fn apply_viewport_layout(app: &mut App, rect: [f32; 4], tx: &mut rune::Tx) {
@@ -183,10 +187,7 @@ fn render_rows(app: &App, theme: &Theme, rows: Arc<Vec<Row>>, subagent: bool, ve
                     // own-turn reservation as REAL scroll content (a growth
                     // stack must be its viewport's last child, so a spacer
                     // sibling is not allowed).
-                    return el()
-                        .key("app/transcript/runway")
-                        .w_full()
-                        .h(bottom_space);
+                    return el().key("app/transcript/runway").w_full().h(bottom_space);
                 };
                 row_el(
                     app,

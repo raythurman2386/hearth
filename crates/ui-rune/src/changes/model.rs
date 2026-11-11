@@ -339,7 +339,7 @@ mod tests {
     use super::*;
     use crate::changes::PATCH;
     use crate::changes::{
-        body_height, BODY_BOTTOM_PAD, DIFF_LINE_HEIGHT, HUNK_HEADER_HEIGHT, NOTICE_HEIGHT,
+        BODY_BOTTOM_PAD, DIFF_LINE_HEIGHT, HUNK_HEADER_HEIGHT, NOTICE_HEIGHT, body_height,
     };
 
     #[test]

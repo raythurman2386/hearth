@@ -24,9 +24,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use hearth_proto::{
-    ChangeRequestSummary, Chat, CheckoutChangeRequestStatus, Device, Space,
-};
+use hearth_proto::{ChangeRequestSummary, Chat, CheckoutChangeRequestStatus, Device, Space};
 use hearth_rpc::{RpcError, methods};
 use rune::Color;
 
@@ -354,9 +352,9 @@ impl ChangeRequestsState {
         let chat_devices: HashSet<String> = env.chats.iter().map(|c| c.device_id.clone()).collect();
         changed |= self.client.retain_unsupported(&chat_devices);
         for device in &env.devices {
-            changed |=
-                self.client
-                    .clear_unsupported_on_version_change(&device.id, device.version.as_deref());
+            changed |= self
+                .client
+                .clear_unsupported_on_version_change(&device.id, device.version.as_deref());
         }
 
         let Some(engine) = env.engine.clone() else {
@@ -563,7 +561,7 @@ fn pull_request_badge(
     surface: ChangeRequestBadgeSurface,
     theme: &Theme,
 ) -> rune::El {
-    use rune::{row, text, Cursor, TextStyle};
+    use rune::{Cursor, TextStyle, row, text};
 
     let color = model.tone.color(theme);
     let composer = surface == ChangeRequestBadgeSurface::Composer;
@@ -591,10 +589,8 @@ fn pull_request_badge(
             let _ = tx.open_url(&open_url);
         });
     if composer {
-        badge = badge.child(
-            crate::icons::icon(&crate::icons::PULL_REQUEST, 11.0)
-                .color(color.alpha(0.85)),
-        );
+        badge = badge
+            .child(crate::icons::icon(&crate::icons::PULL_REQUEST, 11.0).color(color.alpha(0.85)));
     }
     badge
         // Monospace digits give the badge a stable tabular width as PR numbers change.
@@ -902,6 +898,14 @@ mod tests {
             .is_some()
         );
         assert!(badge_for_chat(&app, "missing").is_none());
-        assert!(badge_el(&app, "missing", ChangeRequestBadgeSurface::Sidebar, &app.theme).is_none());
+        assert!(
+            badge_el(
+                &app,
+                "missing",
+                ChangeRequestBadgeSurface::Sidebar,
+                &app.theme
+            )
+            .is_none()
+        );
     }
 }

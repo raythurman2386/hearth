@@ -23,7 +23,7 @@ pub mod panel;
 pub mod view;
 
 pub use panel::{
+    ChatTabs, GridGeometry, PointerMotion, TAB_BAR_HEIGHT, TAB_WIDTH, TerminalState, TerminalTab,
     close_chat_tabs, close_tab_by_key, ensure_tab, new_tab, render, render_embedded,
-    render_embedded_key, select_tab_by_key, ChatTabs, GridGeometry, PointerMotion, TerminalState,
-    TerminalTab, TAB_BAR_HEIGHT, TAB_WIDTH,
+    render_embedded_key, select_tab_by_key,
 };

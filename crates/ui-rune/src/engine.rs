@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use hearth_engine::{
-    Engine, EngineConfig, EngineRuntime, InstanceLock, serve_ipc, DEFAULT_TAILNET_PORT,
+    DEFAULT_TAILNET_PORT, Engine, EngineConfig, EngineRuntime, InstanceLock, serve_ipc,
 };
 use hearth_proto::{EngineInfo, WorkspaceScope};
 use hearth_rpc::{RpcClient, RpcError, RpcService, connect_ws, memory_client, methods};

@@ -11,9 +11,9 @@
 //! accent steps are all their own tokens (see the module docs in the gpui
 //! `theme.rs` this was ported from).
 
-use rune::color::{oklch, srgb_decode, Color};
-use rune_kit::{Kit, PaletteSeed};
 use hearth_syntax::HighlightKind;
+use rune::color::{Color, oklch, srgb_decode};
+use rune_kit::{Kit, PaletteSeed};
 
 /// Which appearance the app is painting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]

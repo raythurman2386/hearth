@@ -559,10 +559,7 @@ mod tests {
             "block count changed for {source:?}:\n{rebuilt}"
         );
         for (a, b) in tree.blocks.iter().zip(again.blocks.iter()) {
-            assert_eq!(
-                a.block, b.block,
-                "block changed for {source:?}:\n{rebuilt}"
-            );
+            assert_eq!(a.block, b.block, "block changed for {source:?}:\n{rebuilt}");
         }
     }
 

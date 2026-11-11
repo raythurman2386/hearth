@@ -17,9 +17,7 @@ use std::sync::{Arc, Mutex};
 use rune::runtime::Waker;
 
 use hearth_doc::TranscriptFrame;
-use hearth_proto::{
-    AuthState, Chat, Connectivity, Device, Session, Space, TransferProgress,
-};
+use hearth_proto::{AuthState, Chat, Connectivity, Device, Session, Space, TransferProgress};
 use hearth_rpc::RpcClient;
 use hearth_update::UpdateStatus;
 

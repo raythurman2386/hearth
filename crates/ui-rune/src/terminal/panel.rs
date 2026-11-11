@@ -12,22 +12,22 @@
 //! them on the UI thread. The lead calls `poll` from `App::poll`.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use hearth_proto::{TerminalEvent, TerminalSession};
 use hearth_rpc::methods;
 use rune::{
-    el, icon, row, text, Color, Cursor, Drag, El, KeyEvent, Phase, PointerButton, Span, Spring,
-    TextStyle, Tx, WheelEvent,
+    Color, Cursor, Drag, El, KeyEvent, Phase, PointerButton, Span, Spring, TextStyle, Tx,
+    WheelEvent, el, icon, row, text,
 };
 
 use crate::bridge::Bridge;
-use crate::icons;
 use crate::engine::EngineHandle;
+use crate::icons;
 use crate::settings::{TERMINAL_MAX_VH, TERMINAL_MIN_HEIGHT};
 use crate::state::App;
 use crate::theme::Theme;
@@ -36,9 +36,9 @@ use super::emulator::{
     CellColor, CellSnapshot, CursorSnapshot, Emulator, GridPoint, SelectionType, Side,
 };
 use super::view::{
-    cell_at, cell_width, key_event_bytes, paste_bytes, resolve_color, term_style, terminal_panel_bg,
-    terminal_selection_for, InputCoalescer, COALESCE_MS, RESIZE_DEBOUNCE_MS,
-    SELECTION_DRAG_THRESHOLD, TERM_LINE_HEIGHT, TERM_PADDING,
+    COALESCE_MS, InputCoalescer, RESIZE_DEBOUNCE_MS, SELECTION_DRAG_THRESHOLD, TERM_LINE_HEIGHT,
+    TERM_PADDING, cell_at, cell_width, key_event_bytes, paste_bytes, resolve_color, term_style,
+    terminal_panel_bg, terminal_selection_for,
 };
 
 /// Fixed tab width — drag-reorder math stays analytic.
@@ -503,10 +503,7 @@ impl TerminalState {
     ) {
         self.tab_seq += 1;
         let key = self.tab_seq;
-        let (cols, rows) = self
-            .geometry
-            .map(|g| (g.cols, g.rows))
-            .unwrap_or((80, 24));
+        let (cols, rows) = self.geometry.map(|g| (g.cols, g.rows)).unwrap_or((80, 24));
 
         let seq_shared = Arc::new(AtomicU64::new(0));
         let alive = Arc::new(AtomicBool::new(true));
@@ -629,11 +626,7 @@ impl TerminalState {
         // quantized range (as in the gpui listener).
         let rel_x = TAB_BAR_PAD + ix as f32 * TAB_WIDTH + dx + local_x;
         let over = drop_index(rel_x, TAB_WIDTH, count);
-        let drag = self.drag.get_or_insert(DragState {
-            from: ix,
-            over,
-            dx,
-        });
+        let drag = self.drag.get_or_insert(DragState { from: ix, over, dx });
         drag.over = over;
         drag.dx = dx;
     }
@@ -764,11 +757,7 @@ impl TerminalState {
                 }
                 true
             }
-            TerminalMsg::OpenFailed {
-                chat,
-                key,
-                message,
-            } => {
+            TerminalMsg::OpenFailed { chat, key, message } => {
                 let Some(tab) = self.tab_mut(&chat, key) else {
                     return false;
                 };
@@ -1126,7 +1115,10 @@ fn write_bytes(
         let _ = client
             .call(
                 methods::WRITE_TERMINAL,
-                with_target(serde_json::json!({ "terminalId": id, "data": data }), &target),
+                with_target(
+                    serde_json::json!({ "terminalId": id, "data": data }),
+                    &target,
+                ),
             )
             .await;
     });
@@ -1390,8 +1382,11 @@ pub fn close_chat_tabs(app: &mut App, chat: &str) {
     let Some(tabs) = app.terminal.chats.get(chat) else {
         return;
     };
-    let entries: Vec<(u64, Option<String>)> =
-        tabs.tabs.iter().map(|tab| (tab.key, tab.target.clone())).collect();
+    let entries: Vec<(u64, Option<String>)> = tabs
+        .tabs
+        .iter()
+        .map(|tab| (tab.key, tab.target.clone()))
+        .collect();
     let engine = app.engine.clone();
     let bridge = Some(app.bridge.clone());
     for (key, target) in entries {
@@ -1422,8 +1417,7 @@ fn handle_key_for(app: &mut App, chat: &str, ev: &KeyEvent, tx: &mut Tx) -> bool
     if !cfg!(target_os = "macos")
         && ev.mods.ctrl
         && !ev.mods.shift
-        && super::view::event_char(ev)
-            .is_some_and(|c| c.eq_ignore_ascii_case(&'j'))
+        && super::view::event_char(ev).is_some_and(|c| c.eq_ignore_ascii_case(&'j'))
     {
         return false;
     }
@@ -1576,8 +1570,7 @@ fn tab_bar(state: &TerminalState, theme: &Theme, chat: &str) -> El {
 
     // "+" new tab.
     bar = bar.child(
-        el()
-            .key("terminal-new-tab")
+        el().key("terminal-new-tab")
             .size(28.0, 28.0)
             .center()
             .radius(8.0)
@@ -1591,8 +1584,7 @@ fn tab_bar(state: &TerminalState, theme: &Theme, chat: &str) -> El {
 
     bar.child(el().grow(1.0))
         .child(
-            el()
-                .key("terminal-collapse")
+            el().key("terminal-collapse")
                 .size(28.0, 28.0)
                 .center()
                 .radius(8.0)
@@ -1605,8 +1597,8 @@ fn tab_bar(state: &TerminalState, theme: &Theme, chat: &str) -> El {
                 })
                 .child(icon(&icons::ALT_ARROW_DOWN, 13.0).color(theme.text_muted.alpha(0.55))),
         )
-    // Unused but keeps the signature symmetrical with the strip math.
-    .key("terminal-tab-bar")
+        // Unused but keeps the signature symmetrical with the strip math.
+        .key("terminal-tab-bar")
 }
 #[allow(clippy::too_many_arguments)]
 fn tab_button(
@@ -1650,27 +1642,28 @@ fn tab_button(
                 app.terminal.select_tab(&chat_select, ix);
             }
         })
-        .on_drag(move |app: &mut App, drag: &mut Drag, _tx: &mut Tx| {
-            match drag.phase {
+        .on_drag(
+            move |app: &mut App, drag: &mut Drag, _tx: &mut Tx| match drag.phase {
                 Phase::Down => app.terminal.begin_tab_drag(ix),
-                Phase::Move => {
-                    app.terminal
-                        .update_tab_drag(&chat_drag, ix, drag.x, drag.dx)
-                }
+                Phase::Move => app
+                    .terminal
+                    .update_tab_drag(&chat_drag, ix, drag.x, drag.dx),
                 Phase::Up => {
                     app.terminal.commit_tab_drag(&chat_drag);
                 }
-            }
-        });
+            },
+        );
 
     // Contextual label: the OSC title wins over the fixed fallback.
     tab = tab
         .child(icon(&icons::TERMINAL, 16.0).color(text_color.alpha(glyph_alpha)))
         .child(
-            row()
-                .grow(1.0)
-                .min_w(0.0)
-                .child(text(title).font(rune::TextStyle::new(12.0, 400.0)).color(text_color).truncate()),
+            row().grow(1.0).min_w(0.0).child(
+                text(title)
+                    .font(rune::TextStyle::new(12.0, 400.0))
+                    .color(text_color)
+                    .truncate(),
+            ),
         );
     // The close slot keeps its 20 pt whether or not the tab is active (gpui's
     // `.invisible()`), so activating a tab does not shift its label.
@@ -1711,12 +1704,7 @@ fn grid_body(state: &TerminalState, theme: &Theme, chat: &str) -> El {
     grid_body_key(state, theme, chat, None)
 }
 
-fn grid_body_key(
-    state: &TerminalState,
-    theme: &Theme,
-    chat: &str,
-    key: Option<u64>,
-) -> El {
+fn grid_body_key(state: &TerminalState, theme: &Theme, chat: &str, key: Option<u64>) -> El {
     let style = term_style(theme);
     let cell_w = cell_width(style);
     let line_h = TERM_LINE_HEIGHT;
@@ -1777,10 +1765,9 @@ fn grid_body_key(
         .on_drag(move |app: &mut App, drag: &mut Drag, _tx: &mut Tx| {
             focus_tab(app, &chat_focus, key);
             match drag.phase {
-                Phase::Down => {
-                    app.terminal
-                        .pointer_down(&chat_owned, drag.x, drag.y, drag.clicks)
-                }
+                Phase::Down => app
+                    .terminal
+                    .pointer_down(&chat_owned, drag.x, drag.y, drag.clicks),
                 Phase::Move => app.terminal.pointer_move(
                     &chat_focus,
                     PointerMotion {
@@ -1803,15 +1790,21 @@ fn grid_body_key(
     }
 
     for (row_ix, cells) in rows.iter().enumerate() {
-        body = body.child(render_row(cells, row_ix, cursor, theme, style, cell_w, line_h));
+        body = body.child(render_row(
+            cells, row_ix, cursor, theme, style, cell_w, line_h,
+        ));
     }
 
     // Scrollbar: an on-demand affordance under the pointer, only when there is
     // history above the viewport.
     if state.terminal_hovered
         && let Some(metrics) = scrollbar_metrics(
-            [0.0, 0.0, state.geometry.map(|g| g.bounds[2]).unwrap_or(0.0),
-             state.geometry.map(|g| g.bounds[3]).unwrap_or(0.0)],
+            [
+                0.0,
+                0.0,
+                state.geometry.map(|g| g.bounds[2]).unwrap_or(0.0),
+                state.geometry.map(|g| g.bounds[3]).unwrap_or(0.0),
+            ],
             emu_rows,
             history,
             offset,
@@ -1823,8 +1816,7 @@ fn grid_body_key(
             SCROLLBAR_THUMB_WIDTH
         };
         body = body.child(
-            el()
-                .key("terminal-scrollbar")
+            el().key("terminal-scrollbar")
                 .pin(None, Some(0.0), Some(0.0), Some(0.0))
                 .w(SCROLLBAR_HIT_WIDTH)
                 .cursor(Cursor::Pointer)
@@ -1833,20 +1825,20 @@ fn grid_body_key(
                 })
                 .on_drag(move |app: &mut App, drag: &mut Drag, _tx: &mut Tx| {
                     focus_tab(app, &chat_scroll, key);
-                    app.terminal.scrollbar_drag(&chat_scroll, drag.phase, drag.y);
+                    app.terminal
+                        .scrollbar_drag(&chat_scroll, drag.phase, drag.y);
                 })
                 .child(
-                    el()
-                        .pin(
-                            None,
-                            Some(SCROLLBAR_TRACK_INSET + metrics.thumb_top),
-                            Some(2.0),
-                            None,
-                        )
-                        .w(thumb_width)
-                        .h(metrics.thumb_height)
-                        .radius(thumb_width / 2.0)
-                        .fill(theme.text_faint.alpha(0.52)),
+                    el().pin(
+                        None,
+                        Some(SCROLLBAR_TRACK_INSET + metrics.thumb_top),
+                        Some(2.0),
+                        None,
+                    )
+                    .w(thumb_width)
+                    .h(metrics.thumb_height)
+                    .radius(thumb_width / 2.0)
+                    .fill(theme.text_faint.alpha(0.52)),
                 ),
         );
     }
@@ -1924,8 +1916,7 @@ fn label(content: impl Into<String>, size: f32, color: Color) -> El {
 }
 
 fn quad(start_col: usize, end_col: usize, cell_w: f32, line_h: f32, color: Color) -> El {
-    el()
-        .absolute(start_col as f32 * cell_w, 0.0)
+    el().absolute(start_col as f32 * cell_w, 0.0)
         .w(((end_col - start_col) as f32 * cell_w).max(0.0))
         .h(line_h)
         .fill(color)
@@ -2152,7 +2143,11 @@ mod tests {
     #[test]
     fn base64_round_trip_and_tolerance() {
         assert_eq!(decode_base64("aGk="), b"hi".to_vec());
-        assert_eq!(decode_base64("aGk"), b"hi".to_vec(), "unpadded input tolerated");
+        assert_eq!(
+            decode_base64("aGk"),
+            b"hi".to_vec(),
+            "unpadded input tolerated"
+        );
         assert_eq!(
             decode_base64("!!!"),
             Vec::<u8>::new(),
@@ -2266,7 +2261,11 @@ mod render_tests {
         );
         rt.frame(0.0);
         rt.frame(1.0 / 60.0);
-        let geometry = rt.state.terminal.geometry.expect("on_layout reported the grid");
+        let geometry = rt
+            .state
+            .terminal
+            .geometry
+            .expect("on_layout reported the grid");
         assert!(geometry.cols >= 2 && geometry.rows >= 1, "{geometry:?}");
         assert_eq!(
             rt.state

@@ -959,10 +959,7 @@ pub enum UpdateClick {
 }
 
 /// Hearth's `on_update_strip_click` decision, without side effects.
-pub fn update_click_action(
-    install: &hearth_update::InstallKind,
-    flow: &UpdateFlow,
-) -> UpdateClick {
+pub fn update_click_action(install: &hearth_update::InstallKind, flow: &UpdateFlow) -> UpdateClick {
     use hearth_update::InstallKind;
     match install {
         InstallKind::Unmanaged => UpdateClick::Dismiss,
@@ -1034,7 +1031,11 @@ async fn stage_update(
             hearth_update::apply_headless(app_root, &manifest.version)
                 .map_err(|err| format!("{err:#}"))?;
             let _ = hearth_update::restart_service();
-            Ok(app_root.join("current").join("hearth").display().to_string())
+            Ok(app_root
+                .join("current")
+                .join("hearth")
+                .display()
+                .to_string())
         }
         InstallKind::Unmanaged => Err("this install is not update-managed".to_string()),
     }

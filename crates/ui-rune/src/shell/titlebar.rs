@@ -409,22 +409,23 @@ pub fn render_right_tab_strip(app: &App, theme: &Theme) -> El {
                 })
                 .hover(theme.element_hover)
                 .on_press(move |app: &mut App| set_right_active(app, select))
-                .on_drag(move |app: &mut App, drag: &mut rune::Drag, _tx| match drag.phase {
-                    Phase::Down => {
-                        app.shell.right_tab_drag = Some(ix);
-                    }
-                    Phase::Move => {
-                        app.shell.right_tab_drag = Some(super::surface_drop_index(
-                            ix, drag.dx, CHIP_SLOT, count,
-                        ));
-                    }
-                    Phase::Up => {
-                        let to = app.shell.right_tab_drag.take().unwrap_or(ix);
-                        if !drag.cancelled() {
-                            super::reorder_right_surface(app, ix, to);
+                .on_drag(
+                    move |app: &mut App, drag: &mut rune::Drag, _tx| match drag.phase {
+                        Phase::Down => {
+                            app.shell.right_tab_drag = Some(ix);
                         }
-                    }
-                })
+                        Phase::Move => {
+                            app.shell.right_tab_drag =
+                                Some(super::surface_drop_index(ix, drag.dx, CHIP_SLOT, count));
+                        }
+                        Phase::Up => {
+                            let to = app.shell.right_tab_drag.take().unwrap_or(ix);
+                            if !drag.cancelled() {
+                                super::reorder_right_surface(app, ix, to);
+                            }
+                        }
+                    },
+                )
                 .child(icon(surface_icon(surface_key), 12.0).color(if selected {
                     theme.text
                 } else {

@@ -153,7 +153,11 @@ fn live_commit_changes_only_tail_row_versions() {
     // block row's (id, version) untouched, so the diff splices only the tail.
     let mut live1 = entry("m1", MessageRole::Assistant, "one\n\ntwo\n\nthree");
     live1.status = Some(MessageStatus::Streaming);
-    let mut live2 = entry("m1", MessageRole::Assistant, "one\n\ntwo\n\nthree grows here");
+    let mut live2 = entry(
+        "m1",
+        MessageRole::Assistant,
+        "one\n\ntwo\n\nthree grows here",
+    );
     live2.status = Some(MessageStatus::Streaming);
     let mut parse =
         |_key: &str, text: &str| std::sync::Arc::new(crate::markdown::parser::parse_full(text));
@@ -239,12 +243,7 @@ fn own_send_reserves_a_runway_until_the_reply_outgrows_it() {
     });
     state.on_own_send("chat-1".into(), "m1".into());
     state.update_own_turn(&state.rows.borrow());
-    let runway = state
-        .own_turn
-        .borrow()
-        .as_ref()
-        .expect("held turn")
-        .runway;
+    let runway = state.own_turn.borrow().as_ref().expect("held turn").runway;
     assert!(runway > 0.0, "a fresh send reserves the runway");
     assert!(state.layout_request_pending(), "the hold owes a scroll");
 
@@ -308,7 +307,6 @@ fn renders_a_transcript_tree_without_a_runtime() {
     assert!(!app.transcript_state.rows.borrow().is_empty());
 }
 
-
 fn chat_entries(prefix: &str, turns: usize) -> Vec<SessionMessageEntry> {
     let mut entries = Vec::new();
     for i in 0..turns {
@@ -360,7 +358,12 @@ fn viewport_restore_survives_a_chat_switch() {
     app.selected_chat = Some("chat-1".into());
     app.transcript = chat_entries("one", 20);
     app.transcript_replayed = true;
-    let mut rt = rune::Runtime::new(app, TheApp::view, (1320.0, 880.0), rune::Env::new(true, 1.0));
+    let mut rt = rune::Runtime::new(
+        app,
+        TheApp::view,
+        (1320.0, 880.0),
+        rune::Env::new(true, 1.0),
+    );
     for _ in 0..8 {
         rt.frame(1.0 / 60.0);
     }
@@ -418,7 +421,12 @@ fn own_send_holds_the_prompt_near_the_top() {
     app.selected_chat = Some("chat-1".into());
     app.transcript = chat_entries("one", 20);
     app.transcript_replayed = true;
-    let mut rt = rune::Runtime::new(app, TheApp::view, (1320.0, 880.0), rune::Env::new(true, 1.0));
+    let mut rt = rune::Runtime::new(
+        app,
+        TheApp::view,
+        (1320.0, 880.0),
+        rune::Env::new(true, 1.0),
+    );
     for _ in 0..8 {
         rt.frame(1.0 / 60.0);
     }

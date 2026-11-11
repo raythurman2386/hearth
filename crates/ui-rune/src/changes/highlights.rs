@@ -247,7 +247,7 @@ pub fn full_highlights(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::changes::{parse_patch, DiffLine, FileDiff, FileStatus, Hunk, LineKind};
+    use crate::changes::{DiffLine, FileDiff, FileStatus, Hunk, LineKind, parse_patch};
     use crate::theme::Theme;
 
     fn line(kind: LineKind, old_no: Option<u32>, new_no: Option<u32>, text: &str) -> DiffLine {

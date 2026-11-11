@@ -8,9 +8,9 @@
 use chrono::Utc;
 use hearth_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
 use hearth_proto::{Chat, Device, Space, WorkspaceScope};
+use hearth_ui_rune::UiConfig;
 use hearth_ui_rune::shell::{Route, SplashPhase};
 use hearth_ui_rune::state::{App, ConnectionStatus};
-use hearth_ui_rune::UiConfig;
 use rune::{Env, Runtime};
 use std::collections::HashMap;
 
@@ -213,9 +213,7 @@ fn nothing_draws_outside_the_window() {
         }
         let key = element.key.as_deref().unwrap_or(&element.path);
         if x < -EPS || y < -EPS || x + w > W + EPS || y + h > H + EPS {
-            offenders.push(format!(
-                "{key}: visible [{x:.1}, {y:.1}, {w:.1}, {h:.1}]"
-            ));
+            offenders.push(format!("{key}: visible [{x:.1}, {y:.1}, {w:.1}, {h:.1}]"));
         }
     }
     assert!(
@@ -289,5 +287,9 @@ fn drawn_text_stays_inside_its_row() {
             ));
         }
     }
-    assert!(offenders.is_empty(), "text outside the window:\n{}", offenders.join("\n"));
+    assert!(
+        offenders.is_empty(),
+        "text outside the window:\n{}",
+        offenders.join("\n")
+    );
 }
