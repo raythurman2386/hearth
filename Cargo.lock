@@ -3178,7 +3178,7 @@ dependencies = [
  "clap",
  "hearth-engine",
  "hearth-rpc",
- "hearth-ui",
+ "hearth-ui-rune",
  "hearth-update",
  "libc",
  "mimalloc",
