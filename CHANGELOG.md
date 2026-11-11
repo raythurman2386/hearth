@@ -4,6 +4,30 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-11
+
+### Changed (breaking)
+
+- **The desktop UI now runs on Rune.** The gpui UI crate (`crates/ui`) and the gpui/gpui_platform/gpui_tokio workspace dependencies are gone; `apps/hearth` links the new `crates/ui-rune`. The shell, sidebar, transcript, composer, terminal pane, diff/history pane, settings and pickers are ported with the same layout and behaviour. Rune is pinned at `424e0f5904b9bc314734370f462b4f4e71a2cc07`.
+- The sidebars are fixed-width (sidebar 256 pt, right pane 520 pt). Drag-resize seams are removed; toggle/collapse still works, and persisted custom widths are healed to the defaults.
+
+### Added
+
+- **Omarchy theme support.** Hearth reads the active theme from `~/.local/state/omarchy/current/theme/` (`colors.toml`, `alacritty.toml`) and follows `theme.generation` live. The full palette, rune-kit tokens and the 16 ANSI terminal slots derive from it; the built-in Ravenwood palette remains the fallback.
+- Headless snapshot/JSON scenes for layout verification: `ready`, `loading`, `failure`, `empty`, `demo`, `settings`, `appearance`, `narrow`, `diff`, `scopes`, `refs`, `history`, `stress`, `models`.
+
+### Fixed
+
+- Long unbroken transcript content stays inside its column: user bubbles wrap anywhere within their cap, the composer is a centered shrinkable column, and Markdown code blocks/tables scroll horizontally.
+- The changes pane's scope and base-ref dropdowns mount in the overlay layer instead of being clipped to the 34 pt header, so switching Working tree/Branch/History works; they dismiss on outside press or Escape.
+- Diff/history requests retry once the engine connects, time out instead of spinning, and report unknown methods plainly.
+- Diff/history chrome uses real icons (folds, scope, split, wrap, fold-all, branch, home, folder, stars, search), and the Huginn brand mark rasterizes again.
+- The launch screen is the pulsing Hearth mark, wordmark and a ring loader instead of the ASCII hero.
+
+### Removed
+
+- Fork wording from the README, architecture note and docs.
+
 ## [0.3.0] - 2026-11-10
 
 ### Changed (breaking)
