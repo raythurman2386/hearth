@@ -82,7 +82,6 @@ notify = "8"
 portable-pty = "0.9"
 alacritty_terminal = "0.26"
 pulldown-cmark = "0.13"
-unicode-segmentation = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 ignore = "0.4"
 nucleo-matcher = "0.3"

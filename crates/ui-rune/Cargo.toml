@@ -26,7 +26,6 @@ serde_json.workspace = true
 pulldown-cmark.workspace = true
 alacritty_terminal.workspace = true
 base64 = "0.23"
-unicode-segmentation.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 anyhow.workspace = true
