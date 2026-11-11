@@ -142,17 +142,14 @@ fn begin_load(app: &App, slot: HarnessSlot, target: Option<String>, generation: 
     let bridge = app.bridge.clone();
     let params = with_target(serde_json::json!({}), target.as_deref());
     app.bridge.spawn(async move {
-        let result = match client
+        let result = client
             .call(methods::LIST_HARNESSES, params)
             .await
             .map_err(|err| err.to_string())
             .and_then(|value| {
                 serde_json::from_value::<Vec<HarnessDescriptor>>(value)
                     .map_err(|err| err.to_string())
-            }) {
-            Ok(list) => Ok(list),
-            Err(message) => Err(message),
-        };
+            });
         *slot.lock().unwrap() = Some((generation, result));
         bridge.wake();
     });

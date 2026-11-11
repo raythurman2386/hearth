@@ -123,6 +123,13 @@ pub(crate) struct ModelRowsKey {
     catalog_rev: u64,
 }
 
+/// Post a picker result and wake the Rune loop, so a load that lands while the
+/// window is idle still paints its rows on the next frame.
+pub(crate) fn post(tx: &Sender<PickersEvent>, bridge: &Bridge, event: PickersEvent) {
+    let _ = tx.send(event);
+    bridge.wake();
+}
+
 /// The result of one background picker RPC, delivered to the UI thread.
 pub enum PickersEvent {
     Harnesses(Result<Vec<HarnessDescriptor>, String>),
@@ -617,5 +624,29 @@ mod tests {
         state.new_project_requested = true;
         assert!(state.take_new_project_request());
         assert!(!state.take_new_project_request());
+    }
+
+    #[test]
+    fn picker_posts_wake_the_loop() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let bridge = Bridge::new();
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counter = wakes.clone();
+        bridge.set_waker(Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
+        let (tx, rx) = std::sync::mpsc::channel();
+        post(
+            &tx,
+            &bridge,
+            PickersEvent::ChatConfigSaved {
+                chat_id: "chat-1".into(),
+                result: Ok(()),
+            },
+        );
+        assert!(rx.try_recv().is_ok(), "the event is queued");
+        assert_eq!(wakes.load(Ordering::SeqCst), 1, "and the UI is woken");
     }
 }

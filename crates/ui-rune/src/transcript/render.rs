@@ -28,7 +28,6 @@ use super::model::{
 };
 use super::rows::top_gap_for;
 use super::viewport::SCROLL_BUTTON_THRESHOLD_PX;
-use crate::markdown::parser::parse_full;
 
 /// List overdraw beyond the viewport (kept for parity with the gpui constant).
 pub const OVERDRAW_PX: f32 = 320.0;
@@ -83,46 +82,111 @@ pub fn render(app: &App, theme: &Theme) -> El {
 }
 
 /// A read-only transcript over one subagent doc.
+///
+/// Rows come from the per-entry fingerprint cache ([`super::TranscriptState`]'s
+/// `rows_for_doc`): a subagent watch re-renders every frame, and re-parsing
+/// each entry per frame was the port's hottest path.
 pub fn render_subagent(app: &App, theme: &Theme, doc_id: &str) -> El {
     let entries = app.sub_transcript(doc_id);
     let mut rows: Vec<Row> = Vec::new();
-    let mut parse = |_key: &str, source: &str| Arc::new(parse_full(source));
     for entry in entries {
-        rows.extend(super::rows::rows_for_entry(entry, false, &mut parse));
+        rows.extend(app.transcript_state.rows_for_doc(doc_id, entry));
     }
     let version = super::row_set_version(&rows);
     render_rows(app, theme, Arc::new(rows), true, version)
 }
 
+/// The transcript's floating lightbox, for the shell's overlay layer
+/// (`rune_kit::root(body, layer)`). The shell wires this next to
+/// `composer::popups`; [`render_rows`] also mounts it in-tree as a fallback
+/// while that line is pending (see docs/rune-port.md).
+pub fn lightbox_overlay(app: &App, theme: &Theme) -> Option<El> {
+    let preview = app.transcript_state.attachment_preview.clone()?;
+    Some(crate::attachments::lightbox(theme, &preview, |app: &mut App| {
+        app.transcript_state.attachment_preview = None;
+        // The shell's poll hands focus back to the composer on the next frame.
+        app.shell.focus_composer = true;
+    }))
+}
+
+fn apply_viewport_layout(app: &mut App, rect: [f32; 4], tx: &mut rune::Tx) {
+    let next = [rect[2], rect[3]];
+    if next[0] > 0.0 && next[1] > 0.0 && app.transcript_state.viewport_size.get() != next {
+        app.transcript_state.viewport_size.set(next);
+    }
+    app.transcript_state.apply_layout_requests(false, tx);
+}
+
+fn apply_rows_layout(app: &mut App, rect: [f32; 4], tx: &mut rune::Tx) {
+    app.transcript_state.apply_rows_layout(rect[3], tx);
+}
+
 fn render_rows(app: &App, theme: &Theme, rows: Arc<Vec<Row>>, subagent: bool, version: u64) -> El {
     let state = &app.transcript_state;
+    // Read the measured viewport before building rows: the own-turn
+    // reservation (and the rail's tick capacity) depend on it.
+    let measured = rune::memo::layout(VIEWPORT_KEY)
+        .map(|rect| [rect[2], rect[3]])
+        .filter(|size| size[0] > 0.0 && size[1] > 0.0)
+        .unwrap_or_else(|| state.viewport_size.get());
+    if measured[0] > 0.0 && measured[1] > 0.0 && state.viewport_size.get() != measured {
+        state.viewport_size.set(measured);
+    }
+    if !subagent {
+        state.update_own_turn(&rows);
+    }
+    let runway = state
+        .own_turn
+        .borrow()
+        .as_ref()
+        .filter(|anchor| {
+            state
+                .rows
+                .borrow()
+                .iter()
+                .any(|candidate| candidate.entry_id == anchor.message_id)
+        })
+        .map_or(0.0, |anchor| anchor.runway);
+    let bottom_space = state.bottom_clearance + Theme::TRANSCRIPT_FADE_BAND + 8.0 + runway;
     let count = rows.len();
+    let has_runway = bottom_space > 0.5;
+    let total = count + usize::from(has_runway);
     let rail_enabled =
         !subagent && state.rail_enabled && rail::rail_visible(app.shell.viewport_width);
-    let theme_owned = theme.clone();
     let key_rows = rows.clone();
     let build_rows = rows.clone();
     let build_theme = theme.clone();
 
+    // Keyed by the attached chat: a chat switch remounts the stack, whose
+    // first layout is the commit the restore request is applied on (an
+    // unchanged element only reports real moves/resizes).
+    let chat_key = state.chat_id.borrow().clone().unwrap_or_default();
     let growth = col()
-        .key("app/transcript/rows")
+        .key(format!("app/transcript/rows/{chat_key}"))
         .w_full()
         .growth(GrowthSpec::default())
         .virtual_rows_version(version)
         .virtual_rows(
-            count,
+            total,
             ESTIMATED_ROW_HEIGHT,
             move |_app: &App, ix| {
                 Cow::Owned(
                     key_rows
                         .get(ix)
                         .map(|row| row.id.clone())
-                        .unwrap_or_else(|| format!("app/transcript/row/{ix}")),
+                        .unwrap_or_else(|| "app/transcript/runway".to_string()),
                 )
             },
             move |app: &App, ix| {
                 let Some(row) = build_rows.get(ix) else {
-                    return el();
+                    // The trailing runway row: the bottom clearance and the
+                    // own-turn reservation as REAL scroll content (a growth
+                    // stack must be its viewport's last child, so a spacer
+                    // sibling is not allowed).
+                    return el()
+                        .key("app/transcript/runway")
+                        .w_full()
+                        .h(bottom_space);
                 };
                 row_el(
                     app,
@@ -134,10 +198,20 @@ fn render_rows(app: &App, theme: &Theme, rows: Arc<Vec<Row>>, subagent: bool, ve
                 )
             },
         )
-        .on_visible_rows(|app: &mut App, range| {
-            app.transcript_state.visible_start.set(range.start);
-            false
-        });
+        .on_visible_rows(move |app: &mut App, range| {
+            // True when the rail's active tick moves: the rail reads this.
+            let state = &app.transcript_state;
+            let start = range.start.min(count.saturating_sub(1));
+            if state.visible_start.get() == start {
+                return false;
+            }
+            state.visible_start.set(start);
+            true
+        })
+        // Growth changes (a replay splice, a send's runway, streamed text)
+        // are where the restore and own-turn holds are applied: a Tx only
+        // exists inside a handler.
+        .on_layout_tx(|app: &mut App, rect, tx| apply_rows_layout(app, rect, tx));
 
     let viewport = col()
         .key(VIEWPORT_KEY)
@@ -147,11 +221,24 @@ fn render_rows(app: &App, theme: &Theme, rows: Arc<Vec<Row>>, subagent: bool, ve
         .scroll(ScrollSpec { stick_bottom: true })
         .scroll_edge_fade(Theme::TRANSCRIPT_FADE_BAND)
         .on_at_bottom(|app: &mut App, at_bottom| {
-            app.transcript_state.pinned = at_bottom;
+            app.transcript_state.pinned.set(at_bottom);
+            if at_bottom {
+                app.transcript_state.last_scroll_distance.set(0.0);
+            }
         })
         .on_far_from_bottom(SCROLL_BUTTON_THRESHOLD_PX, |app: &mut App, far| {
-            app.transcript_state.show_jump_button = far;
+            app.transcript_state.show_jump_button.set(far);
         })
+        .on_scroll_offset({
+            let scroll_live = state.scroll_offset.clone();
+            move |at| {
+                // Live-only: records the offset AND the distance from the end
+                // for the next chat switch's snapshot, without a view run.
+                let distance = (at.max[1] - at.offset[1]).max(0.0);
+                let _ = scroll_live.set([at.offset[1], distance]);
+            }
+        })
+        .on_layout_tx(|app: &mut App, rect, tx| apply_viewport_layout(app, rect, tx))
         .child(growth);
 
     let mut root = col()
@@ -168,15 +255,20 @@ fn render_rows(app: &App, theme: &Theme, rows: Arc<Vec<Row>>, subagent: bool, ve
             .filter_map(|(_, row_id)| rows.iter().position(|row| &row.id == row_id))
             .collect();
         let active = rail::active_tick(&tick_rows, state.visible_start.get());
-        root = root.child(rail::render(app, theme, &pairs, active, 0.0));
+        root = root.child(rail::render(
+            app,
+            theme,
+            &pairs,
+            active,
+            state.viewport_height(),
+        ));
     }
 
-    if let Some(preview) = app.transcript_state.attachment_preview.clone() {
-        root = root.child(crate::attachments::lightbox(
-            &preview,
-            &theme_owned,
-            |app: &mut App| app.transcript_state.attachment_preview = None,
-        ));
+    // Interim in-tree mount: the proper home is the shell's overlay layer
+    // (see [`lightbox_overlay`], wired next to `composer::popups`); kept here so
+    // the preview still works until that line lands.
+    if let Some(overlay) = lightbox_overlay(app, theme) {
+        root = root.child(overlay);
     }
     root
 }
@@ -184,7 +276,9 @@ fn render_rows(app: &App, theme: &Theme, rows: Arc<Vec<Row>>, subagent: bool, ve
 fn rail_pairs(app: &App, rows: &[Row]) -> Vec<(RailTick, String)> {
     let (entries, echoes) = match &app.transcript_state.doc_override {
         Some(doc_id) => (app.sub_transcript(doc_id).to_vec(), Vec::new()),
-        None => (app.transcript.clone(), Vec::new()),
+        // Optimistic echoes are prompts too: the rail must show the just-sent
+        // turn before its doc frame lands.
+        None => (app.transcript.clone(), app.pending_echoes().to_vec()),
     };
     rail::rail_ticks(&entries, &echoes)
         .into_iter()
@@ -215,22 +309,12 @@ fn row_el(
     } else {
         top_gap_for(prev, row)
     };
-    let bottom_pad = if last {
-        let runway = state
-            .own_turn
-            .as_ref()
-            .filter(|anchor| {
-                state
-                    .rows
-                    .borrow()
-                    .iter()
-                    .any(|candidate| candidate.entry_id == anchor.message_id)
-            })
-            .map_or(0.0, |anchor| anchor.runway);
-        state.bottom_clearance + Theme::TRANSCRIPT_FADE_BAND + 8.0 + runway
-    } else {
-        0.0
-    };
+    // The bottom clearance and the own-turn runway are a trailing spacer
+    // AFTER the virtual list: padding on the last row is not counted in the
+    // virtual list's content height, so the viewport could not scroll far
+    // enough to hold the prompt at its inset (the pad rendered but the scroll
+    // range ignored it).
+    let bottom_pad = 0.0;
 
     let inner: El = match &row.kind {
         RowKind::User {
@@ -353,7 +437,7 @@ fn row_el(
 
     let row_id = row.id.clone();
     let entry_id = row.entry_id.clone();
-    let outer = rrow()
+    rrow()
         .w_full()
         .justify_center()
         .pt(top_gap)
@@ -386,8 +470,7 @@ fn row_el(
                         .then(|| working_trailer(app, theme))
                         .flatten(),
                 ),
-        );
-    outer
+        )
 }
 
 /// The user bubble's text, with file-mention chips as mono ranges over a
@@ -607,6 +690,14 @@ fn render_chip(
 }
 
 /// The working loader appended under the last row while a run is live.
+///
+/// Three states ride this line, in priority order:
+/// - **Not delivered**: the send sat unadopted past [`crate::state::UNDELIVERED_GRACE_MS`].
+///   The line becomes the retry affordance (re-kicks `RetryDelivery`).
+/// - **Queued**: the delivery path is degraded (offline host, relay down) — say
+///   so instead of faking progress.
+/// - **Sending**: the send → turn bridge, before the session row restarts its
+///   `started_at`. No timer: it would count the round-trip and restart.
 fn working_trailer(app: &App, theme: &Theme) -> Option<El> {
     let now = chrono::Utc::now();
     if let Some(doc_id) = &app.transcript_state.doc_override {
@@ -624,30 +715,78 @@ fn working_trailer(app: &App, theme: &Theme) -> Option<El> {
             super::model::flavour_word(super::model::flavour_seed(doc_id), elapsed),
             elapsed,
             false,
+            false,
             theme,
         ));
     }
     let chat_id = app.selected_chat.clone()?;
-    if app.indicator_for(&chat_id) != Some(crate::state::Indicator::Working) {
+    // Failed-send state first: past the grace window the trailer IS the retry
+    // affordance, whatever the indicator fell back to.
+    if app.send_undelivered(&chat_id, now) {
+        return Some(retry_line(theme));
+    }
+    let chat = app.chats.iter().find(|chat| chat.id == chat_id)?;
+    if app.display_status_for(chat, now) != hearth_proto::ChatIndicator::Working {
         return None;
     }
     let turn_started = app
         .session_for(&chat_id)
         .and_then(|session| session.started_at);
-    let sending = sending_bridge(None, turn_started);
+    let sending = sending_bridge(app.pending_send_started(&chat_id, now), turn_started);
+    // Degraded delivery path: the send is a durable local write waiting on
+    // connectivity — say so instead of faking progress.
+    let queued = sending && app.chat_delivery_degraded(&chat_id);
     let elapsed = turn_started
         .map(|start| now.signed_duration_since(start).num_seconds().max(0))
         .unwrap_or(0);
-    let word = if sending {
+    let word = if queued {
+        "Queued — will send automatically"
+    } else if sending {
         "Sending"
     } else {
         super::model::flavour_word(super::model::flavour_seed(&chat_id), elapsed)
     };
-    Some(trailer_line(word, elapsed, sending, theme))
+    Some(trailer_line(word, elapsed, sending, queued, theme))
 }
 
-#[allow(dead_code)]
-fn trailer_line(word: &str, elapsed: i64, sending: bool, theme: &Theme) -> El {
+/// Re-kick every delivery road engine-side and restart the grace clock so the
+/// trailer returns to Sending/Queued while the retry runs.
+fn retry_delivery(app: &mut App) {
+    let Some(chat_id) = app.selected_chat.clone() else {
+        return;
+    };
+    app.retry_pending_send(&chat_id, chrono::Utc::now());
+    let Some(engine) = app.engine.clone() else {
+        return;
+    };
+    app.bridge.spawn(async move {
+        let params = serde_json::json!({ "chatId": chat_id });
+        if let Err(err) = engine
+            .client
+            .call(hearth_rpc::methods::RETRY_DELIVERY, params)
+            .await
+        {
+            tracing::warn!(error = %err, "delivery retry RPC failed");
+        }
+    });
+}
+
+fn retry_line(theme: &Theme) -> El {
+    rrow()
+        .w_full()
+        .items_center()
+        .gap(Theme::SPACE_SM)
+        .pt(Theme::SPACE_LG)
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|app: &mut App| retry_delivery(app))
+        .child(
+            text("Not delivered — click to retry")
+                .font(TextStyle::new(12.0, 400.0))
+                .color(theme.danger),
+        )
+}
+
+fn trailer_line(word: &str, elapsed: i64, sending: bool, queued: bool, theme: &Theme) -> El {
     let mut line = rrow()
         .w_full()
         .items_center()
@@ -655,13 +794,19 @@ fn trailer_line(word: &str, elapsed: i64, sending: bool, theme: &Theme) -> El {
         .pt(Theme::SPACE_LG)
         .child(el().size(8.0, 8.0).radius(4.0).fill(theme.busy))
         .child(
-            text(if sending {
+            text(if queued {
+                word.to_string()
+            } else if sending {
                 "Sending…".to_string()
             } else {
                 format!("{word}…")
             })
             .font(TextStyle::new(12.0, 400.0))
-            .color(theme.text_muted),
+            .color(if queued {
+                theme.warning
+            } else {
+                theme.text_muted
+            }),
         );
     if !sending {
         line = line.child(
@@ -682,7 +827,7 @@ mod tests {
     #[test]
     fn row_gaps_open_a_turn_and_separate_blocks() {
         assert_eq!(MD_BLOCK_GAP, 12.0);
-        assert!(MAX_CONTENT_WIDTH > 0.0);
+        const { assert!(MAX_CONTENT_WIDTH > 0.0) };
     }
 
     #[test]

@@ -576,7 +576,7 @@ fn open_state(e: El, theme: &Theme, open: bool) -> El {
     if open { e.fill(theme.element_hover) } else { e }
 }
 
-fn footer_chip<'a>(
+fn footer_chip(
     theme: &Theme,
     _kind: PickerKind,
     anchor: &'static str,
@@ -1316,62 +1316,59 @@ fn branch_popover_body(state: &PickersState, app: &App, theme: &Theme) -> El {
         Loadable::Loading | Loadable::Idle => skeleton_rows(theme, 4, 26.0),
         Loadable::Error(message) => retry_row(theme, message, PickerKind::Branch),
         Loadable::Ready(_) if rows.is_empty() => empty_note(theme, "No refs found."),
-        Loadable::Ready(_) => {
-            let list =
-                col()
-                    .w_full()
-                    .gap(2.0)
-                    .max_h(LIST_MAX_HEIGHT)
-                    .scroll(ScrollSpec {
-                        stick_bottom: false,
-                    })
-                    .children(rows.into_iter().take(MAX_REF_ROWS).enumerate().map(
-                        |(ix, row_data)| {
-                            let is_selected = selected.as_deref() == Some(row_data.name.as_str());
-                            let tag = if row_data.current {
-                                Some("current")
-                            } else if row_data.worktree_path.is_some() {
-                                Some("worktree")
-                            } else {
-                                None
-                            };
-                            let is_switching = switching.as_deref() == Some(row_data.name.as_str());
-                            let mut trailing = row().gap(6.0).center_y();
-                            if is_switching {
-                                trailing = trailing.child(
-                                    text("switching…")
-                                        .font(text_style(10.0, 400.0))
-                                        .color(theme.text_muted.alpha(0.6)),
-                                );
-                            }
-                            if let Some(tag) = tag {
-                                trailing = trailing.child(
-                                    text(tag.to_string())
-                                        .font(text_style(10.0, 400.0))
-                                        .color(theme.text_muted.alpha(0.45)),
-                                );
-                            }
-                            let row = menu_row(
-                                theme,
-                                ix,
-                                "pickers/branch-row",
-                                is_selected,
-                                ix == state.active,
-                                &row_data.name,
-                                Some(trailing),
-                            )
-                            .on_press(move |app: &mut App| {
-                                selection::pick_ref(app, row_data.clone())
-                            });
-                            if switching.is_some() {
-                                row.opacity(0.55)
-                            } else {
-                                row
-                            }
-                        },
-                    ));
-            list
-        }
+        Loadable::Ready(_) => col()
+            .w_full()
+            .gap(2.0)
+            .max_h(LIST_MAX_HEIGHT)
+            .scroll(ScrollSpec {
+                stick_bottom: false,
+            })
+            .children(
+                rows.into_iter()
+                    .take(MAX_REF_ROWS)
+                    .enumerate()
+                    .map(|(ix, row_data)| {
+                        let is_selected = selected.as_deref() == Some(row_data.name.as_str());
+                        let tag = if row_data.current {
+                            Some("current")
+                        } else if row_data.worktree_path.is_some() {
+                            Some("worktree")
+                        } else {
+                            None
+                        };
+                        let is_switching = switching.as_deref() == Some(row_data.name.as_str());
+                        let mut trailing = row().gap(6.0).center_y();
+                        if is_switching {
+                            trailing = trailing.child(
+                                text("switching…")
+                                    .font(text_style(10.0, 400.0))
+                                    .color(theme.text_muted.alpha(0.6)),
+                            );
+                        }
+                        if let Some(tag) = tag {
+                            trailing = trailing.child(
+                                text(tag.to_string())
+                                    .font(text_style(10.0, 400.0))
+                                    .color(theme.text_muted.alpha(0.45)),
+                            );
+                        }
+                        let row = menu_row(
+                            theme,
+                            ix,
+                            "pickers/branch-row",
+                            is_selected,
+                            ix == state.active,
+                            &row_data.name,
+                            Some(trailing),
+                        )
+                        .on_press(move |app: &mut App| selection::pick_ref(app, row_data.clone()));
+                        if switching.is_some() {
+                            row.opacity(0.55)
+                        } else {
+                            row
+                        }
+                    }),
+            ),
     };
 
     let mut panel = col()

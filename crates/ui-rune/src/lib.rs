@@ -10,6 +10,7 @@ pub mod app_menus;
 pub mod attachments;
 pub mod badges;
 pub mod bridge;
+pub mod change_requests;
 pub mod changes;
 pub mod comments;
 pub mod composer;
@@ -83,12 +84,15 @@ pub fn run_app(config: UiConfig) {
         .titlebar(
             rune::Titlebar::new(app::titlebar_height()).traffic_lights(14.0, 14.0),
         )
+        .on_focus(|app, focused, _tx| {
+            shell::on_focus(app, focused);
+        })
         .on_close(|app, _tx| {
             // Graceful teardown: drain live runs and flush doc snapshots before
             // the process exits. `on_close` runs on the UI thread, so blocking
             // the bridge runtime here is safe and bounded.
             if let Some(engine) = app.engine.clone() {
-                let _ = app.bridge.runtime().block_on(async move {
+                app.bridge.runtime().block_on(async move {
                     let _ = tokio::time::timeout(
                         std::time::Duration::from_secs(2),
                         engine.shutdown(),

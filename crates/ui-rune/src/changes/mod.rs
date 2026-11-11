@@ -48,12 +48,18 @@ mod render;
 mod rows;
 mod state;
 
+// `change_requests` lives at the crate root (`lib.rs` declares it); the module
+// is re-exported here for call sites that read it as `changes::…`.
+pub use crate::change_requests;
+
 pub use comments::*;
 pub use highlights::*;
 pub use model::*;
 pub use render::*;
 pub use rows::*;
 pub use state::*;
+
+pub use change_requests::*;
 
 #[cfg(test)]
 pub(super) const PATCH: &str = "\

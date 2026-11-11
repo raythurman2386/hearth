@@ -192,34 +192,33 @@ pub fn send(app: &mut App, text: String, steer: bool) {
             .collect()
     };
     let echo_text = attachments::with_attachments(&text, &echo_paths);
+    // Every seed is `(device, path)` so the outcome can retire it.
+    let mut seed_keys: Vec<(String, String)> = Vec::new();
     // Queued flow also seeds the UPLOAD ALIAS: the host rewrites the persisted
     // ref to `{uploads}/{id8}-{name}`.
     if queued_flow {
         for (upload_id, att) in upload_ids.iter().zip(&staged) {
-            attachments::seed_attachment_alias(
-                &device_id,
-                upload_id,
-                &att.name,
-                Arc::from(att.bytes()),
-            );
+            let path = attachments::alias_path(upload_id, &att.name);
+            let bytes = att.bytes_arc();
+            attachments::seed_attachment_alias(&device_id, upload_id, &att.name, bytes.clone());
+            seed_keys.push((device_id.clone(), path.clone()));
             if let Some(local) = local_device_id.as_deref()
                 && local != device_id
             {
-                attachments::seed_attachment_alias(
-                    local,
-                    upload_id,
-                    &att.name,
-                    Arc::from(att.bytes()),
-                );
+                attachments::seed_attachment_alias(local, upload_id, &att.name, bytes);
+                seed_keys.push((local.to_string(), path));
             }
         }
     }
     for (path, att) in echo_paths.iter().zip(&staged) {
-        attachments::seed_attachment(&device_id, path, &att.name, Arc::from(att.bytes()));
+        let bytes = att.bytes_arc();
+        attachments::seed_attachment(&device_id, path, &att.name, bytes.clone());
+        seed_keys.push((device_id.clone(), path.clone()));
         if let Some(local) = local_device_id.as_deref()
             && local != device_id
         {
-            attachments::seed_attachment(local, path, &att.name, Arc::from(att.bytes()));
+            attachments::seed_attachment(local, path, &att.name, bytes);
+            seed_keys.push((local.to_string(), path.clone()));
         }
     }
 
@@ -267,7 +266,7 @@ pub fn send(app: &mut App, text: String, steer: bool) {
     if !staged.is_empty() {
         app.begin_upload_progress(total, progress.clone());
     }
-    let tx = app.composer.sender();
+    let tx = app.composer.sender(&app.bridge);
     let bridge = app.bridge.clone();
     let client = engine.client.clone();
 
@@ -327,19 +326,12 @@ pub fn send(app: &mut App, text: String, steer: bool) {
                 // bubble's thumbnails never round-trip.
                 let seed_device = host_device_id.clone().unwrap_or_else(|| device_id.clone());
                 for (path, att) in attachment_paths.iter().zip(&staged) {
-                    attachments::seed_attachment(
-                        &seed_device,
-                        path,
-                        &att.name,
-                        Arc::from(att.bytes()),
-                    );
+                    let bytes = att.bytes_arc();
+                    attachments::seed_attachment(&seed_device, path, &att.name, bytes.clone());
+                    seed_keys.push((seed_device.clone(), path.clone()));
                     if seed_device != device_id {
-                        attachments::seed_attachment(
-                            &device_id,
-                            path,
-                            &att.name,
-                            Arc::from(att.bytes()),
-                        );
+                        attachments::seed_attachment(&device_id, path, &att.name, bytes);
+                        seed_keys.push((device_id.clone(), path.clone()));
                     }
                 }
                 content = attachments::with_attachments(&text, &attachment_paths);
@@ -500,7 +492,7 @@ pub fn send(app: &mut App, text: String, steer: bool) {
                 Some(message)
             }
         };
-        let _ = tx.send(ComposerEvent::SendFinished(SendOutcome {
+        tx.send(ComposerEvent::SendFinished(SendOutcome {
             chat_id: err_chat_id,
             message_id: err_message_id,
             restore_key,
@@ -509,6 +501,7 @@ pub fn send(app: &mut App, text: String, steer: bool) {
             error,
             comments: outcome_comments,
             staged: outcome_staged,
+            seeded: seed_keys,
         }));
     });
 }
@@ -525,11 +518,11 @@ pub fn interrupt(app: &mut App) {
         "chatId": chat_id,
         "command": { "kind": "interrupt" },
     });
-    let tx = app.composer.sender();
+    let tx = app.composer.sender(&app.bridge);
     app.bridge.spawn(async move {
         let result = engine.client.call(methods::QUEUE_COMMAND, params).await;
         if let Err(err) = result {
-            let _ = tx.send(ComposerEvent::Failure {
+            tx.send(ComposerEvent::Failure {
                 key: Some(chat_id),
                 message: format!("Stop failed: {err}"),
             });
@@ -565,10 +558,10 @@ pub fn schedule_auto_advance(app: &mut App) {
     let Some(request_id) = app.composer.wizard.as_ref().map(|w| w.request_id.clone()) else {
         return;
     };
-    let tx = app.composer.sender();
+    let tx = app.composer.sender(&app.bridge);
     app.bridge.spawn(async move {
         tokio::time::sleep(Duration::from_millis(super::pure::AUTO_ADVANCE_MS)).await;
-        let _ = tx.send(ComposerEvent::WizardAdvance { request_id });
+        tx.send(ComposerEvent::WizardAdvance { request_id });
     });
 }
 
@@ -617,12 +610,12 @@ pub fn wizard_finish(app: &mut App, answers: Vec<UserInputAnswer>) {
         Ok(value) => serde_json::json!({ "chatId": chat_id, "command": value }),
         Err(_) => return,
     };
-    let tx = app.composer.sender();
+    let tx = app.composer.sender(&app.bridge);
     app.bridge.spawn(async move {
         let result = engine.client.call(methods::QUEUE_COMMAND, params).await;
         let error = result.err().map(|err| format!("Answer failed: {err}"));
         let failed = error.is_some();
-        let _ = tx.send(ComposerEvent::AnswerFinished {
+        tx.send(ComposerEvent::AnswerFinished {
             request_id: request_id.clone(),
             chat_id,
             error,
@@ -635,7 +628,7 @@ pub fn wizard_finish(app: &mut App, answers: Vec<UserInputAnswer>) {
         // pending input once the host has had time to execute and sync back,
         // un-hide the panel instead of leaving the question unanswerable.
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let _ = tx.send(ComposerEvent::AnswerSettled { request_id });
+        tx.send(ComposerEvent::AnswerSettled { request_id });
     });
 }
 
@@ -645,19 +638,29 @@ pub fn wizard_finish(app: &mut App, answers: Vec<UserInputAnswer>) {
 pub fn apply_send_outcome(app: &mut App, outcome: SendOutcome) {
     app.composer.sending = false;
     app.end_upload_progress();
-    let Some(message) = outcome.error else {
-        return;
-    };
     let SendOutcome {
         chat_id,
         message_id,
         restore_key,
         typed,
         is_new,
+        error,
         comments,
         staged,
-        ..
+        seeded,
     } = outcome;
+    // The send resolved either way: drop the transcript seed bytes it minted
+    // (the transcript decodes its own copy, and a failed send's bubble is
+    // rolled back below).
+    for (device, path) in seeded {
+        attachments::forget_seeded(&device, &path);
+    }
+    let Some(message) = error else {
+        // Sent: the staged ids left the composer with the send, so their
+        // decoded thumbnails are unreachable — drop them.
+        app.composer.prune_thumbs(std::iter::empty());
+        return;
+    };
     app.composer.failure = Some(message);
     app.composer.failure_key = Some(restore_key.clone());
     app.remove_echo(&chat_id, &message_id);
@@ -694,11 +697,12 @@ pub fn apply_send_outcome(app: &mut App, outcome: SendOutcome) {
         }
         app.composer.attachments.insert(restore_key, merged);
     }
+    // Keep exactly the restored (and still-staged elsewhere) thumbnails.
+    app.composer.prune_thumbs(std::iter::empty());
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::composer::pure::{SendButtonMode, composer_has_content, send_button_mode};
 
     #[test]

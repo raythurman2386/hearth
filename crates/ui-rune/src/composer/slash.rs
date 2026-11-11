@@ -124,7 +124,7 @@ pub fn update_slash(app: &mut App, text: &str, cursor: usize) {
         .map(|chat| chat.device_id.clone())
         .or_else(|| app.selected_space_row().map(|s| s.device_id.clone()));
     let request = app.composer.slash.request;
-    let tx = app.composer.sender();
+    let tx = app.composer.sender(&app.bridge);
     app.bridge.spawn(async move {
         let mut params = serde_json::json!({ "harness": harness });
         if let (Some(target), Some(object)) = (&target, params.as_object_mut()) {
@@ -144,7 +144,7 @@ pub fn update_slash(app: &mut App, text: &str, cursor: usize) {
                 Err(slash_error_message(&err))
             }
         };
-        let _ = tx.send(ComposerEvent::CommandsLoaded {
+        tx.send(ComposerEvent::CommandsLoaded {
             request,
             harness,
             outcome,

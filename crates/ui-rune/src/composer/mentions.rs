@@ -429,7 +429,7 @@ pub fn update_mention(app: &mut App, text: &str, cursor: usize) {
     params.insert("targetDeviceId".into(), target.into());
     let params = serde_json::Value::Object(params);
     let request = app.composer.mention.request;
-    let tx = app.composer.sender();
+    let tx = app.composer.sender(&app.bridge);
     app.bridge.spawn(async move {
         // A short debounce prevents one full workspace walk per keystroke
         // during normal typing. The generation check still guards requests
@@ -458,7 +458,7 @@ pub fn update_mention(app: &mut App, text: &str, cursor: usize) {
                 Err(mention_error_message(&err))
             }
         };
-        let _ = tx.send(ComposerEvent::MentionLoaded { request, outcome });
+        tx.send(ComposerEvent::MentionLoaded { request, outcome });
     });
 }
 
@@ -571,7 +571,7 @@ pub fn pill_label(id: &str) -> Option<String> {
 
 /// Whether a pill id is a mention (for `PillStyle` dispatch).
 pub fn is_mention_pill(id: &str) -> bool {
-    matches!(mention_from_pill_id(id), Some(_))
+    mention_from_pill_id(id).is_some()
 }
 
 /// A pill id of the `@` prefix (`Mark::Pill` ids are app-defined).

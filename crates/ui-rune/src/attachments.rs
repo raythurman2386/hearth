@@ -412,6 +412,20 @@ pub async fn read_attachment_image(
 pub struct CachedAttachmentImage {
     pub name: String,
     pub image: Arc<rune::Image>,
+    /// Decoded RGBA bytes (`w × h × 4`), or a conservative estimate until the
+    /// decode lands. The cache's byte budget is what keeps a long transcript
+    /// with many photos finite.
+    pub bytes: usize,
+}
+
+impl CachedAttachmentImage {
+    fn new(name: String, image: Arc<rune::Image>) -> Self {
+        let bytes = image
+            .size()
+            .map(|[w, h]| w as usize * h as usize * 4)
+            .unwrap_or(256 * 1024);
+        Self { name, image, bytes }
+    }
 }
 
 /// What a render pass sees for one `(deviceId, path)` source.
@@ -447,35 +461,55 @@ fn retry_delay(attempts: u32) -> Duration {
 /// Cap on retained decoded images. Rune's `ImageCache` already dedupes by
 /// content; this bound keeps this map (and therefore its live handles) finite.
 const MAX_CACHED_IMAGES: usize = 128;
+/// Cap on retained decoded pixels. Count alone is not a bound: a dozen 24 MP
+/// photos is ~1.4 GB of RGBA, so the transcript cache is bounded by BYTES too.
+pub const MAX_CACHED_IMAGE_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Default)]
 struct ImageCache {
     map: HashMap<(String, String), CacheEntry>,
     tick: u64,
+    total_bytes: usize,
 }
 
 impl ImageCache {
     fn insert_loaded(&mut self, key: (String, String), image: CachedAttachmentImage) {
         self.tick += 1;
+        if let Some(CacheEntry::Loaded { image: old, .. }) = self.map.remove(&key) {
+            self.total_bytes = self.total_bytes.saturating_sub(old.bytes);
+        }
+        self.total_bytes = self.total_bytes.saturating_add(image.bytes);
         self.map.insert(
-            key,
+            key.clone(),
             CacheEntry::Loaded {
                 image,
                 last_used: self.tick,
             },
         );
-        while self.map.len() > MAX_CACHED_IMAGES {
+        self.evict(&key);
+    }
+
+    /// Evict least-recently-used loaded images until both budgets fit, never
+    /// evicting `keep` (the entry just inserted).
+    fn evict(&mut self, keep: &(String, String)) {
+        loop {
+            if self.map.len() <= MAX_CACHED_IMAGES && self.total_bytes <= MAX_CACHED_IMAGE_BYTES {
+                break;
+            }
             let oldest = self
                 .map
                 .iter()
-                .filter(|(_, entry)| matches!(entry, CacheEntry::Loaded { .. }))
+                .filter(|(key, entry)| *key != keep && matches!(entry, CacheEntry::Loaded { .. }))
                 .filter_map(|(key, entry)| match entry {
-                    CacheEntry::Loaded { last_used, .. } => Some((*last_used, key.clone())),
+                    CacheEntry::Loaded { last_used, image } => {
+                        Some((*last_used, key.clone(), image.bytes))
+                    }
                     _ => None,
                 })
                 .min();
-            let Some((_, victim)) = oldest else { break };
+            let Some((_, victim, bytes)) = oldest else { break };
             self.map.remove(&victim);
+            self.total_bytes = self.total_bytes.saturating_sub(bytes);
         }
     }
 }
@@ -569,10 +603,7 @@ pub fn begin_load(device_id: &str, path: &str) -> bool {
 pub fn store_loaded(device_id: &str, path: &str, name: &str, image: Arc<rune::Image>) {
     cache().lock().unwrap().insert_loaded(
         key(device_id, path),
-        CachedAttachmentImage {
-            name: name.to_string(),
-            image,
-        },
+        CachedAttachmentImage::new(name.to_string(), image),
     );
 }
 
@@ -583,6 +614,9 @@ pub fn store_error(device_id: &str, path: &str) {
         Some(CacheEntry::Error { attempts, .. }) => *attempts,
         _ => 1,
     };
+    if let Some(CacheEntry::Loaded { image, .. }) = cache.map.get(&key(device_id, path)) {
+        cache.total_bytes = cache.total_bytes.saturating_sub(image.bytes);
+    }
     cache.map.insert(
         key(device_id, path),
         CacheEntry::Error {
@@ -601,34 +635,63 @@ pub fn seed_attachment(device_id: &str, path: &str, name: &str, image: Arc<rune:
 // Preview lightbox
 // ---------------------------------------------------------------------------
 
+/// A full-size preview target (staged strip or transcript thumbnail).
 #[derive(Clone)]
 pub struct PreviewImage {
     pub name: String,
     pub image: Arc<rune::Image>,
 }
 
-/// The bare lightbox: dim scrim, the image at ≤85% height / 90% width, the
-/// file name under it. Any click closes.
+/// The full-window lightbox: dim scrim, the image at ≤85% of the live window
+/// height / 90% of its width, the file name under it.
+///
+/// Mount it in the view's overlay layer (`rune_kit::root(body, layer)`) so it
+/// paints above the sidebar, titlebar and composer, not just the chat outlet.
+/// `modal(true)` traps focus, makes the background inert, and turns outside
+/// presses and Escape into the same close; the whole surface is also the close
+/// button (`cursor-zoom-out`, as in the original). Close hands focus back to
+/// the composer through the shell's focus hand-off.
 pub fn lightbox(
-    preview: &PreviewImage,
     theme: &Theme,
+    preview: &PreviewImage,
     on_close: impl Fn(&mut crate::state::App) + 'static,
 ) -> El {
+    let close = std::rc::Rc::new(on_close);
+    let click = close.clone();
+    let dismiss = close.clone();
+    let key = close.clone();
+    let (window_w, window_h) = rune::memo::layout("shell-root")
+        .map(|rect| (rect[2], rect[3]))
+        .filter(|(width, height)| *width > 0.0 && *height > 0.0)
+        .unwrap_or(crate::app::WINDOW_SIZE);
+    let max_w = window_w * 0.9;
+    let max_h = window_h * 0.85;
     el().key("app/transcript/attachment-lightbox")
         .absolute(0.0, 0.0)
         .w_full()
         .h_full()
-        .fill(theme.scrim())
+        .fill(crate::theme::scrim_for(theme.appearance, 0.70))
         .center()
         .cursor(rune::Cursor::Pointer)
-        .on_press(move |app: &mut crate::state::App| on_close(app))
+        .modal(true, move |app: &mut crate::state::App| (dismiss)(app))
+        .on_press(move |app: &mut crate::state::App| (click)(app))
+        .on_key(
+            move |app: &mut crate::state::App, ev: &rune::KeyEvent, _tx: &mut rune::Tx| {
+                if matches!(ev.key, rune::Key::Escape) {
+                    (key)(app);
+                    true
+                } else {
+                    false
+                }
+            },
+        )
         .child(
             col()
                 .gap(12.0)
                 .center()
                 .child(
-                    el().max_w(0.9 * crate::app::WINDOW_SIZE.0)
-                        .max_h(0.85 * crate::app::WINDOW_SIZE.1)
+                    el().max_w(max_w)
+                        .max_h(max_h)
                         .radius(6.0)
                         .clip_rounded(6.0)
                         .pixels_fit(preview.image.pixels(), SurfaceFit::Fit),
@@ -638,7 +701,7 @@ pub fn lightbox(
                         .font(TextStyle::new(11.0, 400.0))
                         .color(theme.text.alpha(0.45))
                         .truncate()
-                        .max_w(0.9 * crate::app::WINDOW_SIZE.0),
+                        .max_w(max_w),
                 ),
         )
 }
@@ -776,5 +839,56 @@ mod tests {
         );
         assert_eq!(upload_alias_id8("/uploads/shot.png"), None);
         assert_eq!(upload_alias_id8("/uploads/abcd12345-shot.png"), None);
+    }
+
+    fn synthetic_image(seed: u8) -> Arc<rune::Image> {
+        let waker: rune::Waker = Arc::new(|| {});
+        let cache = rune::ImageCache::new(waker);
+        // A 1×1 PNG is not needed: an undecodable payload still yields a
+        // content-addressed handle, and these entries carry their own byte size.
+        Arc::new(cache.load(vec![seed; 8]))
+    }
+
+    #[test]
+    fn image_cache_is_bounded_by_bytes_not_only_count() {
+        let mut cache = ImageCache::default();
+        let one = MAX_CACHED_IMAGE_BYTES / 2 + 1;
+        for ix in 0..3u8 {
+            cache.insert_loaded(
+                ("dev".into(), format!("p{ix}")),
+                CachedAttachmentImage {
+                    name: "n".into(),
+                    image: synthetic_image(ix),
+                    bytes: one,
+                },
+            );
+        }
+        // Three entries at > half the budget each: the oldest goes.
+        assert!(cache.total_bytes <= MAX_CACHED_IMAGE_BYTES);
+        assert!(!cache.map.contains_key(&("dev".to_string(), "p0".to_string())));
+        assert!(cache.map.contains_key(&("dev".to_string(), "p2".to_string())));
+    }
+
+    #[test]
+    fn image_cache_keeps_the_entry_it_just_inserted() {
+        let mut cache = ImageCache::default();
+        cache.insert_loaded(
+            ("dev".into(), "old".into()),
+            CachedAttachmentImage {
+                name: "n".into(),
+                image: synthetic_image(1),
+                bytes: MAX_CACHED_IMAGE_BYTES,
+            },
+        );
+        cache.insert_loaded(
+            ("dev".into(), "new".into()),
+            CachedAttachmentImage {
+                name: "n".into(),
+                image: synthetic_image(2),
+                bytes: MAX_CACHED_IMAGE_BYTES,
+            },
+        );
+        assert!(cache.map.contains_key(&("dev".to_string(), "new".to_string())));
+        assert!(cache.total_bytes <= MAX_CACHED_IMAGE_BYTES || cache.map.len() == 1);
     }
 }

@@ -21,18 +21,13 @@ use super::{
 };
 
 /// A remote listing's lifecycle.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum Loadable<T> {
+    #[default]
     Idle,
     Loading,
     Ready(T),
     Error(String),
-}
-
-impl<T> Default for Loadable<T> {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 impl<T> Loadable<T> {
@@ -125,9 +120,8 @@ pub fn breadcrumbs(path: &str) -> Vec<(String, String)> {
     let mut full = String::new();
     let absolute = path.starts_with('/') || path.starts_with('\\');
     for segment in path.split(['/', '\\']).filter(|s| !s.is_empty()) {
-        if absolute {
-            full.push('/');
-        } else if !full.is_empty() {
+        // The root (or the prior segment) contributes the separator.
+        if absolute || !full.is_empty() {
             full.push('/');
         }
         full.push_str(segment);
@@ -872,6 +866,9 @@ pub fn apply_task(app: &mut App, task: ShellTask) -> bool {
             app.shell.sidebar_notice = Some(message);
             true
         }
+        // Update payloads are consumed by `super::poll` before they reach the
+        // add-space task router.
+        ShellTask::UpdateStaged(_) => false,
     }
 }
 
@@ -886,6 +883,9 @@ pub enum SpacesMenuRow {
     Space(String),
     AddSpace,
 }
+
+/// One rendered spaces-menu row: `(kind, label, @ device tag + offline, selected)`.
+type SpacesMenuEntry = (SpacesMenuRow, String, Option<(String, bool)>, bool);
 
 pub fn spaces_menu_rows(app: &App) -> Vec<SpacesMenuRow> {
     let query = app
@@ -1084,7 +1084,7 @@ pub fn render_filter(app: &App, theme: &Theme, layer: &mut Vec<El>) -> El {
         .child(icon(&icons::ALT_ARROW_DOWN, 14.0).color(theme.text_muted.alpha(0.6)));
 
     let open = app.shell.spaces_menu.is_some();
-    let mut menu_rows: Vec<(SpacesMenuRow, String, Option<(String, bool)>, bool)> = Vec::new();
+    let mut menu_rows: Vec<SpacesMenuEntry> = Vec::new();
     if let Some(menu) = app.shell.spaces_menu.as_ref() {
         for row in spaces_menu_rows(app) {
             let (label, tag, _offline, selected) = match &row {
@@ -1250,6 +1250,7 @@ pub fn render_add_space(app: &App, theme: &Theme, layer: &mut Vec<El>) {
     let home = flow.home.clone();
     let card_radius = 14.0;
     let hairline = theme.hairline(0.08);
+    let inch = 1.0 / app.scale.get().max(1.0);
 
     // ---- breadcrumbs -----------------------------------------------------
     let crumbs: El = match &listing {
@@ -1500,7 +1501,7 @@ pub fn render_add_space(app: &App, theme: &Theme, layer: &mut Vec<El>) {
     }
     if device.is_some() {
         rail = rail
-            .child(el().h(1.0).mx(2.0).my(6.0).fill(hairline))
+            .child(el().h(inch).mx(2.0).my(6.0).fill(hairline))
             .child(
                 text("Locations")
                     .font(TextStyle::new(11.0, 500.0))
@@ -1530,7 +1531,7 @@ pub fn render_add_space(app: &App, theme: &Theme, layer: &mut Vec<El>) {
         .map(|d| d.name.clone())
         .unwrap_or_else(|| "This device".to_string());
     rail = rail
-        .child(el().h(1.0).mx(2.0).my(6.0).fill(hairline))
+        .child(el().h(inch).mx(2.0).my(6.0).fill(hairline))
         .child(
             row()
                 .gap(6.0)

@@ -6,7 +6,7 @@
 //! the window's drag region (`.window_drag()`); buttons stay clickable because Rune's hit test
 //! stops at their own press handler.
 
-use rune::{Cursor, El, TextStyle, Tx, el, icon, row, text};
+use rune::{Cursor, El, Phase, TextStyle, Tx, el, icon, row, text};
 
 use crate::icons;
 use crate::state::App;
@@ -320,7 +320,7 @@ fn render_session_identity(app: &App, theme: &Theme, cx: &rune::Cx<App>) -> El {
         None
     } else {
         let mut controls = row().h_full().center_y();
-        if right_open && !app.shell.right_pane_expanded {
+        if right_open {
             let strip = render_right_tab_strip(app, theme);
             controls = controls.child(
                 el().h_full()
@@ -358,10 +358,17 @@ fn render_session_identity(app: &App, theme: &Theme, cx: &rune::Cx<App>) -> El {
         .children(trailing)
 }
 
-/// The right-pane surface tab strip (tab click selects, ✕ closes).
+/// The right-pane surface tab strip (tab click selects, ✕ closes, drag reorders).
 pub fn render_right_tab_strip(app: &App, theme: &Theme) -> El {
+    // Fixed chip slot (hearth's 112 + the strip's 4 gap): drag reorder
+    // quantises the pointer's travel by this, so uniform widths are required.
+    const CHIP_W: f32 = 112.0;
+    const CHIP_SLOT: f32 = 116.0;
+
     let rows = right_surface_rows(app);
     let active = super::resolved_right_active(app);
+    let count = rows.len();
+    let dragging = app.shell.right_tab_drag;
     let mut strip = row()
         .key("right-tab-strip")
         .h_full()
@@ -375,15 +382,19 @@ pub fn render_right_tab_strip(app: &App, theme: &Theme) -> El {
                 .color(theme.text_muted.alpha(0.5)),
         );
     }
-    for (surface, title) in rows {
+    for (ix, (surface, title)) in rows.into_iter().enumerate() {
         let selected = surface == active;
         let surface_key = surface;
         let select = surface;
         let close = surface;
+        // The drop target gets a hint while a sibling is dragged over it.
+        let drop_target = dragging.is_some_and(|over| over == ix) && !selected;
         strip = strip.child(
             row()
                 .key(format!("surface-{surface:?}"))
                 .h(24.0)
+                .w(CHIP_W)
+                .min_w(CHIP_W)
                 .px(8.0)
                 .radius(6.0)
                 .gap(6.0)
@@ -391,11 +402,29 @@ pub fn render_right_tab_strip(app: &App, theme: &Theme) -> El {
                 .cursor(Cursor::Pointer)
                 .fill(if selected {
                     theme.surface_raised
+                } else if drop_target {
+                    theme.wash(0.10)
                 } else {
                     theme.ink(0.0)
                 })
                 .hover(theme.element_hover)
                 .on_press(move |app: &mut App| set_right_active(app, select))
+                .on_drag(move |app: &mut App, drag: &mut rune::Drag, _tx| match drag.phase {
+                    Phase::Down => {
+                        app.shell.right_tab_drag = Some(ix);
+                    }
+                    Phase::Move => {
+                        app.shell.right_tab_drag = Some(super::surface_drop_index(
+                            ix, drag.dx, CHIP_SLOT, count,
+                        ));
+                    }
+                    Phase::Up => {
+                        let to = app.shell.right_tab_drag.take().unwrap_or(ix);
+                        if !drag.cancelled() {
+                            super::reorder_right_surface(app, ix, to);
+                        }
+                    }
+                })
                 .child(icon(surface_icon(surface_key), 12.0).color(if selected {
                     theme.text
                 } else {
@@ -409,7 +438,8 @@ pub fn render_right_tab_strip(app: &App, theme: &Theme) -> El {
                         } else {
                             theme.text_muted
                         })
-                        .truncate(),
+                        .truncate()
+                        .grow(1.0),
                 )
                 .child(
                     icon(&icons::CLOSE, 10.0)

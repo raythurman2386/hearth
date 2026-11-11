@@ -48,6 +48,9 @@ pub struct ChangesEnv {
     pub comments: Vec<DiffComment>,
     /// `App::composer_key()` — the comments map key and the draft's owner.
     pub comments_key: String,
+    /// `crate::shell::right_pane_open(app)`: a closed pane watches nothing, but
+    /// keeps its last snapshot for an instant reopen.
+    pub visible: bool,
 }
 
 impl ChangesEnv {
@@ -73,6 +76,7 @@ impl ChangesEnv {
             chat,
             comments,
             comments_key,
+            visible: crate::shell::right_pane_open(app),
         }
     }
 
@@ -127,6 +131,8 @@ enum ChangesEvent {
         result: Option<Arc<DiffHighlights>>,
     },
     History { key: String, reset: bool, result: Result<GitHistoryPage, String> },
+    FetchedAll { key: String, result: Result<(), String> },
+    CopiedExpired { sha: String },
     SettleFolds,
 }
 
@@ -189,7 +195,28 @@ pub struct ChangesState {
     pub history_cursor: Option<usize>,
     pub history_lead_count: Option<usize>,
     pub history_total: Option<usize>,
+    /// The commit HEAD points at — the lane graph's head ring.
+    pub head_sha: Option<String>,
+    /// Bumped whenever the history rows are replaced (the virtual list's keys
+    /// are SHAs, so a same-length reset still needs a version change).
+    pub history_version: u64,
+    /// The commit cell's measured width; drives the ref-badge overflow count.
+    pub history_commit_width: f32,
     history_for: Option<String>,
+    /// `FetchAll` in flight for `fetch_for` (the history header's Fetch button).
+    pub fetching_all: bool,
+    pub fetch_error: Option<String>,
+    fetch_for: Option<String>,
+    /// The SHA chip the user just copied; reverts after 1.2 s.
+    pub copied_sha: Option<String>,
+
+    /// Long diff lines: `false` (default) puts the code in a horizontal
+    /// scroll viewport with the gutters pinned; `true` wraps them.
+    pub wrap: bool,
+
+    /// Checkout change-request watches (PR badges) — independent of pane
+    /// visibility, polled from `changes::poll`.
+    pub change_requests: ChangeRequestsState,
 
     /// Dropdown state (the gpui popup replacement: anchored inline).
     pub scope_menu_open: bool,
@@ -244,7 +271,16 @@ impl Default for ChangesState {
             history_cursor: None,
             history_lead_count: None,
             history_total: None,
+            head_sha: None,
+            history_version: 0,
+            history_commit_width: 320.0,
             history_for: None,
+            fetching_all: false,
+            fetch_error: None,
+            fetch_for: None,
+            copied_sha: None,
+            wrap: false,
+            change_requests: ChangeRequestsState::default(),
             scope_menu_open: false,
             ref_menu_open: false,
             ref_search: TextEdit::new(""),
@@ -292,6 +328,14 @@ impl ChangesState {
             }
         }
 
+        // A closed right pane watches nothing and parses nothing; the last
+        // snapshot stays so reopening is instant. Badge watches live in
+        // `ChangeRequestsState`, which `changes::poll` always pumps.
+        if !env.visible {
+            self.suspend();
+            return changed;
+        }
+
         changed |= self.sync_watch();
         if self.scope == DiffScope::Branch {
             self.ensure_branches();
@@ -307,6 +351,18 @@ impl ChangesState {
         }
         self.request_highlights();
         changed
+    }
+
+    /// Stop the diff watch while the right pane is closed. The parsed rows and
+    /// the last diff frame stay, so reopening paints instantly while a fresh
+    /// watch resubscribes.
+    fn suspend(&mut self) {
+        if let Some(task) = self.watch_task.take() {
+            task.abort();
+        }
+        self.started = false;
+        self.watch_target = None;
+        self.scoped_inflight = None;
     }
 
     /// Drain background results. The shell calls this once per frame.
@@ -427,25 +483,21 @@ impl ChangesState {
                     return false;
                 }
                 match (full, result) {
-                    (false, Some(highlights)) => {
-                        if matches!(slot.state, DiffHighlightState::Pending) {
-                            slot.state = DiffHighlightState::Excerpt(highlights);
-                            return true;
+                    (false, result) => {
+                        if !matches!(slot.state, DiffHighlightState::Pending) {
+                            return false;
                         }
-                        return false;
-                    }
-                    (false, None) => {
-                        if matches!(slot.state, DiffHighlightState::Pending) {
-                            slot.state = DiffHighlightState::Plain;
-                            return true;
-                        }
-                        return false;
+                        slot.state = match result {
+                            Some(highlights) => DiffHighlightState::Excerpt(highlights),
+                            None => DiffHighlightState::Plain,
+                        };
+                        true
                     }
                     (true, Some(highlights)) => {
                         slot.state = DiffHighlightState::Ready(highlights);
-                        return true;
+                        true
                     }
-                    (true, None) => return false,
+                    (true, None) => false,
                 }
             }
             ChangesEvent::History {
@@ -475,8 +527,16 @@ impl ChangesState {
                                     self.history.push(commit);
                                 }
                             }
+                            if page.total_count.is_some() {
+                                self.history_total = page.total_count;
+                            }
+                            if page.head_commit_count.is_some() {
+                                self.history_lead_count = page.head_commit_count;
+                            }
                         }
+                        self.head_sha = page.head_sha;
                         self.history_cursor = page.next_cursor;
+                        self.history_version = self.history_version.wrapping_add(1);
                     }
                     Err(err) => {
                         self.history_error = Some(err);
@@ -484,6 +544,33 @@ impl ChangesState {
                     }
                 }
                 true
+            }
+            ChangesEvent::FetchedAll { key, result } => {
+                if self.fetch_for.as_deref() != Some(key.as_str()) {
+                    return false;
+                }
+                self.fetching_all = false;
+                self.fetch_for = None;
+                match result {
+                    Ok(()) => {
+                        self.fetch_error = None;
+                        // Cancel any pre-fetch page request: the next page must
+                        // observe the updated remote refs.
+                        self.history_loading = false;
+                        self.history_for = None;
+                        self.ensure_history();
+                    }
+                    Err(err) => self.fetch_error = Some(err),
+                }
+                true
+            }
+            ChangesEvent::CopiedExpired { sha } => {
+                if self.copied_sha.as_deref() == Some(sha.as_str()) {
+                    self.copied_sha = None;
+                    true
+                } else {
+                    false
+                }
             }
             ChangesEvent::SettleFolds => self.settle_folds_ready(),
         }
@@ -738,14 +825,29 @@ impl ChangesState {
     }
 
     pub fn toggle_fold(&mut self, file_ix: usize) {
+        let Some(path) = self
+            .parsed
+            .as_ref()
+            .and_then(|parsed| parsed.files.get(file_ix))
+            .map(|file| file.path.clone())
+        else {
+            return;
+        };
+        self.toggle_fold_path(&path);
+    }
+
+    /// Fold/unfold a file by its path. Handlers must be path-keyed: a virtual
+    /// row kept by `memo` may sit at a different index after rows move.
+    pub fn toggle_fold_path(&mut self, path: &str) {
         let Some(parsed) = &self.parsed else {
             return;
         };
-        let Some(file) = parsed.files.get(file_ix) else {
+        let Some(file_ix) = parsed.files.iter().position(|file| file.path == path) else {
             return;
         };
+        let file = parsed.files[file_ix].clone();
         let expanded_height = body_height_with(
-            file,
+            &file,
             &self.comments_for(&file.path),
             self.draft_anchor_in(&file.path),
             self.mode,
@@ -878,6 +980,19 @@ impl ChangesState {
         self.reflatten();
     }
 
+    /// Wrap long code lines instead of scrolling them horizontally. Row heights
+    /// become measured rather than analytic, so the virtual list re-measures.
+    pub fn set_wrap(&mut self, wrap: bool) {
+        if self.wrap != wrap {
+            self.wrap = wrap;
+            self.row_version = self.row_version.wrapping_add(1);
+        }
+    }
+
+    pub fn toggle_wrap(&mut self) {
+        self.set_wrap(!self.wrap);
+    }
+
     fn reflatten(&mut self) {
         let Some(parsed) = &self.parsed else {
             return;
@@ -985,6 +1100,69 @@ impl ChangesState {
         self.history_for = None;
         self.history_error = None;
         self.ensure_history();
+    }
+
+    /// The commit cell's measured width (ref-badge overflow math).
+    pub fn set_history_commit_width(&mut self, width: f32) {
+        if (self.history_commit_width - width).abs() >= 0.5 {
+            self.history_commit_width = width;
+        }
+    }
+
+    /// `FetchAll` for the selected checkout, then reload the first history page
+    /// so newly fetched remote refs appear.
+    pub fn fetch_all(&mut self) {
+        if self.fetching_all {
+            return;
+        }
+        let Some(env) = self.env.clone() else {
+            return;
+        };
+        let Some(cwd) = self.scoped_cwd() else {
+            return;
+        };
+        let Some(engine) = env.engine.clone() else {
+            return;
+        };
+        let Some(key) = self.history_key() else {
+            return;
+        };
+        let target = env.target();
+        self.fetching_all = true;
+        self.fetch_for = Some(key.clone());
+        self.fetch_error = None;
+        let tx = self.tx.clone();
+        let wake = env.bridge.clone();
+        env.bridge.spawn(async move {
+            let mut params = serde_json::Map::new();
+            params.insert("repoPath".into(), serde_json::Value::String(cwd));
+            if let Some(target) = target {
+                params.insert("targetDeviceId".into(), serde_json::Value::String(target));
+            }
+            let result = engine
+                .client
+                .call(methods::FETCH_ALL, serde_json::Value::Object(params))
+                .await
+                .map(|_| ())
+                .map_err(|err| err.to_string());
+            let _ = tx.send(ChangesEvent::FetchedAll { key, result });
+            wake.wake();
+        });
+    }
+
+    /// Remember a just-copied SHA for 1.2 s (the chip reads "Copied").
+    pub fn copy_sha(&mut self, sha: String) {
+        self.copied_sha = Some(sha.clone());
+        let Some(env) = self.env.clone() else {
+            return;
+        };
+        let tx = self.tx.clone();
+        let wake = env.bridge.clone();
+        env.bridge.spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1_200)).await;
+            let _ = tx.send(ChangesEvent::CopiedExpired { sha });
+            wake.wake();
+        });
     }
 
     pub fn load_older_history(&mut self) {
@@ -1232,6 +1410,10 @@ impl ChangesState {
             self.history.clear();
             self.history_cursor = None;
             self.history_error = None;
+            self.history_lead_count = None;
+            self.history_total = None;
+            self.head_sha = None;
+            self.history_version = self.history_version.wrapping_add(1);
             self.fetch_history(0, true);
         }
     }
@@ -1258,7 +1440,7 @@ impl ChangesState {
             let mut params = serde_json::Map::new();
             params.insert("cwd".into(), serde_json::Value::String(cwd));
             params.insert("cursor".into(), serde_json::json!(cursor));
-            params.insert("limit".into(), serde_json::json!(50));
+            params.insert("limit".into(), serde_json::json!(crate::history::HISTORY_PAGE_SIZE));
             if let Some(target) = target {
                 params.insert("targetDeviceId".into(), serde_json::Value::String(target));
             }
@@ -1298,7 +1480,7 @@ impl ChangesState {
             .get(range)
             .into_iter()
             .flatten()
-            .filter_map(|row| match row {
+            .map(|row| match row {
                 DiffRow::FileHeader { file }
                 | DiffRow::Notice { file, .. }
                 | DiffRow::HunkHeader { file, .. }
@@ -1307,7 +1489,7 @@ impl ChangesState {
                 | DiffRow::CommentCard { file, .. }
                 | DiffRow::CommentDraft { file }
                 | DiffRow::BodyPad { file }
-                | DiffRow::FoldingBody { file } => Some(*file as usize),
+                | DiffRow::FoldingBody { file } => *file as usize,
             })
             .collect();
         wanted.sort_unstable();
@@ -1505,8 +1687,13 @@ pub fn filter_indices<S: AsRef<str>>(query: &str, labels: &[S]) -> Vec<usize> {
 /// ```
 pub fn poll(app: &mut App) -> bool {
     let env = ChangesEnv::capture(app);
+    let requests = ChangeRequestsEnv::capture(app);
     let mut changed = app.changes.refresh(&env);
     changed |= app.changes.poll();
+    // PR badges are sidebar/composer state: keep watching even while the diff
+    // pane is closed (its own diff watch is suspended by `refresh`).
+    changed |= app.changes.change_requests.refresh(&requests);
+    changed |= app.changes.change_requests.poll();
     changed
 }
 
@@ -1546,6 +1733,7 @@ mod tests {
             chat: Some(chat.clone()),
             comments: Vec::new(),
             comments_key: "c".into(),
+            visible: true,
         };
         assert_eq!(env.target(), None);
         let mut remote = env.clone();
@@ -1583,12 +1771,118 @@ mod tests {
 
     #[test]
     fn scoped_fetches_are_skipped_for_the_watch_scope() {
-        let mut state = ChangesState::default();
-        state.scope = DiffScope::WorkingTree;
-        state.scoped_inflight = Some("stale".into());
+        let mut state = ChangesState {
+            scope: DiffScope::WorkingTree,
+            scoped_inflight: Some("stale".into()),
+            ..Default::default()
+        };
         // No env: still clears the inflight marker for watch scopes.
         state.ensure_scoped();
         assert!(state.scoped_inflight.is_none());
+    }
+
+    #[test]
+    fn hidden_refresh_suspends_the_watch_and_keeps_rows() {
+        let mut state = ChangesState {
+            started: true,
+            ..Default::default()
+        };
+        let env = ChangesEnv {
+            bridge: crate::bridge::Bridge::new(),
+            engine: None,
+            data_dir: None,
+            local_device_id: None,
+            chat: None,
+            comments: Vec::new(),
+            comments_key: String::new(),
+            visible: false,
+        };
+        assert!(!state.refresh(&env));
+        assert!(!state.started);
+        assert!(state.watch_task.is_none());
+        assert!(state.watch_target.is_none());
+    }
+
+    #[test]
+    fn wrap_toggle_bumps_the_row_version_once() {
+        let mut state = ChangesState::default();
+        let before = state.row_version;
+        state.set_wrap(true);
+        assert!(state.wrap);
+        assert_ne!(state.row_version, before);
+        let after = state.row_version;
+        state.set_wrap(true);
+        assert_eq!(state.row_version, after);
+        state.toggle_wrap();
+        assert!(!state.wrap);
+    }
+
+    fn changes_test_view(state: &App, _cx: &mut rune::Cx<App>) -> rune::El {
+        crate::changes::render(&state.changes, state, &state.theme)
+    }
+
+    fn chat_row(id: &str, device: &str, cwd: Option<&str>) -> hearth_proto::Chat {
+        hearth_proto::Chat {
+            id: id.into(),
+            device_id: device.into(),
+            title: None,
+            archived: false,
+            cwd: cwd.map(str::to_owned),
+            branch: Some("main".into()),
+            checkout_id: Some("checkout".into()),
+            config: None,
+            last_message_preview: None,
+            last_message_at: None,
+            created_at: chrono::Utc::now(),
+            harness_session_id: None,
+            harness_session_cwd: None,
+            space_id: None,
+            last_seen_at: None,
+            room_gen: None,
+        }
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn diff_pane_lays_out_scrolled_and_wrapped_long_lines() {
+        let mut app = App::new(crate::UiConfig::default());
+        app.local_device_id = Some("local".into());
+        app.chats = vec![chat_row("c1", "local", Some("/repo"))];
+        app.selected_chat = Some("c1".into());
+        let env = ChangesEnv::capture(&app);
+        app.changes.env = Some(env);
+        app.changes.scope = DiffScope::WorkingTree;
+        app.changes.diffs = vec![diff("checkout", "local", "/repo", PATCH)];
+        let files = parse_patch(PATCH);
+        app.changes.materialize(ParsedDiff {
+            key: app
+                .changes
+                .current_parse_key()
+                .expect("the watch diff resolves"),
+            truncated: false,
+            additions: 0,
+            deletions: 0,
+            file_count: files.len(),
+            files: Arc::new(files),
+        });
+        assert!(!app.changes.rows.is_empty());
+
+        let mut rt = rune::Runtime::new(
+            app,
+            changes_test_view,
+            (1000.0, 700.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        rt.frame(1.0 / 60.0);
+        assert!(rt.find("app/changes/rows").is_some());
+        assert!(rt.find("app/changes/fh/0").is_some());
+
+        // Wrap mode: rows measure at their wrapped height instead of 21 px.
+        rt.state.changes.toggle_wrap();
+        rt.frame(2.0 / 60.0);
+        assert!(rt.state.changes.wrap);
+        assert!(rt.find("app/changes/rows").is_some());
     }
 
     #[test]

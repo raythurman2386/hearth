@@ -28,92 +28,62 @@ pub fn install(app: RuneApp<App>) -> RuneApp<App> {
 
 /// The Hearth menu items, in menu order. Call `.menu_item(item)` for each (or [`install`]).
 pub fn menu_items() -> Vec<NativeMenuItem<App>> {
-    let mut items = Vec::new();
-
-    // ---- File -------------------------------------------------------------
-    items.push(
+    vec![
+        // ---- File ---------------------------------------------------------
         NativeMenuItem::new("New Session", new_session)
             .id("hearth.new-session")
             .menu("File")
             .key_equivalent(shortcut("mod+n")),
-    );
-    items.push(
         NativeMenuItem::new("Settings…", open_settings)
             .id("hearth.settings")
             .menu("File")
             .key_equivalent(shortcut("mod+comma")),
-    );
-    items.push(NativeMenuItem::separator().menu("File"));
-    items.push(
+        NativeMenuItem::separator().menu("File"),
         NativeMenuItem::new("Close Window", close_window)
             .id("hearth.close-window")
             .menu("File")
             .key_equivalent(shortcut("mod+w")),
-    );
-    items.push(
         NativeMenuItem::new("Quit Hearth", quit)
             .id("hearth.quit")
             .menu("File")
             .key_equivalent(shortcut("mod+q")),
-    );
-
-    // ---- View -------------------------------------------------------------
-    items.push(
+        // ---- View ---------------------------------------------------------
         NativeMenuItem::new("Toggle Sidebar", toggle_sidebar)
             .id("hearth.toggle-sidebar")
             .menu("View")
             .key_equivalent(shortcut("mod+s")),
-    );
-    items.push(
         NativeMenuItem::new("Toggle Right Pane", toggle_right_pane)
             .id("hearth.toggle-right-pane")
             .menu("View")
             .key_equivalent(shortcut("mod+b")),
-    );
-    items.push(
         NativeMenuItem::new("Toggle Terminal", toggle_terminal)
             .id("hearth.toggle-terminal")
             .menu("View")
             .key_equivalent(shortcut("mod+j")),
-    );
-    items.push(NativeMenuItem::separator().menu("View"));
-    items.push(
+        NativeMenuItem::separator().menu("View"),
         NativeMenuItem::new("Appearance: System", appearance_system)
             .id("hearth.appearance-system")
             .menu("View"),
-    );
-    items.push(
         NativeMenuItem::new("Appearance: Light", appearance_light)
             .id("hearth.appearance-light")
             .menu("View"),
-    );
-    items.push(
         NativeMenuItem::new("Appearance: Dark", appearance_dark)
             .id("hearth.appearance-dark")
             .menu("View"),
-    );
-    items.push(NativeMenuItem::separator().menu("View"));
-    items.push(
+        NativeMenuItem::separator().menu("View"),
         NativeMenuItem::new("Enter Full Screen", toggle_full_screen)
             .id("hearth.full-screen")
             .menu("View")
             .key_equivalent(shortcut("ctrl+mod+f")),
-    );
-
-    // ---- Window -----------------------------------------------------------
-    items.push(
+        // ---- Window -------------------------------------------------------
         NativeMenuItem::new("Minimize", minimize)
             .id("hearth.minimize")
             .menu("Window")
             .key_equivalent(shortcut("mod+m")),
-    );
-    items.push(
         NativeMenuItem::new("Zoom", toggle_maximized)
             .id("hearth.zoom")
             .menu("Window"),
-    );
-
-    items
+    ]
 }
 
 /// Parse a menu accelerator. A typo is a programming error, caught by the tests.
@@ -166,6 +136,10 @@ fn toggle_terminal(app: &mut App, _: &mut Tx) {
 }
 
 fn set_appearance(app: &mut App, mode: AppearanceMode) {
+    // Persist the choice in the settings the async save clones: `set_mode`
+    // updates the appearance state, but a save from the stale `settings`
+    // snapshot would revert it on the next load.
+    app.settings.appearance = mode;
     if app.appearance.set_mode(mode) {
         app.refresh_theme();
     }

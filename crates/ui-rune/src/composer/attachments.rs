@@ -7,11 +7,11 @@
 //! encoded bytes (fed to `UploadChunk`) and thumbnails come from the module's
 //! [`rune::ImageCache`] (see [`thumbnail`]).
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -19,6 +19,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use hearth_proto::version_triple;
 use hearth_rpc::{RpcClient, methods};
 
+use crate::attachments::AttachmentSnapshot;
 use crate::theme::Theme;
 
 // ---------------------------------------------------------------------------
@@ -144,6 +145,46 @@ impl StagedAttachment {
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
+
+    /// The encoded bytes as a shared handle. Seeding the transcript cache is a
+    /// refcount bump, never another whole-file copy.
+    pub fn bytes_arc(&self) -> Arc<[u8]> {
+        Arc::clone(&self.bytes)
+    }
+}
+
+/// Files read off the UI thread and ready to stage (see [`stage_paths`]).
+#[derive(Debug, Default)]
+pub struct StagedFiles {
+    pub staged: Vec<StagedAttachment>,
+    /// One user-facing message per file that could not be read.
+    pub errors: Vec<String>,
+}
+
+/// Stage every supported path picked/dropped/pasted at once: unsupported
+/// extensions are skipped and unreadable files collect an error instead of
+/// aborting the batch.
+pub fn stage_paths(paths: &[PathBuf]) -> StagedFiles {
+    stage_paths_with(paths, stage_file)
+}
+
+/// [`stage_paths`] over an injected reader, so the multi-path policy is
+/// testable without touching the filesystem.
+pub fn stage_paths_with(
+    paths: &[PathBuf],
+    read: impl Fn(&Path) -> Result<StagedAttachment, String>,
+) -> StagedFiles {
+    let mut files = StagedFiles::default();
+    for path in paths {
+        if format_by_extension(path).is_none() {
+            continue;
+        }
+        match read(path) {
+            Ok(attachment) => files.staged.push(attachment),
+            Err(message) => files.errors.push(message),
+        }
+    }
+    files
 }
 
 /// Stage a file from disk (picker / drop / pasted path). `Err` carries the
@@ -423,35 +464,163 @@ pub fn user_message_rail_text(content: &str) -> String {
 // Post-send seed cache (transcript reads its own bubbles locally)
 // ---------------------------------------------------------------------------
 
+/// Upper bound on the bytes retained by the transcript seed cache. Seeded
+/// bytes duplicate what the composer's staged attachments already hold (the
+/// `Arc` is shared, so this is a conservative per-entry accounting), and the
+/// transcript decodes its own images — the seed only bridges the frames right
+/// after a send.
+const MAX_SEEDED_BYTES: usize = 64 * 1024 * 1024;
+/// Belt and braces: even tiny files can't grow the map without bound.
+const MAX_SEEDED_ENTRIES: usize = 32;
+
+/// How long a seed stays readable after the send that created it. A seed that
+/// nobody consumed within the budget is retired by the per-frame sweep.
+pub const SEED_TTL: Duration = Duration::from_secs(20);
+/// Minimum spacing between sweeps: the sweep reads the transcript's image
+/// cache, which is too much work for every idle frame.
+const SEED_SWEEP_INTERVAL: Duration = Duration::from_secs(2);
+
 /// Local bytes seeded for a `(device, path)` so the transcript can show the
 /// sender's own attachment without a round-trip.
-#[derive(Clone)]
 struct Seeded {
     name: String,
     bytes: Arc<[u8]>,
+    last_used: Instant,
 }
 
-static SEEDED: OnceLock<Mutex<HashMap<(String, String), Seeded>>> = OnceLock::new();
+/// Bounded, recency-ordered seed store (the shape of [`crate::syntax_cache`]).
+#[derive(Default)]
+struct SeedCache {
+    entries: HashMap<(String, String), Seeded>,
+    recency: VecDeque<(String, String)>,
+    retained_bytes: usize,
+    last_sweep: Option<Instant>,
+}
 
-fn seeded() -> &'static Mutex<HashMap<(String, String), Seeded>> {
-    SEEDED.get_or_init(|| Mutex::new(HashMap::new()))
+impl SeedCache {
+    /// Insert (or replace) a seed; returns false when a single file exceeds the
+    /// whole budget, in which case nothing is retained.
+    fn insert(&mut self, device_id: &str, path: &str, name: &str, bytes: Arc<[u8]>) -> bool {
+        let key = (device_id.to_string(), path.to_string());
+        if let Some(previous) = self.entries.remove(&key) {
+            self.retained_bytes = self.retained_bytes.saturating_sub(previous.bytes.len());
+            self.recency.retain(|candidate| *candidate != key);
+        }
+        let len = bytes.len();
+        if len > MAX_SEEDED_BYTES {
+            return false;
+        }
+        self.retained_bytes = self.retained_bytes.saturating_add(len);
+        self.entries.insert(
+            key.clone(),
+            Seeded {
+                name: name.to_string(),
+                bytes,
+                last_used: Instant::now(),
+            },
+        );
+        self.recency.push_back(key.clone());
+        while self.entries.len() > MAX_SEEDED_ENTRIES || self.retained_bytes > MAX_SEEDED_BYTES {
+            let Some(oldest) = self.recency.pop_front() else {
+                break;
+            };
+            if let Some(removed) = self.entries.remove(&oldest) {
+                self.retained_bytes = self.retained_bytes.saturating_sub(removed.bytes.len());
+            }
+        }
+        self.entries.contains_key(&key)
+    }
+
+    fn get(&mut self, device_id: &str, path: &str) -> Option<(String, Arc<[u8]>)> {
+        let key = (device_id.to_string(), path.to_string());
+        let entry = self.entries.get_mut(&key)?;
+        entry.last_used = Instant::now();
+        let value = (entry.name.clone(), entry.bytes.clone());
+        self.recency.retain(|candidate| *candidate != key);
+        self.recency.push_back(key);
+        Some(value)
+    }
+
+    fn remove(&mut self, device_id: &str, path: &str) -> bool {
+        let key = (device_id.to_string(), path.to_string());
+        let Some(removed) = self.entries.remove(&key) else {
+            return false;
+        };
+        self.retained_bytes = self.retained_bytes.saturating_sub(removed.bytes.len());
+        self.recency.retain(|candidate| *candidate != key);
+        true
+    }
+
+    /// Drop every seed untouched since `cutoff`; returns how many went.
+    fn prune_before(&mut self, cutoff: Instant) -> usize {
+        let expired: Vec<(String, String)> = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| entry.last_used <= cutoff)
+            .map(|(key, _)| key.clone())
+            .collect();
+        let count = expired.len();
+        for key in expired {
+            self.remove(&key.0, &key.1);
+        }
+        count
+    }
+
+    /// Periodic sweep: drop seeds whose transcript thumbnail already resolved
+    /// (the decoded image is authoritative now) and seeds past [`SEED_TTL`].
+    /// Rate-limited so an idle app does not crawl the transcript cache.
+    fn sweep(&mut self, now: Instant) -> usize {
+        if self
+            .last_sweep
+            .is_some_and(|at| now.duration_since(at) < SEED_SWEEP_INTERVAL)
+        {
+            return 0;
+        }
+        self.last_sweep = Some(now);
+        let resolved: Vec<(String, String)> = self
+            .entries
+            .keys()
+            .filter(|(device, path)| {
+                matches!(
+                    crate::attachments::attachment_snapshot(device, path),
+                    AttachmentSnapshot::Loaded(_)
+                )
+            })
+            .cloned()
+            .collect();
+        let count = resolved.len();
+        for (device, path) in resolved {
+            self.remove(&device, &path);
+        }
+        let cutoff = now.checked_sub(SEED_TTL).unwrap_or(now);
+        count + self.prune_before(cutoff)
+    }
+}
+
+static SEEDED: OnceLock<Mutex<SeedCache>> = OnceLock::new();
+
+fn seeded() -> &'static Mutex<SeedCache> {
+    SEEDED.get_or_init(|| Mutex::new(SeedCache::default()))
+}
+
+/// The seed path an upload alias rewrites to on the host
+/// (`{uploads}/{id8}-{name}`).
+pub fn alias_path(upload_id: &str, name: &str) -> String {
+    let id8: String = upload_id.chars().take(8).collect();
+    format!("{id8}-{name}")
 }
 
 /// Seed the transcript's attachment cache with the bytes already in memory.
 pub fn seed_attachment(device_id: &str, path: &str, name: &str, bytes: Arc<[u8]>) {
-    seeded().lock().unwrap_or_else(|e| e.into_inner()).insert(
-        (device_id.to_string(), path.to_string()),
-        Seeded {
-            name: name.to_string(),
-            bytes,
-        },
-    );
+    seeded()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(device_id, path, name, bytes);
 }
 
 /// Seed under an upload alias (`{uploads}/{id8}-{name}` rewrites on the host).
 pub fn seed_attachment_alias(device_id: &str, upload_id: &str, name: &str, bytes: Arc<[u8]>) {
-    let id8: String = upload_id.chars().take(8).collect();
-    seed_attachment(device_id, &format!("{id8}-{name}"), name, bytes);
+    seed_attachment(device_id, &alias_path(upload_id, name), name, bytes);
 }
 
 /// `(name, bytes)` for a seeded source, if this process staged it.
@@ -459,8 +628,37 @@ pub fn seeded_attachment(device_id: &str, path: &str) -> Option<(String, Arc<[u8
     seeded()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .get(&(device_id.to_string(), path.to_string()))
-        .map(|s| (s.name.clone(), s.bytes.clone()))
+        .get(device_id, path)
+}
+
+/// Forget a seed once its send resolved (success or permanent failure) — the
+/// transcript either has its own decoded copy or the bubble is gone.
+pub fn forget_seeded(device_id: &str, path: &str) {
+    seeded()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(device_id, path);
+}
+
+/// Retire seeds the transcript no longer needs: its thumbnail resolved, or
+/// [`SEED_TTL`] elapsed. Called from the composer's per-frame poll (rate
+/// limited internally); returns how many were dropped.
+pub fn prune_seeded() -> usize {
+    seeded()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .sweep(Instant::now())
+}
+
+/// Test-only construction without touching the filesystem.
+#[cfg(test)]
+pub(crate) fn staged_for_test(id: &str, bytes: &[u8]) -> StagedAttachment {
+    StagedAttachment {
+        id: id.to_string(),
+        name: format!("{id}.png"),
+        format: ImageFormat::Png,
+        bytes: Arc::from(bytes.to_vec()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -854,6 +1052,129 @@ mod tests {
     fn attachment_deadline_scales_and_caps() {
         assert_eq!(attachment_deadline(1), Duration::from_secs(135));
         assert_eq!(attachment_deadline(1_000), Duration::from_secs(900));
+    }
+
+    #[test]
+    fn multi_path_staging_keeps_every_supported_file() {
+        let paths = vec![
+            PathBuf::from("/pick/one.png"),
+            PathBuf::from("/pick/two.jpg"),
+            PathBuf::from("/pick/notes.txt"),
+            PathBuf::from("/pick/bad.png"),
+        ];
+        let out = stage_paths_with(&paths, |path| {
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if name == "bad.png" {
+                Err("bad.png could not be read.".to_string())
+            } else {
+                let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+                Ok(staged_for_test(&stem, name.as_bytes()))
+            }
+        });
+        assert_eq!(out.staged.len(), 2, "both supported files stage");
+        assert_eq!(out.staged[0].id, "one");
+        assert_eq!(out.staged[1].id, "two");
+        assert_eq!(out.errors, vec!["bad.png could not be read.".to_string()]);
+        // Unsupported paths never reach the reader.
+        assert!(
+            stage_paths_with(&[PathBuf::from("/pick/notes.txt")], |_| {
+                panic!("unsupported extensions must be skipped")
+            })
+            .staged
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn seed_cache_is_bounded_and_evicts_the_oldest() {
+        let mut cache = SeedCache::default();
+        let half = Arc::<[u8]>::from(vec![0u8; MAX_SEEDED_BYTES / 2]);
+        assert!(cache.insert("dev", "a", "a.png", half.clone()));
+        assert!(cache.insert("dev", "b", "b.png", half.clone()));
+        assert_eq!(cache.entries.len(), 2);
+        // A third half-budget file evicts the oldest until the budget holds.
+        assert!(cache.insert("dev", "c", "c.png", half.clone()));
+        assert!(cache.get("dev", "a").is_none(), "oldest seed evicted");
+        assert!(cache.get("dev", "c").is_some());
+        assert!(cache.retained_bytes <= MAX_SEEDED_BYTES);
+        // A file larger than the whole budget is refused outright.
+        let too_big = Arc::<[u8]>::from(vec![0u8; MAX_SEEDED_BYTES + 1]);
+        assert!(!cache.insert("dev", "big", "big.png", too_big));
+        assert!(cache.get("dev", "big").is_none());
+    }
+
+    #[test]
+    fn seed_cache_entry_count_is_bounded() {
+        let mut cache = SeedCache::default();
+        let tiny = Arc::<[u8]>::from(vec![0u8; 8]);
+        for ix in 0..(MAX_SEEDED_ENTRIES + 8) {
+            let path = format!("{ix}.png");
+            assert!(cache.insert("dev", &path, &path, tiny.clone()));
+        }
+        assert_eq!(cache.entries.len(), MAX_SEEDED_ENTRIES);
+        assert!(cache.get("dev", "0.png").is_none(), "oldest evicted");
+        let newest = format!("{}.png", MAX_SEEDED_ENTRIES + 7);
+        assert!(cache.get("dev", &newest).is_some());
+    }
+
+    #[test]
+    fn seed_cache_prunes_after_the_frame_budget() {
+        let mut cache = SeedCache::default();
+        assert!(cache.insert("dev", "a.png", "a.png", Arc::from(vec![0u8; 4])));
+        let fresh_cutoff = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .unwrap_or_else(Instant::now);
+        assert_eq!(cache.prune_before(fresh_cutoff), 0);
+        assert!(cache.get("dev", "a.png").is_some());
+        assert_eq!(cache.prune_before(Instant::now()), 1);
+        assert!(cache.get("dev", "a.png").is_none());
+        assert_eq!(cache.retained_bytes, 0);
+    }
+
+    #[test]
+    fn sweep_drops_seeds_once_the_transcript_thumbnail_resolved() {
+        let mut cache = SeedCache::default();
+        assert!(cache.insert(
+            "sweep-dev",
+            "resolved.png",
+            "resolved.png",
+            Arc::from(vec![0u8; 4])
+        ));
+        let attachment = staged_for_test("resolved", b"not-an-image");
+        crate::attachments::store_loaded(
+            "sweep-dev",
+            "resolved.png",
+            "resolved.png",
+            Arc::new(thumbnail(&attachment)),
+        );
+        assert_eq!(cache.sweep(Instant::now()), 1);
+        assert!(cache.get("sweep-dev", "resolved.png").is_none());
+        // The sweep is rate limited: a second call inside the window is free.
+        assert!(cache.insert(
+            "sweep-dev",
+            "later.png",
+            "later.png",
+            Arc::from(vec![0u8; 4])
+        ));
+        assert_eq!(cache.sweep(Instant::now()), 0);
+    }
+
+    #[test]
+    fn forgetting_a_seed_releases_its_bytes() {
+        let mut cache = SeedCache::default();
+        assert!(cache.insert("dev", "a.png", "a.png", Arc::from(vec![0u8; 16])));
+        assert_eq!(cache.retained_bytes, 16);
+        assert!(cache.remove("dev", "a.png"));
+        assert_eq!(cache.retained_bytes, 0);
+        assert!(!cache.remove("dev", "a.png"));
+    }
+
+    #[test]
+    fn bytes_arc_shares_the_staged_buffer() {
+        let attachment = staged_for_test("shared", b"bytes");
+        let shared = attachment.bytes_arc();
+        assert!(std::ptr::eq(shared.as_ptr(), attachment.bytes().as_ptr()));
+        assert_eq!(&*shared, b"bytes");
     }
 
     #[test]

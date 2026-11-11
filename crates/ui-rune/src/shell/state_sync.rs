@@ -22,6 +22,9 @@ pub fn poll(app: &mut App) -> bool {
     changed |= prune_surface_tabs(app);
     changed |= heal_space_filter(app);
     changed |= splash(app);
+    // Chimes and banners change no visible state; the detector still advances
+    // its baseline every poll.
+    notify_transitions(app);
     changed
 }
 
@@ -201,6 +204,82 @@ fn splash(app: &mut App) -> bool {
     }
 }
 
+/// Whether a desktop banner may post, given the settings and window focus. Focus is
+/// app-level: a ping for a *background chat* in a focused app is a chime, not a banner
+/// (the sidebar dot carries the rest).
+pub fn banner_allowed(
+    notifications_enabled: bool,
+    background_only: bool,
+    window_focused: bool,
+) -> bool {
+    notifications_enabled && !(background_only && window_focused)
+}
+
+/// Session chimes and desktop banners on status edges (hearth's `on_state_changed`
+/// detector): a question rings whenever a session flips to AwaitingInput, a completion
+/// rings on the Working→Idle edge — for ANY session on any device. A row's first
+/// appearance only seeds the baseline, so boot (restored rows) and fresh sends stay
+/// silent.
+///
+/// Staleness-gated like the sidebar dot (`effective_indicator`), so a dead turn's stale
+/// Working row can't ring "done" when the old Idle finally syncs in. The done chime is
+/// also send-pending-gated: a queued command that the host hasn't executed yet must not
+/// ring completion; the question chime is NOT gated (an instant AwaitingInput ack should
+/// still ring).
+fn notify_transitions(app: &mut App) {
+    use crate::sound::{Sound, sound_for_transition};
+    use hearth_proto::SessionStatus;
+
+    let now = Utc::now();
+    let live: Vec<String> = app.sessions.iter().map(|s| s.chat_id.clone()).collect();
+    let mut pings: Vec<(String, SessionStatus, bool, Option<String>)> = Vec::new();
+    for session in &app.sessions {
+        let status = match crate::state::effective_indicator(Some(session), now) {
+            crate::state::Indicator::Working => SessionStatus::Working,
+            crate::state::Indicator::AwaitingInput => SessionStatus::AwaitingInput,
+            crate::state::Indicator::Errored => SessionStatus::Errored,
+            crate::state::Indicator::None => SessionStatus::Idle,
+        };
+        let chat_id = session.chat_id.clone();
+        let send_pending = app.send_pending(&chat_id, now);
+        let title = app
+            .chats
+            .iter()
+            .find(|chat| chat.id == chat_id)
+            .and_then(|chat| chat.title.clone());
+        pings.push((chat_id, status, send_pending, title));
+    }
+    // Drop baselines for sessions that went away (chat deleted, device removed).
+    app.shell.sound_prev.retain(|id, _| live.contains(id));
+
+    for (chat_id, status, send_pending, title) in pings {
+        let Some(prev) = app.shell.sound_prev.insert(chat_id, status) else {
+            continue;
+        };
+        let Some(sound) = sound_for_transition(prev, status) else {
+            continue;
+        };
+        if send_pending && sound == Sound::Done {
+            continue;
+        }
+        if app.settings.sound_enabled {
+            crate::sound::play(sound);
+        }
+        if banner_allowed(
+            app.settings.notifications_enabled,
+            app.settings.notifications_background_only,
+            app.shell.window_focused,
+        ) {
+            let title = title.unwrap_or_else(|| "New session".to_string());
+            let body = match sound {
+                Sound::Done => "Run finished",
+                Sound::Request => "Waiting on your input",
+            };
+            crate::notify::post(&title, body);
+        }
+    }
+}
+
 /// Heal a dangling space filter (space deleted, possibly elsewhere).
 pub fn heal_space_filter(app: &mut App) -> bool {
     if app.spaces_synced
@@ -234,5 +313,18 @@ mod tests {
         assert_ne!(SplashPhase::Visible, SplashPhase::FadingOut);
         assert_ne!(SplashPhase::FadingOut, SplashPhase::Gone);
         assert_eq!(SplashPhase::Gone, SplashPhase::Gone);
+    }
+
+    #[test]
+    fn banners_follow_settings_and_focus() {
+        // Off entirely.
+        assert!(!banner_allowed(false, false, false));
+        assert!(!banner_allowed(false, true, false));
+        // Always (not background-only): focus does not matter.
+        assert!(banner_allowed(true, false, true));
+        assert!(banner_allowed(true, false, false));
+        // Background-only: silent while the window is focused.
+        assert!(!banner_allowed(true, true, true));
+        assert!(banner_allowed(true, true, false));
     }
 }

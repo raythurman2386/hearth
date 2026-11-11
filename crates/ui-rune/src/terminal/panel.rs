@@ -345,6 +345,18 @@ struct SelectionDrag {
     armed: bool,
 }
 
+/// A pointer move during a grid selection drag: where the pointer is, where the
+/// press landed, and the drag's total travel.
+#[derive(Debug, Clone, Copy)]
+pub struct PointerMotion {
+    pub x: f32,
+    pub y: f32,
+    pub start_x: f32,
+    pub start_y: f32,
+    pub dx: f32,
+    pub dy: f32,
+}
+
 /// The terminal sub-state.
 pub struct TerminalState {
     tx: Sender<TerminalMsg>,
@@ -642,14 +654,15 @@ impl TerminalState {
     // ---- grid metrics ----
 
     /// Called from the grid's `on_layout`. Resizes the emulator immediately; the
-    /// `ResizeTerminal` RPC debounces [`RESIZE_DEBOUNCE_MS`].
+    /// `ResizeTerminal` RPC debounces [`RESIZE_DEBOUNCE_MS`]. Returns true when
+    /// this call newly armed the debounce (the caller should `wake_after` it).
     pub fn on_grid_metrics(
         &mut self,
         bounds: [f32; 4],
         cell_w: f32,
         line_h: f32,
         chat: Option<&str>,
-    ) {
+    ) -> bool {
         let usable = cell_w.is_finite() && cell_w > 0.0 && line_h.is_finite() && line_h > 0.0;
         let (cols, rows) = if usable {
             let inner_w = bounds[2] - 2.0 * TERM_PADDING;
@@ -670,19 +683,21 @@ impl TerminalState {
             rows,
         });
         if self.resize_suspended {
-            return;
+            return false;
         }
-        let Some(chat) = chat else { return };
+        let Some(chat) = chat else { return false };
         let Some(tab) = self.active_tab_mut(chat) else {
-            return;
+            return false;
         };
         if tab.emulator.cols() == cols as usize && tab.emulator.rows() == rows as usize {
-            return;
+            return false;
         }
         tab.emulator.resize(cols, rows);
-        if tab.resize_due.is_none() {
+        let armed = tab.resize_due.is_none();
+        if armed {
             tab.resize_due = Some(Instant::now());
         }
+        armed
     }
 
     // ---- frames from the background task ----
@@ -696,6 +711,30 @@ impl TerminalState {
         }
         self.flush_due(Instant::now());
         changed
+    }
+
+    /// How long until the next coalesced input flush or debounced resize is
+    /// due. `App::poll` schedules it with `tx.wake_after` so Rune wakes from
+    /// rest and [`Self::poll`] can fire the timer; `None` when at rest.
+    pub fn next_wake(&self) -> Option<Duration> {
+        let now = Instant::now();
+        let mut next: Option<Duration> = None;
+        let mut consider = |at: Instant, window_ms: u64| {
+            let due =
+                Duration::from_millis(window_ms).saturating_sub(now.saturating_duration_since(at));
+            next = Some(next.map_or(due, |current: Duration| current.min(due)));
+        };
+        for tabs in self.chats.values() {
+            for tab in &tabs.tabs {
+                if let Some(at) = tab.pending_input_at {
+                    consider(at, COALESCE_MS);
+                }
+                if let Some(at) = tab.resize_due {
+                    consider(at, RESIZE_DEBOUNCE_MS);
+                }
+            }
+        }
+        next
     }
 
     fn apply_msg(&mut self, msg: TerminalMsg) -> bool {
@@ -789,39 +828,39 @@ impl TerminalState {
         let mut resizes: Vec<(String, Option<String>, u16, u16)> = Vec::new();
         for tabs in self.chats.values_mut() {
             for tab in &mut tabs.tabs {
-                if let Some(since) = tab.pending_input_at {
-                    if now.duration_since(since) >= Duration::from_millis(COALESCE_MS) {
-                        tab.pending_input_at = None;
-                        let bytes = tab.coalescer.take();
-                        if !bytes.is_empty() {
-                            match &tab.terminal_id {
-                                Some(id) => {
-                                    writes.push((id.clone(), tab.target.clone(), bytes));
-                                }
-                                None if tab.exited.is_none() => {
-                                    // OpenTerminal still in flight — keep the
-                                    // buffer and retry on the next tick.
-                                    tab.coalescer.push(&bytes);
-                                    tab.pending_input_at = Some(now);
-                                }
-                                None => {}
+                if let Some(since) = tab.pending_input_at
+                    && now.duration_since(since) >= Duration::from_millis(COALESCE_MS)
+                {
+                    tab.pending_input_at = None;
+                    let bytes = tab.coalescer.take();
+                    if !bytes.is_empty() {
+                        match &tab.terminal_id {
+                            Some(id) => {
+                                writes.push((id.clone(), tab.target.clone(), bytes));
                             }
+                            None if tab.exited.is_none() => {
+                                // OpenTerminal still in flight — keep the
+                                // buffer and retry on the next tick.
+                                tab.coalescer.push(&bytes);
+                                tab.pending_input_at = Some(now);
+                            }
+                            None => {}
                         }
                     }
                 }
-                if let Some(due) = tab.resize_due {
-                    if now.duration_since(due) >= Duration::from_millis(RESIZE_DEBOUNCE_MS) {
-                        tab.resize_due = None;
-                        if let Some(id) = &tab.terminal_id
-                            && tab.exited.is_none()
-                        {
-                            resizes.push((
-                                id.clone(),
-                                tab.target.clone(),
-                                tab.emulator.cols() as u16,
-                                tab.emulator.rows() as u16,
-                            ));
-                        }
+                if let Some(due) = tab.resize_due
+                    && now.duration_since(due) >= Duration::from_millis(RESIZE_DEBOUNCE_MS)
+                {
+                    tab.resize_due = None;
+                    if let Some(id) = &tab.terminal_id
+                        && tab.exited.is_none()
+                    {
+                        resizes.push((
+                            id.clone(),
+                            tab.target.clone(),
+                            tab.emulator.cols() as u16,
+                            tab.emulator.rows() as u16,
+                        ));
                     }
                 }
             }
@@ -852,12 +891,14 @@ impl TerminalState {
     // ---- input ----
 
     /// Queue keyboard bytes on the active tab (12 ms coalescing window).
-    pub fn queue_input(&mut self, chat: &str, bytes: &[u8]) {
+    /// Returns true when this push armed the flush timer; the caller then asks
+    /// Rune to wake after [`COALESCE_MS`].
+    pub fn queue_input(&mut self, chat: &str, bytes: &[u8]) -> bool {
         let Some(tab) = self.active_tab_mut(chat) else {
-            return;
+            return false;
         };
         if tab.exited.is_some() {
-            return;
+            return false;
         }
         // A keypress while scrolled back snaps to the live bottom (xterm).
         if tab.emulator.display_offset() > 0 {
@@ -865,17 +906,21 @@ impl TerminalState {
         }
         if tab.coalescer.push(bytes) {
             tab.pending_input_at = Some(Instant::now());
+            true
+        } else {
+            false
         }
     }
 
     /// Paste into the active tab, bracketed per the running program's mode.
-    pub fn paste(&mut self, chat: &str, text: &str) {
+    /// Returns true when this paste armed the coalescer flush timer.
+    pub fn paste(&mut self, chat: &str, text: &str) -> bool {
         let bracketed = self
             .active_tab(chat)
             .map(|tab| tab.emulator.bracketed_paste_mode())
             .unwrap_or(false);
         let bytes = paste_bytes(text, bracketed);
-        self.queue_input(chat, &bytes);
+        self.queue_input(chat, &bytes)
     }
 
     /// Copy the active tab's selection. Returns whether anything was copied.
@@ -938,27 +983,19 @@ impl TerminalState {
         }
     }
 
-    pub fn pointer_move(
-        &mut self,
-        chat: &str,
-        x: f32,
-        y: f32,
-        start_x: f32,
-        start_y: f32,
-        dx: f32,
-        dy: f32,
-    ) {
+    pub fn pointer_move(&mut self, chat: &str, motion: PointerMotion) {
         let Some(mut drag) = self.selection_drag else {
             return;
         };
-        drag.position = (x, y);
+        drag.position = (motion.x, motion.y);
         self.selection_drag = Some(drag);
         if !drag.armed {
-            if dx.hypot(dy) < SELECTION_DRAG_THRESHOLD {
+            if motion.dx.hypot(motion.dy) < SELECTION_DRAG_THRESHOLD {
                 return;
             }
             // Threshold tripped: anchor at the *press*, not here.
-            let Some((anchor, side)) = self.grid_point_at(chat, start_x, start_y) else {
+            let Some((anchor, side)) = self.grid_point_at(chat, motion.start_x, motion.start_y)
+            else {
                 return;
             };
             self.with_emulator(chat, |emu| {
@@ -968,7 +1005,7 @@ impl TerminalState {
                 drag.armed = true;
             }
         }
-        let Some((point, side)) = self.grid_point_at(chat, x, y) else {
+        let Some((point, side)) = self.grid_point_at(chat, motion.x, motion.y) else {
             return;
         };
         self.with_emulator(chat, |emu| emu.update_selection(point, side));
@@ -1346,15 +1383,40 @@ pub fn close_tab_by_key(app: &mut App, key: u64) {
     close_tab_action(app, &chat, key);
 }
 
+/// Close every terminal tab of `chat`, whether or not it is the selected chat
+/// (chat deletion must not leak PTYs). Each tab sends `CloseTerminal` with the
+/// device target it was opened against, then drops its emulator and stream.
+pub fn close_chat_tabs(app: &mut App, chat: &str) {
+    let Some(tabs) = app.terminal.chats.get(chat) else {
+        return;
+    };
+    let entries: Vec<(u64, Option<String>)> =
+        tabs.tabs.iter().map(|tab| (tab.key, tab.target.clone())).collect();
+    let engine = app.engine.clone();
+    let bridge = Some(app.bridge.clone());
+    for (key, target) in entries {
+        app.terminal
+            .close_tab(chat, key, engine.clone(), bridge.clone(), target);
+    }
+    // close_tab drops the entry with its last tab; also clear a tab-less entry.
+    app.terminal.chats.remove(chat);
+    app.terminal.drag = None;
+    let selected = app.selected_chat.as_deref() == Some(chat);
+    if selected && !app.terminal.embedded {
+        let drawer_open = app.terminal.open || app.shell.panels.get(chat).terminal_open;
+        if drawer_open {
+            hide_drawer(app, chat);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Input handling
 // ---------------------------------------------------------------------------
 
-/// Keys for the focused grid. Returns true when the PTY took the key.
-fn handle_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
-    let Some(chat) = app.selected_chat.clone() else {
-        return false;
-    };
+/// Keys for a grid showing `chat` (embedded surfaces may show a chat that is
+/// not the selected one). Returns true when the PTY took the key.
+fn handle_key_for(app: &mut App, chat: &str, ev: &KeyEvent, tx: &mut Tx) -> bool {
     // The app-level terminal toggle (Ctrl+J off macOS, Cmd+J on macOS) belongs
     // to the shell's keymap; Ctrl+J must not be swallowed as a raw LF here.
     if !cfg!(target_os = "macos")
@@ -1372,13 +1434,11 @@ fn handle_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     {
         match c.to_ascii_lowercase() {
             'v' => {
-                tx.read_clipboard(|app: &mut App, content, _tx| {
+                let chat = chat.to_string();
+                tx.read_clipboard(move |app: &mut App, content, tx: &mut Tx| {
                     let text = content.text();
-                    if !text.is_empty() {
-                        let Some(chat) = app.selected_chat.clone() else {
-                            return;
-                        };
-                        app.terminal.paste(&chat, text);
+                    if !text.is_empty() && app.terminal.paste(&chat, text) {
+                        tx.wake_after(Duration::from_millis(COALESCE_MS));
                     }
                 });
                 return true;
@@ -1386,18 +1446,20 @@ fn handle_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
             'c' => {
                 // Only swallowed when it actually copied, so Ctrl+Shift+C with
                 // nothing selected still falls through to the interrupt.
-                return app.terminal.copy_active(&chat, tx);
+                return app.terminal.copy_active(chat, tx);
             }
             _ => {}
         }
     }
     let app_cursor = app
         .terminal
-        .active_tab(&chat)
+        .active_tab(chat)
         .map(|tab| tab.emulator.app_cursor_mode())
         .unwrap_or(false);
     if let Some(bytes) = key_event_bytes(ev, app_cursor) {
-        app.terminal.queue_input(&chat, &bytes);
+        if app.terminal.queue_input(chat, &bytes) {
+            tx.wake_after(Duration::from_millis(COALESCE_MS));
+        }
         return true;
     }
     false
@@ -1437,6 +1499,42 @@ pub fn render_embedded(state: &TerminalState, app: &App, theme: &Theme) -> El {
                 .font(rune::TextStyle::new(12.0, 400.0))
                 .color(theme.text_faint),
         ),
+    }
+}
+
+/// The right-pane surface for an explicit surface tab: renders that tab's grid
+/// even when the active index has not caught up yet. `key` is the tab key the
+/// shell stores in `RightSurface::Terminal(key)`.
+pub fn render_embedded_key(state: &TerminalState, app: &App, theme: &Theme, key: u64) -> El {
+    let root = rune::col().w_full().h_full().min_h(0.0);
+    let chat = chat_for_tab(state, key)
+        .map(str::to_owned)
+        .or_else(|| app.selected_chat.clone());
+    match chat {
+        Some(chat) => root.child(grid_body_key(state, theme, &chat, Some(key))),
+        None => root.center().child(
+            text("Select a chat to open a terminal")
+                .font(rune::TextStyle::new(12.0, 400.0))
+                .color(theme.text_faint),
+        ),
+    }
+}
+
+/// The chat owning tab `key` (tab keys are unique across chats).
+fn chat_for_tab(state: &TerminalState, key: u64) -> Option<&str> {
+    state
+        .chats
+        .iter()
+        .find(|(_, tabs)| tabs.tabs.iter().any(|tab| tab.key == key))
+        .map(|(chat, _)| chat.as_str())
+}
+
+/// Point the state's active index at the grid's tab before a pointer or key
+/// action, so a surface that renders a keyed tab not yet selected still types
+/// into the tab it shows.
+fn focus_tab(app: &mut App, chat: &str, key: Option<u64>) {
+    if let Some(key) = key {
+        app.terminal.select_tab_by_key(chat, key);
     }
 }
 
@@ -1610,11 +1708,26 @@ fn tab_button(
 }
 
 fn grid_body(state: &TerminalState, theme: &Theme, chat: &str) -> El {
+    grid_body_key(state, theme, chat, None)
+}
+
+fn grid_body_key(
+    state: &TerminalState,
+    theme: &Theme,
+    chat: &str,
+    key: Option<u64>,
+) -> El {
     let style = term_style(theme);
     let cell_w = cell_width(style);
     let line_h = TERM_LINE_HEIGHT;
 
-    let tab = state.active_tab(chat);
+    let tab = match key {
+        Some(key) => state
+            .chats
+            .get(chat)
+            .and_then(|tabs| tabs.tabs.iter().find(|tab| tab.key == key)),
+        None => state.active_tab(chat),
+    };
     let rows: Vec<Vec<CellSnapshot>> = tab.map(|t| t.emulator.lines()).unwrap_or_default();
     let cursor = tab.and_then(|t| t.emulator.cursor());
     let history = tab.map(|t| t.emulator.history_lines()).unwrap_or(0);
@@ -1625,6 +1738,8 @@ fn grid_body(state: &TerminalState, theme: &Theme, chat: &str) -> El {
     let chat_key = chat.to_string();
     let chat_wheel = chat.to_string();
     let chat_scroll = chat.to_string();
+    let chat_layout = chat.to_string();
+    let chat_focus = chat.to_string();
 
     let mut body = rune::col()
         .key("terminal-body")
@@ -1635,15 +1750,19 @@ fn grid_body(state: &TerminalState, theme: &Theme, chat: &str) -> El {
         .clip_rounded(0.0)
         .focusable(true)
         .tab_index(-1)
-        .on_layout(move |app: &mut App, rect: [f32; 4]| {
-            app.terminal.on_grid_metrics(
-                rect,
-                cell_w,
-                line_h,
-                app.selected_chat.as_deref(),
-            );
+        .on_layout_tx(move |app: &mut App, rect: [f32; 4], tx: &mut Tx| {
+            focus_tab(app, &chat_layout, key);
+            if app
+                .terminal
+                .on_grid_metrics(rect, cell_w, line_h, Some(&chat_layout))
+            {
+                tx.wake_after(Duration::from_millis(RESIZE_DEBOUNCE_MS));
+            }
         })
-        .on_key(|app: &mut App, ev: &KeyEvent, tx: &mut Tx| handle_key(app, ev, tx))
+        .on_key(move |app: &mut App, ev: &KeyEvent, tx: &mut Tx| {
+            focus_tab(app, &chat_key, key);
+            handle_key_for(app, &chat_key, ev, tx)
+        })
         .on_hover_change(|app: &mut App, inside: bool, _tx: &mut Tx| {
             app.terminal.terminal_hovered = inside;
             if !inside {
@@ -1651,24 +1770,30 @@ fn grid_body(state: &TerminalState, theme: &Theme, chat: &str) -> El {
             }
         })
         .on_wheel(move |app: &mut App, ev: WheelEvent, _tx: &mut Tx| -> bool {
+            focus_tab(app, &chat_wheel, key);
             app.terminal.wheel(&chat_wheel, ev.dy);
             true
         })
-        .on_drag(move |app: &mut App, drag: &mut Drag, _tx: &mut Tx| match drag.phase {
-            Phase::Down => {
-                app.terminal
-                    .pointer_down(&chat_owned, drag.x, drag.y, drag.clicks)
+        .on_drag(move |app: &mut App, drag: &mut Drag, _tx: &mut Tx| {
+            focus_tab(app, &chat_focus, key);
+            match drag.phase {
+                Phase::Down => {
+                    app.terminal
+                        .pointer_down(&chat_owned, drag.x, drag.y, drag.clicks)
+                }
+                Phase::Move => app.terminal.pointer_move(
+                    &chat_focus,
+                    PointerMotion {
+                        x: drag.x,
+                        y: drag.y,
+                        start_x: drag.start_x,
+                        start_y: drag.start_y,
+                        dx: drag.dx,
+                        dy: drag.dy,
+                    },
+                ),
+                Phase::Up => app.terminal.pointer_up(),
             }
-            Phase::Move => app.terminal.pointer_move(
-                &chat_key,
-                drag.x,
-                drag.y,
-                drag.start_x,
-                drag.start_y,
-                drag.dx,
-                drag.dy,
-            ),
-            Phase::Up => app.terminal.pointer_up(),
         });
 
     if rows.is_empty() {
@@ -1707,6 +1832,7 @@ fn grid_body(state: &TerminalState, theme: &Theme, chat: &str) -> El {
                     app.terminal.scrollbar_hovered = inside;
                 })
                 .on_drag(move |app: &mut App, drag: &mut Drag, _tx: &mut Tx| {
+                    focus_tab(app, &chat_scroll, key);
                     app.terminal.scrollbar_drag(&chat_scroll, drag.phase, drag.y);
                 })
                 .child(
@@ -2088,12 +2214,20 @@ mod render_tests {
         render_embedded(&app.terminal, app, &app.theme)
     }
 
+    fn keyed_view(app: &App, _cx: &mut rune::Cx<App>) -> El {
+        render_embedded_key(&app.terminal, app, &app.theme, 2)
+    }
+
     fn test_tab() -> TerminalTab {
+        test_tab_with_key(1)
+    }
+
+    fn test_tab_with_key(key: u64) -> TerminalTab {
         let mut emulator = Emulator::new(20, 5);
-        emulator.feed(b"\x1b[32mhearth\x1b[0m $ ok");
+        emulator.feed(format!("tab-{key} $ ok").as_bytes());
         TerminalTab {
-            key: 1,
-            title: "Terminal 1".into(),
+            key,
+            title: format!("Terminal {key}"),
             terminal_id: None,
             emulator,
             exited: None,
@@ -2159,5 +2293,128 @@ mod render_tests {
         // The shell's surface strip owns the tabs, so the internal bar must be absent.
         assert!(rt.find("terminal-tab-bar").is_none());
         assert!(rt.find("terminal-body").is_some());
+    }
+
+    fn app_with_two_tabs() -> App {
+        let mut app = App::new(crate::UiConfig::default());
+        app.selected_chat = Some("chat-1".into());
+        let mut second = test_tab_with_key(2);
+        second.emulator.feed(b"\r\nsecond-tab-marker");
+        app.terminal.chats.insert(
+            "chat-1".into(),
+            ChatTabs {
+                tabs: vec![test_tab(), second],
+                active: 0,
+            },
+        );
+        app
+    }
+
+    #[test]
+    fn a_key_in_the_focused_grid_queues_coalesced_bytes() {
+        let mut rt = rune::Runtime::new(
+            app_with_tab(),
+            embedded_view,
+            (600.0, 320.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        rt.frame(1.0 / 60.0);
+        rt.update(|_app, tx| tx.focus("terminal-body", false));
+        rt.frame(1.0 / 60.0);
+        let focused = rt
+            .elements()
+            .into_iter()
+            .find(|el| el.key.as_deref() == Some("terminal-body"))
+            .is_some_and(|el| el.focused);
+        assert!(focused, "the grid takes programmatic focus");
+
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Text("a".into()),
+            mods: rune::Mods::default(),
+        });
+        rt.frame(1.0 / 60.0);
+
+        let tab = rt.state.terminal.active_tab("chat-1").expect("active tab");
+        assert!(!tab.coalescer.is_empty(), "the key reached the coalescer");
+        assert!(tab.pending_input_at.is_some(), "the flush timer is armed");
+        let wait = rt
+            .state
+            .terminal
+            .next_wake()
+            .expect("a coalescer wake is scheduled");
+        assert!(wait <= Duration::from_millis(COALESCE_MS), "{wait:?}");
+    }
+
+    #[test]
+    fn the_embedded_surface_renders_the_surface_tab_key() {
+        let mut rt = rune::Runtime::new(
+            app_with_two_tabs(),
+            keyed_view,
+            (600.0, 320.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        rt.frame(1.0 / 60.0);
+        let text: String = rt
+            .elements()
+            .into_iter()
+            .filter_map(|el| el.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("second-tab-marker"), "{text}");
+        assert!(!text.contains("tab-1"), "{text}");
+        // Laying out the keyed grid selects the tab it shows.
+        assert_eq!(
+            rt.state
+                .terminal
+                .active_tab("chat-1")
+                .expect("active tab")
+                .key,
+            2
+        );
+    }
+
+    #[test]
+    fn close_chat_tabs_closes_an_unselected_chats_tabs() {
+        let mut app = App::new(crate::UiConfig::default());
+        app.selected_chat = Some("chat-2".into());
+        app.terminal.chats.insert(
+            "chat-1".into(),
+            ChatTabs {
+                tabs: vec![test_tab_with_key(1), test_tab_with_key(3)],
+                active: 0,
+            },
+        );
+        app.terminal.chats.insert(
+            "chat-2".into(),
+            ChatTabs {
+                tabs: vec![test_tab_with_key(2)],
+                active: 0,
+            },
+        );
+
+        close_chat_tabs(&mut app, "chat-1");
+
+        assert!(!app.terminal.chats.contains_key("chat-1"));
+        assert!(app.terminal.chats.contains_key("chat-2"));
+        assert_eq!(app.selected_chat.as_deref(), Some("chat-2"));
+        // A chat with no tabs is a no-op.
+        close_chat_tabs(&mut app, "chat-1");
+    }
+
+    #[test]
+    fn close_chat_tabs_hides_the_selected_chats_drawer() {
+        let mut app = app_with_tab();
+        app.terminal.open = true;
+        app.shell
+            .panels
+            .update("chat-1", |panels| panels.terminal_open = true);
+
+        close_chat_tabs(&mut app, "chat-1");
+
+        assert!(!app.terminal.chats.contains_key("chat-1"));
+        assert!(!app.terminal.open);
+        assert!(!app.shell.panels.get("chat-1").terminal_open);
     }
 }

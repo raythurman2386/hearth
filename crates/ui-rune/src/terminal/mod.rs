@@ -13,14 +13,17 @@
 //!
 //! Wiring: `App` owns a `TerminalState`; the lead calls
 //! `app.terminal.poll()` from `App::poll` (its `bool` is "the grid changed")
-//! and mounts [`panel::render`] in the drawer or [`panel::render_embedded`] in
-//! the right pane.
+//! and schedules `app.terminal.next_wake()` with `tx.wake_after(..)` so
+//! coalesced input and debounced resizes flush while the app is idle. Mount
+//! [`panel::render`] in the drawer or [`panel::render_embedded_key`] in the
+//! right pane (the shell stores the tab key in `RightSurface::Terminal`).
 
 pub mod emulator;
 pub mod panel;
 pub mod view;
 
 pub use panel::{
-    close_tab_by_key, ensure_tab, new_tab, render, render_embedded, select_tab_by_key, ChatTabs,
-    GridGeometry, TerminalState, TerminalTab, TAB_BAR_HEIGHT, TAB_WIDTH,
+    close_chat_tabs, close_tab_by_key, ensure_tab, new_tab, render, render_embedded,
+    render_embedded_key, select_tab_by_key, ChatTabs, GridGeometry, PointerMotion, TerminalState,
+    TerminalTab, TAB_BAR_HEIGHT, TAB_WIDTH,
 };

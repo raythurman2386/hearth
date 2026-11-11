@@ -88,6 +88,12 @@ pub struct Bridge {
     inner: Arc<BridgeInner>,
 }
 
+impl Default for Bridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Bridge {
     pub fn new() -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()

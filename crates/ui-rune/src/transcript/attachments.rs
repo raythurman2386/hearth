@@ -9,7 +9,7 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use rune::{El, SurfaceFit, el, row};
+use rune::{El, LoopSpec, SurfaceFit, el, row};
 
 use crate::attachments::{
     AttachmentSnapshot, UserImageAttachment, attachment_snapshot, begin_load,
@@ -21,6 +21,22 @@ use crate::theme::Theme;
 pub const ATT_THUMB_W: f32 = 112.0;
 pub const ATT_THUMB_H: f32 = 80.0;
 pub const ATT_STRIP_H: f32 = ATT_THUMB_H + 10.0;
+
+/// A ref that is still crossing the wire: the queued flow's
+/// `pending://{uploadId}/{name}` or the legacy echo's `pending/…`. The host
+/// rewrites it to an absolute path once the bytes land.
+pub fn is_pending_ref(path: &str) -> bool {
+    path.starts_with("pending://") || path.starts_with("pending/")
+}
+
+/// The uploadId a `pending://{uploadId}/{name}` ref names (its own relay
+/// transfer reports the real percent).
+pub fn pending_upload_id(path: &str) -> Option<&str> {
+    path.strip_prefix("pending://")
+        .and_then(|rest| rest.split_once('/'))
+        .map(|(id, _)| id)
+        .filter(|id| !id.is_empty())
+}
 
 /// Devices that may own a user message's attachment files: the chat's host
 /// device plus this device.
@@ -135,13 +151,18 @@ pub fn render_user_attachments(
             .size(ATT_THUMB_W, ATT_THUMB_H)
             .radius(8.0)
             .clip_rounded(8.0);
+        let sending = is_pending_ref(&attachment.path);
+        let upload_id = pending_upload_id(&attachment.path);
+        let percent = upload_id
+            .and_then(|id| app.transfer_percent(id))
+            .or_else(|| sending.then(|| app.upload_progress_percent()).flatten());
         let thumb = match state {
             AttachmentSnapshot::Loaded(image) => {
                 let preview = crate::attachments::PreviewImage {
                     name: image.name.clone(),
                     image: image.image.clone(),
                 };
-                frame
+                let mut frame = frame
                     .key(format!("{row_id}#att{ix}"))
                     .border(1.0, theme.hairline(0.11))
                     .fill(theme.ink(0.035))
@@ -154,19 +175,49 @@ pub fn render_user_attachments(
                             .radius(7.0)
                             .clip_rounded(7.0)
                             .pixels_fit(image.image.pixels(), SurfaceFit::Fill),
-                    )
+                    );
+                if sending {
+                    frame = frame
+                        .child(pending_dimmer())
+                        .child(pending_indicator(percent, theme));
+                }
+                frame
             }
             AttachmentSnapshot::Error { .. } => frame
                 .border(1.0, theme.hairline(0.14))
                 .fill(theme.ink(0.025)),
+            // Loading: the pulsing skeleton (same wash as popover skeletons).
             AttachmentSnapshot::Loading => frame
                 .border(1.0, theme.hairline(0.08))
                 .fill(theme.ink(0.055))
-                .opacity(0.55),
+                .looping(LoopSpec::opacity(2.4, 0.0, 0.35, 0.75)),
         };
         strip = strip.child(thumb);
     }
     strip
+}
+
+/// The dimming pulse under a pending attachment's indicator.
+fn pending_dimmer() -> El {
+    el().absolute(0.0, 0.0)
+        .size(ATT_THUMB_W - 2.0, ATT_THUMB_H - 2.0)
+        .radius(7.0)
+        .fill(rune::Color::BLACK.alpha(0.38))
+        .looping(LoopSpec::opacity(2.4, 0.0, 0.86, 1.0))
+}
+
+/// The progress ring when the relay transfer reports a real percent, else the
+/// indeterminate spinner. Never a fake number: a committed-awaiting-rewrite or
+/// backoff source spins instead.
+fn pending_indicator(percent: Option<u8>, theme: &Theme) -> El {
+    let indicator = match percent {
+        Some(percent) => crate::loaders::upload_progress_ring(percent, 34.0),
+        None => crate::loaders::mini_gradient_spinner(theme, 3.0),
+    };
+    el().absolute(0.0, 0.0)
+        .size(ATT_THUMB_W - 2.0, ATT_THUMB_H - 2.0)
+        .center()
+        .child(indicator)
 }
 
 #[cfg(test)]
@@ -178,5 +229,19 @@ mod tests {
         assert_eq!(ATT_STRIP_H, 90.0);
         assert_eq!(ATT_THUMB_W, 112.0);
         assert_eq!(ATT_THUMB_H, 80.0);
+    }
+
+    #[test]
+    fn pending_refs_name_their_upload_id() {
+        assert!(is_pending_ref("pending://abc12345/cat.png"));
+        assert!(is_pending_ref("pending/cat.png"));
+        assert!(!is_pending_ref("/uploads/abc12345-cat.png"));
+        assert_eq!(
+            pending_upload_id("pending://abc12345/cat.png"),
+            Some("abc12345")
+        );
+        assert_eq!(pending_upload_id("pending:///no-id"), None);
+        assert_eq!(pending_upload_id("pending/cat.png"), None);
+        assert_eq!(pending_upload_id("/uploads/cat.png"), None);
     }
 }

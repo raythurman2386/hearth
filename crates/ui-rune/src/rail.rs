@@ -255,7 +255,9 @@ pub fn render(
                 };
                 app.transcript_state.rail_hover = next;
             })
-            .on_press_tx(move |_app: &mut App, tx| {
+            .on_press_tx(move |app: &mut App, tx| {
+                // Explicit navigation releases a held own-turn prompt first.
+                app.transcript_state.release_own_turn();
                 tx.scroll_into_view(key.clone());
             })
             .child(el().h(2.0).w(bar_width).radius(1.0).fill(bar_color));

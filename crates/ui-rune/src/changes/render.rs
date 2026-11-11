@@ -26,7 +26,7 @@ use super::*;
 /// `changes::render(&app.changes, app, &app.theme)`.
 pub fn render(state: &ChangesState, app: &App, theme: &Theme) -> El {
     if state.scope == DiffScope::History {
-        return history_view(state, app, theme);
+        return crate::history::history_view(state, app, theme);
     }
     let scope = state.scope;
     let base = state.base_ref.clone();
@@ -78,7 +78,9 @@ pub fn render(state: &ChangesState, app: &App, theme: &Theme) -> El {
                 .child(
                     text(error)
                         .font(TextStyle::new(11.0, 400.0))
-                        .color(theme.warning),
+                        .color(theme.warning)
+                        .wrap()
+                        .min_w(0.0),
                 ),
         );
     }
@@ -111,7 +113,9 @@ fn centered(message: String, color: Color, theme: &Theme) -> El {
         text(message)
             .font(TextStyle::new(12.0, 400.0))
             .color(color)
-            .align(Align::Center),
+            .align(Align::Center)
+            .wrap()
+            .min_w(0.0),
     )
     .fill(theme.bg)
 }
@@ -160,9 +164,7 @@ fn list_view(state: &ChangesState, theme: &Theme) -> El {
 }
 
 fn header_strip(state: &ChangesState, theme: &Theme) -> Option<El> {
-    if state.parsed.is_none() {
-        return None;
-    }
+    state.parsed.as_ref()?;
     let label = scope_label(state.scope, state.file_count(), state.base_ref.as_deref());
     Some(
         row()
@@ -292,7 +294,7 @@ fn row_el(app: &App, ix: usize, theme: &Theme) -> El {
             };
             let fold = state.folds.get(&file_diff.path).copied().unwrap_or_default();
             let to = fold.to.max(0.0);
-            let cap = fold.from.max(fold.to).min(FOLD_TWEEN_MAX_PX).max(0.0);
+            let cap = fold.from.max(fold.to).clamp(0.0, FOLD_TWEEN_MAX_PX);
             let body = render_file_body_upto(state, file_diff, theme, cap, state.mode);
             if to <= 0.0 {
                 el()
@@ -307,6 +309,9 @@ fn file_header(state: &ChangesState, ix: usize, file: &FileDiff, theme: &Theme) 
     let fold = state.folds.get(&file.path).copied().unwrap_or_default();
     let chevron = if fold.collapsed { ">" } else { "v" };
     let collapsed = fold.collapsed;
+    // Path-keyed, never index-keyed: a virtual row kept by `memo` can move to
+    // a different index, and an index capture would toggle the wrong file.
+    let path = file.path.clone();
     row()
         .key(format!("app/changes/fh/{ix}"))
         .w_full()
@@ -324,7 +329,7 @@ fn file_header(state: &ChangesState, ix: usize, file: &FileDiff, theme: &Theme) 
             if collapsed { "Expand" } else { "Collapse" },
             file.path
         ))
-        .on_press(move |app: &mut App| app.changes.toggle_fold(ix))
+        .on_press(move |app: &mut App| app.changes.toggle_fold_path(&path))
         .children((ix > 0).then(|| {
             el().absolute(0.0, 0.0).w_full().h(1.0).fill(theme.hairline(0.04))
         }))
@@ -411,11 +416,12 @@ fn diff_line_el(state: &ChangesState, file: &FileDiff, line: &DiffLine, theme: &
         );
     }
     let (marker, marker_color, row_bg, accent, number_color) = line_colors(line.kind, theme);
-    let mut root = row()
-        .w_full()
-        .h(DIFF_LINE_HEIGHT)
-        .shrink()
-        .center_y();
+    let mut root = row().w_full().shrink().center_y();
+    root = if state.wrap {
+        root.min_h(DIFF_LINE_HEIGHT)
+    } else {
+        root.h(DIFF_LINE_HEIGHT)
+    };
     if let Some(bg) = row_bg {
         root = root.fill(bg);
     }
@@ -461,6 +467,7 @@ fn diff_line_el(state: &ChangesState, file: &FileDiff, line: &DiffLine, theme: &
             state.highlight_for(&file.path).as_deref(),
             theme,
             12.0,
+            state.wrap,
         ));
 
     let Some((side, line_no)) = line_anchor(line) else {
@@ -506,16 +513,48 @@ fn gutter(no: Option<u32>, color: Color, gutter_px: f32) -> El {
 
 /// Diff line with its highlight spans attached (the helper above cannot build
 /// a synthetic `DiffLine`; callers pass the real one).
-fn code_line_el(line: &DiffLine, highlights: Option<&DiffHighlights>, theme: &Theme, pad: f32) -> El {
-    text(line.text.clone())
-        .font(mono(DIFF_TEXT_SIZE, 400.0))
-        .color(theme.text.alpha(0.92))
-        .single_line()
-        .truncate()
+///
+/// Long lines must stay reachable: by default the code sits in a horizontal
+/// scroll viewport (`scroll_x`), with the gutters and marker pinned outside it.
+/// [`ChangesState::set_wrap`] swaps that for wrapping, which lets the row grow
+/// to its measured height in the virtual list.
+fn code_line_el(
+    line: &DiffLine,
+    highlights: Option<&DiffHighlights>,
+    theme: &Theme,
+    pad: f32,
+    wrap: bool,
+) -> El {
+    let spans = spans_for_line(line, highlights, theme);
+    if wrap {
+        return text(line.text.clone())
+            .font(mono(DIFF_TEXT_SIZE, 400.0))
+            .color(theme.text.alpha(0.92))
+            .wrap_anywhere()
+            .grow(1.0)
+            .min_w(0.0)
+            .pl(pad)
+            .spans(spans);
+    }
+    row()
         .grow(1.0)
         .min_w(0.0)
-        .pl(pad)
-        .spans(spans_for_line(line, highlights, theme))
+        .h(DIFF_LINE_HEIGHT)
+        .child(
+            el()
+                .grow(1.0)
+                .min_w(0.0)
+                .h_full()
+                .scroll_x()
+                .child(
+                    text(line.text.clone())
+                        .font(mono(DIFF_TEXT_SIZE, 400.0))
+                        .color(theme.text.alpha(0.92))
+                        .single_line()
+                        .pl(pad)
+                        .spans(spans),
+                ),
+        )
 }
 
 fn line_colors(kind: LineKind, theme: &Theme) -> (&'static str, Color, Option<Color>, Option<Color>, Color) {
@@ -578,6 +617,7 @@ fn split_line_el(
     theme: &Theme,
 ) -> El {
     let gutter_px = gutter_width(file);
+    let wrap = state.wrap;
     let (left, right) = (
         pair.0.and_then(|ix| lines.get(ix as usize)),
         pair.1.and_then(|ix| lines.get(ix as usize)),
@@ -604,6 +644,7 @@ fn split_line_el(
                 highlights.as_deref(),
                 theme,
                 gutter_px,
+                wrap,
             )
         })
         .unwrap_or_else(|| split_filler(theme));
@@ -614,6 +655,7 @@ fn split_line_el(
             highlights.as_deref(),
             theme,
             gutter_px,
+            wrap,
         ),
         None => split_filler(theme),
     };
@@ -641,11 +683,13 @@ fn split_line_el(
             },
         );
     }
-    row()
-        .w_full()
-        .h(DIFF_LINE_HEIGHT)
-        .shrink()
-        .items_stretch()
+    let mut outer = row().w_full().shrink().items_stretch();
+    outer = if wrap {
+        outer.min_h(DIFF_LINE_HEIGHT)
+    } else {
+        outer.h(DIFF_LINE_HEIGHT)
+    };
+    outer
         .child(left_cell)
         .child(
             el()
@@ -663,6 +707,7 @@ fn split_line_cell(
     highlights: Option<&DiffHighlights>,
     theme: &Theme,
     gutter_px: f32,
+    wrap: bool,
 ) -> El {
     let (marker, marker_color, row_bg, accent, number_color) = line_colors(line.kind, theme);
     let mut cell = row()
@@ -705,7 +750,7 @@ fn split_line_cell(
                     .color(marker_color),
             ),
     )
-    .child(code_line_el(line, highlights, theme, 6.0))
+    .child(code_line_el(line, highlights, theme, 6.0, wrap))
 }
 
 fn split_filler(theme: &Theme) -> El {
@@ -736,7 +781,13 @@ pub fn render_file_body_with_syntax(
     for hunk in &file.hunks {
         children.push(hunk_header_row(&hunk.header, theme));
         for line in &hunk.lines {
-            children.push(stacked_line(line, highlights.as_deref(), theme, gutter_px));
+            children.push(stacked_line(
+                line,
+                highlights.as_deref(),
+                theme,
+                gutter_px,
+                false,
+            ));
         }
     }
     col()
@@ -751,6 +802,7 @@ fn stacked_line(
     highlights: Option<&DiffHighlights>,
     theme: &Theme,
     gutter_px: f32,
+    wrap: bool,
 ) -> El {
     if line.kind == LineKind::Meta {
         return meta_line_row(
@@ -760,7 +812,12 @@ fn stacked_line(
         );
     }
     let (marker, marker_color, row_bg, accent, number_color) = line_colors(line.kind, theme);
-    let mut root = row().w_full().h(DIFF_LINE_HEIGHT).shrink().center_y();
+    let mut root = row().w_full().shrink().center_y();
+    root = if wrap {
+        root.min_h(DIFF_LINE_HEIGHT)
+    } else {
+        root.h(DIFF_LINE_HEIGHT)
+    };
     if let Some(bg) = row_bg {
         root = root.fill(bg);
     }
@@ -796,7 +853,7 @@ fn stacked_line(
                 .color(marker_color),
         ),
     )
-    .child(code_line_el(line, highlights, theme, 12.0))
+    .child(code_line_el(line, highlights, theme, 12.0, wrap))
 }
 
 /// Build only rows that start above `max_px`, so the fold stand-in never
@@ -838,6 +895,7 @@ fn render_file_body_upto(
                             highlights.as_deref(),
                             theme,
                             gutter_px,
+                            state.wrap,
                         ));
                         y += DIFF_LINE_HEIGHT;
                     }
@@ -869,15 +927,17 @@ fn render_file_body_upto(
                                         highlights.as_deref(),
                                         theme,
                                         gutter_px,
+                                        state.wrap,
                                     ),
                                     None => split_filler(theme),
                                 };
-                                row()
-                                    .w_full()
-                                    .h(DIFF_LINE_HEIGHT)
-                                    .shrink()
-                                    .items_stretch()
-                                    .child(cell(left, true))
+                                let mut pair = row().w_full().shrink().items_stretch();
+                                pair = if state.wrap {
+                                    pair.min_h(DIFF_LINE_HEIGHT)
+                                } else {
+                                    pair.h(DIFF_LINE_HEIGHT)
+                                };
+                                pair.child(cell(left, true))
                                     .child(
                                         el()
                                             .w(SPLIT_DIVIDER_WIDTH)
@@ -909,7 +969,6 @@ fn render_file_body_upto(
 ///
 /// Public API: `changes::header_controls(&app.changes, app, &app.theme)`.
 pub fn header_controls(state: &ChangesState, app: &App, theme: &Theme) -> El {
-    let _ = app;
     if let Some(commit) = &state.commit {
         let short: String = commit.sha.chars().take(7).collect();
         return row()
@@ -940,6 +999,7 @@ pub fn header_controls(state: &ChangesState, app: &App, theme: &Theme) -> El {
                     .min_w(0.0),
             )
             .child(split_toggle(state, theme))
+            .child(wrap_toggle(state, theme))
             .child(fold_all_button(theme))
     }
 
@@ -970,30 +1030,14 @@ pub fn header_controls(state: &ChangesState, app: &App, theme: &Theme) -> El {
         );
 
     let trailing = if scope == DiffScope::History {
-        row()
-            .shrink()
-            .center_y()
-            .gap(2.0)
-            .child(
-                text(format!(
-                    "{} commits",
-                    state
-                        .history_lead_count
-                        .or(state.history_total)
-                        .unwrap_or(state.history.len())
-                ))
-                .font(TextStyle::new(11.0, 400.0))
-                .color(theme.text_faint),
-            )
-            .child(header_button("app/changes/history-refresh", "R", false, theme).on_press(
-                |app: &mut App| app.changes.refresh_history(),
-            ))
+        crate::history::history_controls(state, app, theme)
     } else {
         row()
             .shrink()
             .center_y()
             .gap(2.0)
             .child(split_toggle(state, theme))
+            .child(wrap_toggle(state, theme))
             .child(fold_all_button(theme))
     };
 
@@ -1018,6 +1062,12 @@ fn split_toggle(state: &ChangesState, theme: &Theme) -> El {
     let active = state.mode.is_split();
     header_button("app/changes/split", "||", active, theme).on_press(|app: &mut App| {
         app.changes.toggle_mode();
+    })
+}
+
+fn wrap_toggle(state: &ChangesState, theme: &Theme) -> El {
+    header_button("app/changes/wrap", "↩", state.wrap, theme).on_press(|app: &mut App| {
+        app.changes.toggle_wrap();
     })
 }
 
@@ -1218,114 +1268,6 @@ fn ref_menu(state: &ChangesState, theme: &Theme) -> El {
             .placeholder("Search branches…", theme.text_faint)
             .caret(theme.caret, theme.selection)
             .on_edit(|app: &mut App| &mut app.changes.ref_search),
-        )
-        .child(list)
-}
-
-// ---------------------------------------------------------------------------
-// History
-// ---------------------------------------------------------------------------
-
-fn history_view(state: &ChangesState, _app: &App, theme: &Theme) -> El {
-    let list = if state.history_loading && state.history.is_empty() {
-        centered("Loading history…".to_string(), theme.text_faint, theme)
-    } else if let Some(error) = &state.history_error {
-        centered(error.clone(), theme.warning, theme)
-    } else if state.history.is_empty() {
-        centered("No commits found".to_string(), theme.text_faint, theme)
-    } else {
-        col()
-            .key("app/changes/history")
-            .w_full()
-            .grow(1.0)
-            .min_h(0.0)
-            .scroll(ScrollSpec { stick_bottom: false })
-            .children(state.history.iter().cloned().map(|commit| {
-                let sha = commit.sha.chars().take(7).collect::<String>();
-                let subject = commit.subject.clone();
-                let author = commit.author_name.clone();
-                let pin = commit.clone();
-                row()
-                    .key(format!("app/changes/history-row/{}", commit.sha))
-                    .w_full()
-                    .h(48.0)
-                    .shrink()
-                    .px(Theme::SPACE_MD)
-                    .gap(10.0)
-                    .center_y()
-                    .cursor(rune::Cursor::Pointer)
-                    .hover(theme.ink(0.04))
-                    .role("button")
-                    .label(subject.clone())
-                    .on_press(move |app: &mut App| app.changes.pin_commit(pin.clone()))
-                    .child(
-                        text(sha)
-                            .font(mono(10.5, 400.0))
-                            .color(theme.text_faint)
-                            .shrink(),
-                    )
-                    .child(
-                        col()
-                            .grow(1.0)
-                            .min_w(0.0)
-                            .gap(2.0)
-                            .child(
-                                text(subject)
-                                    .font(TextStyle::new(12.0, 400.0))
-                                    .color(theme.text)
-                                    .truncate(),
-                            )
-                            .child(
-                                text(author)
-                                    .font(TextStyle::new(11.0, 400.0))
-                                    .color(theme.text_faint)
-                                    .truncate(),
-                            ),
-                    )
-            }))
-            .children(state.history_cursor.map(|_| {
-                row()
-                    .key("app/changes/history-more")
-                    .w_full()
-                    .h(36.0)
-                    .shrink()
-                    .center()
-                    .cursor(rune::Cursor::Pointer)
-                    .hover(theme.ink(0.04))
-                    .on_press(|app: &mut App| app.changes.load_older_history())
-                    .child(
-                        text(if state.history_loading {
-                            "Loading…"
-                        } else {
-                            "Load older commits"
-                        })
-                        .font(TextStyle::new(12.0, 400.0))
-                        .color(theme.text_muted),
-                    )
-            }))
-    };
-    col()
-        .w_full()
-        .h_full()
-        .min_h(0.0)
-        .fill(theme.bg)
-        .child(
-            row()
-                .w_full()
-                .shrink()
-                .h(36.0)
-                .px(Theme::SPACE_LG)
-                .gap(8.0)
-                .center_y()
-                .border_sides([0.0, 0.0, 1.0, 0.0], theme.hairline(0.06))
-                .child(
-                    text(state.chat_cwd().unwrap_or("History").to_string())
-                        .font(TextStyle::new(12.0, 400.0))
-                        .color(theme.text_muted)
-                        .truncate()
-                        .grow(1.0)
-                        .min_w(0.0),
-                ),
         )
         .child(list)
 }

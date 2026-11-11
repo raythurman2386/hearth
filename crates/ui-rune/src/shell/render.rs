@@ -21,8 +21,8 @@ use super::tabs::right_pane_expand_icon;
 use super::titlebar::platform_cluster_inset;
 use super::{
     RightSurface, Route, add_diff_surface, add_terminal_surface,
-    open_settings, resolved_right_active, right_pane_open, right_surface_rows, set_right_active,
-    terminal_open, toggle_right_pane, toggle_right_pane_expand,
+    open_settings, resolved_right_active, right_pane_open, terminal_open, toggle_right_pane,
+    toggle_right_pane_expand,
 };
 
 /// The boot splash's bare page under the overlay.
@@ -118,8 +118,15 @@ pub fn shell(app: &App, cx: &mut rune::Cx<App>, layer: &mut Vec<El>) -> El {
             el()
         });
 
+    let scale = app.scale.get().max(1.0);
     let sidebar_seam = if sidebar_w > 0.5 {
-        seam(panels::ResizeKind::Sidebar, viewport, viewport_h, theme)
+        seam(
+            panels::ResizeKind::Sidebar,
+            viewport,
+            viewport_h,
+            theme,
+            scale,
+        )
     } else {
         el()
     };
@@ -139,7 +146,8 @@ pub fn shell(app: &App, cx: &mut rune::Cx<App>, layer: &mut Vec<El>) -> El {
                 .child(match app.shell.route {
                     Route::Settings(section) => super::routes::settings_outlet(app, section, theme),
                     Route::Chat => main_outlet(app, theme),
-                }),
+                })
+                .children(drop_veil(app, theme)),
         )
         .children(
             (terminal_height > 0.0).then(|| terminal_slot(app, theme, terminal_height, viewport_h)),
@@ -157,7 +165,13 @@ pub fn shell(app: &App, cx: &mut rune::Cx<App>, layer: &mut Vec<El>) -> El {
             el()
         });
     let right_seam = if right_open && right_w > 0.5 {
-        seam(panels::ResizeKind::RightPane, viewport, viewport_h, theme)
+        seam(
+            panels::ResizeKind::RightPane,
+            viewport,
+            viewport_h,
+            theme,
+            scale,
+        )
     } else {
         el()
     };
@@ -192,6 +206,12 @@ pub fn shell(app: &App, cx: &mut rune::Cx<App>, layer: &mut Vec<El>) -> El {
         } else {
             theme.bg
         })
+        .on_drop_files(|app: &mut App, files: &[std::path::PathBuf], _tx| {
+            crate::composer::add_paths(app, files.to_vec());
+        })
+        .on_drop_hover(|app: &mut App, over: bool, _tx| {
+            app.shell.drop_hover = over;
+        })
         .child(tone)
         .child(content)
         .child(super::titlebar::render(app, theme, cx))
@@ -206,10 +226,10 @@ pub fn shell(app: &App, cx: &mut rune::Cx<App>, layer: &mut Vec<El>) -> El {
     root
 }
 
-fn seam(kind: panels::ResizeKind, viewport: f32, viewport_h: f32, theme: &Theme) -> El {
+fn seam(kind: panels::ResizeKind, viewport: f32, viewport_h: f32, theme: &Theme, scale: f32) -> El {
     el().w(0.0)
         .h_full()
-        .child(resize_handle(kind, theme, viewport, viewport_h))
+        .child(resize_handle(kind, theme, viewport, viewport_h, scale))
 }
 
 /// The chat route's content: transcript + composer, or the new-session canvas.
@@ -315,23 +335,47 @@ fn new_chat_canvas(app: &App, theme: &Theme) -> El {
                 .center()
                 .gap(Theme::SPACE_SM)
                 .child(icon(&icons::HEARTH_LOGO, 48.0).color(theme.text.alpha(0.2)))
+                // The TARGET selectors (device chip + project chip, then the
+                // mode/model/traits cluster and the checkout/ref footer) under
+                // the mark, over the helper line — hearth's `main_pane.rs`
+                // new-chat canvas. Their popovers mount from
+                // `composer::popups` like the composer's own pickers.
+                .child(
+                    el().w_full().max_w(460.0).mt(16.0).child(
+                        crate::pickers::render_new_session(&app.pickers, app, theme),
+                    ),
+                )
                 .child(
                     text(helper)
                         .font(TextStyle::new(14.0, 400.0))
-                        .color(theme.text_muted.alpha(0.6)),
-                )
-                .children(app.selected_space_row().map(|space| {
-                    text(format!(
-                        "{} @ {}",
-                        space.display_name(),
-                        app.device_name(&space.device_id)
-                            .unwrap_or("Unknown device")
-                    ))
-                    .font(TextStyle::new(11.0, 400.0))
-                    .color(theme.text_faint)
-                })),
+                        .color(theme.text_muted.alpha(0.6))
+                        .mt(12.0),
+                ),
         )
         .child(composer_slot(app, theme))
+}
+
+/// The file-drop veil over the conversation column (hearth's `chat-dropzone`
+/// overlay): the root's `on_drop_hover` drives it, a drop stages the paths in
+/// the composer through the composer's own `on_drop_files`.
+fn drop_veil(app: &App, theme: &Theme) -> Option<El> {
+    if !app.shell.drop_hover || !app.shell.route.is_chat() {
+        return None;
+    }
+    Some(
+        el().key("drop-veil")
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .center()
+            // hearth: `theme.scrim().opacity(0.4 / 0.6)`.
+            .fill(crate::theme::scrim_for(theme.appearance, 0.4))
+            .child(
+                text("Drop images to attach")
+                    .font(TextStyle::new(13.0, 400.0))
+                    .color(theme.text),
+            ),
+    )
 }
 
 pub fn terminal_slot(app: &App, theme: &Theme, height: f32, viewport_h: f32) -> El {
@@ -342,7 +386,11 @@ pub fn terminal_slot(app: &App, theme: &Theme, height: f32, viewport_h: f32) -> 
         .clip_soft(0.0)
         .motion(crate::motion::RESIZE)
         .border_sides([1.0 / app.scale.get().max(1.0), 0.0, 0.0, 0.0], theme.border)
-        .child(panels::terminal_handle(theme, viewport_h))
+        .child(panels::terminal_handle(
+            theme,
+            viewport_h,
+            app.scale.get().max(1.0),
+        ))
         .child(
             el().w_full()
                 .grow(1.0)
@@ -351,54 +399,36 @@ pub fn terminal_slot(app: &App, theme: &Theme, height: f32, viewport_h: f32) -> 
         )
 }
 
-/// The right pane: surface tabs in a small header, then the active surface.
+/// The right pane: a slim header carrying the ACTIVE surface's identity (tabs live in the
+/// titlebar strip), then the active surface.
 fn right_pane(app: &App, theme: &Theme) -> El {
     let active = resolved_right_active(app);
-    let rows = right_surface_rows(app);
+    let title = active_surface_title(app, active);
     let mut header = row()
         .w_full()
         .h(34.0)
         .px(Theme::SPACE_SM)
-        .gap(4.0)
+        .gap(6.0)
         .center_y()
         .clip_soft(0.0)
-        .border_sides([0.0, 0.0, 1.0 / app.scale.get().max(1.0), 0.0], theme.border);
-    if rows.is_empty() {
+        .border_sides([0.0, 0.0, 1.0 / app.scale.get().max(1.0), 0.0], theme.border)
+        .child(icon(surface_icon(active), 12.0).color(theme.text_muted));
+    if matches!(active, RightSurface::Diff(_)) {
+        // Scope / base ref / split / wrap / fold-all live in the pane header.
         header = header.child(
-            text("Surfaces")
-                .font(TextStyle::new(11.0, 500.0))
-                .color(theme.text_muted.alpha(0.6))
-                .grow(1.0),
+            el().h_full()
+                .grow(1.0)
+                .min_w(0.0)
+                .child(crate::changes::header_controls(&app.changes, app, theme)),
         );
     } else {
-        for (surface, title) in rows {
-            let selected = surface == active;
-            header = header.child(
-                el().h(24.0)
-                    .px(8.0)
-                    .radius(5.0)
-                    .center_y()
-                    .cursor(Cursor::Pointer)
-                    .fill(if selected {
-                        theme.surface_raised
-                    } else {
-                        theme.ink(0.0)
-                    })
-                    .hover(theme.element_hover)
-                    .on_press(move |app: &mut App| set_right_active(app, surface))
-                    .child(
-                        text(title)
-                            .font(TextStyle::new(11.5, 500.0))
-                            .truncate()
-                            .max_w(160.0)
-                            .color(if selected {
-                                theme.text
-                            } else {
-                                theme.text_muted
-                            }),
-                    ),
-            );
-        }
+        header = header.child(
+            text(title)
+                .font(TextStyle::new(11.5, 500.0))
+                .color(theme.text_muted)
+                .truncate()
+                .grow(1.0),
+        );
     }
     header = header
         .child(
@@ -429,13 +459,47 @@ fn right_pane(app: &App, theme: &Theme) -> El {
         )
 }
 
+/// The active surface's strip/title text.
+fn active_surface_title(app: &App, active: RightSurface) -> String {
+    match active {
+        RightSurface::Shared => "Surfaces".to_string(),
+        RightSurface::Diff(id) => app
+            .shell
+            .diff_titles
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| "Changes".to_string()),
+        RightSurface::Terminal(id) => app
+            .shell
+            .terminal_titles
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| "Terminal".to_string()),
+        RightSurface::Subagent(id) => app
+            .shell
+            .subagent_tabs
+            .get(&id)
+            .map(|tab| tab.title.clone())
+            .unwrap_or_else(|| "Subagent".to_string()),
+    }
+}
+
+fn surface_icon(surface: RightSurface) -> &'static rune::Icon {
+    match surface {
+        RightSurface::Shared => &icons::ADD_CIRCLE,
+        RightSurface::Diff(_) => &icons::SPLIT_COLUMNS,
+        RightSurface::Terminal(_) => &icons::TERMINAL,
+        RightSurface::Subagent(_) => &icons::BOT,
+    }
+}
+
 /// WAVE 2 HOOK: diff/terminal/subagent bodies. Each arm becomes its module's render call.
 pub fn right_surface_outlet(app: &App, theme: &Theme, active: RightSurface) -> El {
     match active {
         RightSurface::Shared => right_picker(app, theme),
         RightSurface::Diff(_id) => crate::changes::render(&app.changes, app, theme),
-        RightSurface::Terminal(_id) => {
-            crate::terminal::render_embedded(&app.terminal, app, theme)
+        RightSurface::Terminal(id) => {
+            crate::terminal::render_embedded_key(&app.terminal, app, theme, id)
         }
         RightSurface::Subagent(id) => {
             let doc_id = app

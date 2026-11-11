@@ -52,96 +52,12 @@ pub fn resort_offsets(
 /// Chat-mode vs settings-mode sidebar.
 pub fn render(app: &App, theme: &Theme, layer: &mut Vec<El>) -> El {
     match app.shell.route {
-        super::Route::Settings(section) => render_settings_nav(app, section, theme),
+        // One settings-nav implementation, owned by the settings module: it
+        // reads the active section from the route itself. (The shell used to
+        // carry a byte-for-byte copy here.)
+        super::Route::Settings(_) => crate::settings::nav(app, theme),
         super::Route::Chat => render_chat_sidebar(app, theme, layer),
     }
-}
-
-fn render_settings_nav(_app: &App, section: crate::settings::SettingsSection, theme: &Theme) -> El {
-    let mut nav =
-        col()
-            .w_full()
-            .h_full()
-            .child(
-                col()
-                    .grow(1.0)
-                    .min_h(0.0)
-                    .px(Theme::SPACE_SM)
-                    .child(
-                        text("Settings")
-                            .font(TextStyle::new(11.0, 500.0))
-                            .color(theme.text_muted.alpha(0.6))
-                            .px(Theme::SPACE_SM)
-                            .pt(12.0)
-                            .pb(4.0),
-                    )
-                    .child(
-                        col().gap(2.0).children(
-                            crate::settings::SettingsSection::ALL
-                                .into_iter()
-                                .map(|item| {
-                                    let selected = item == section;
-                                    row()
-                                        .key(format!("settings-nav-{}", item.label()))
-                                        .w_full()
-                                        .gap(8.0)
-                                        .radius(8.0)
-                                        .px(Theme::SPACE_SM)
-                                        .py(6.0)
-                                        .center_y()
-                                        .cursor(Cursor::Pointer)
-                                        .fill(if selected {
-                                            crate::theme::glass_selected_bg(theme.appearance)
-                                        } else {
-                                            theme.ink(0.0)
-                                        })
-                                        .hover(theme.glass_hover())
-                                        .on_press(move |app: &mut App| {
-                                            super::open_settings(app, item)
-                                        })
-                                        .child(
-                                            icon(super::routes::section_icon(item), 16.0)
-                                                .color(theme.text_muted),
-                                        )
-                                        .child(
-                                            text(item.label())
-                                                .font(TextStyle::new(
-                                                    13.0,
-                                                    if selected { 500.0 } else { 400.0 },
-                                                ))
-                                                .color(if selected {
-                                                    theme.text
-                                                } else {
-                                                    theme.text_muted
-                                                }),
-                                        )
-                                }),
-                        ),
-                    ),
-            )
-            .child(
-                el().px(Theme::SPACE_SM).pb(12.0).child(
-                    row()
-                        .key("settings-back")
-                        .w_full()
-                        .gap(6.0)
-                        .radius(8.0)
-                        .px(Theme::SPACE_SM)
-                        .py(6.0)
-                        .center_y()
-                        .cursor(Cursor::Pointer)
-                        .hover(theme.glass_hover())
-                        .on_press(|app: &mut App| super::close_settings(app))
-                        .child(icon(&icons::ALT_ARROW_LEFT, 16.0).color(theme.text_muted))
-                        .child(
-                            text("Back")
-                                .font(TextStyle::new(13.0, 400.0))
-                                .color(theme.text_muted),
-                        ),
-                ),
-            );
-    nav = nav.pt(Theme::TITLEBAR_HEIGHT);
-    nav
 }
 
 fn render_chat_sidebar(app: &App, theme: &Theme, layer: &mut Vec<El>) -> El {
@@ -362,6 +278,14 @@ fn chat_row(app: &App, chat: &hearth_proto::Chat, now: chrono::DateTime<Utc>, th
                     .truncate(),
             );
     }
+    if let Some(badge) = crate::changes::badge_el(
+        app,
+        &id,
+        crate::changes::ChangeRequestBadgeSurface::Sidebar,
+        theme,
+    ) {
+        meta = meta.child(badge);
+    }
     meta = meta.child(el().grow(1.0));
     if working {
         meta = meta.child(loaders::mini_gradient_spinner(theme, 2.0));
@@ -429,6 +353,7 @@ fn render_archived(app: &App, theme: &Theme) -> Option<El> {
     const INITIAL: usize = 10;
     const PAGE: usize = 25;
     let now = Utc::now();
+    let hairline = 1.0 / app.scale.get().max(1.0);
     let filter = app.settings.space_filter.clone();
     let rows: Vec<&hearth_proto::Chat> = app
         .chats
@@ -468,7 +393,7 @@ fn render_archived(app: &App, theme: &Theme) -> Option<El> {
                 .font(TextStyle::new(12.0, 500.0))
                 .color(theme.text_muted.alpha(0.5)),
         )
-        .child(el().h(1.0).grow(1.0).fill(theme.border.alpha(0.6)))
+        .child(el().h(hairline).grow(1.0).fill(theme.border.alpha(0.6)))
         .child(
             icon(
                 if open {
@@ -627,6 +552,7 @@ fn render_connection_pill(app: &App, theme: &Theme) -> Option<El> {
 }
 
 fn render_update_strip(app: &App, theme: &Theme) -> Option<El> {
+    use crate::shell::{UpdateClick, UpdateFlow, update_click_action};
     let status = app.update.as_ref()?;
     if !status.update_available {
         return None;
@@ -635,28 +561,46 @@ fn render_update_strip(app: &App, theme: &Theme) -> Option<El> {
     if app.shell.update_dismissed.as_deref() == Some(latest.as_str()) {
         return None;
     }
-    let label = format!("Update available — v{latest}");
-    Some(
-        row()
-            .key("update-strip")
-            .mx(Theme::SPACE_SM)
-            .px(Theme::SPACE_SM)
-            .py(6.0)
-            .radius(Theme::CONTROL_RADIUS)
-            .fill(theme.accent.alpha(0.14))
+    // Idle/Failed → download; Downloading → wait; Ready → swap + relaunch;
+    // unmanaged (source build) → dismiss for this version.
+    let action = update_click_action(&app.shell.install, &app.shell.update_flow);
+    let (label, clickable) = match action {
+        UpdateClick::Wait => (format!("Downloading v{latest}…"), false),
+        UpdateClick::Apply => ("Update ready — restart to apply".to_string(), true),
+        UpdateClick::Dismiss => (
+            format!("Update available — v{latest} · reinstall via install.sh to enable updates"),
+            true,
+        ),
+        UpdateClick::Download => match &app.shell.update_flow {
+            UpdateFlow::Failed(message) => (format!("Update failed: {message}"), true),
+            _ => (format!("Update available — v{latest}"), true),
+        },
+    };
+    let failed = matches!(app.shell.update_flow, UpdateFlow::Failed(_));
+    let tone = if failed { theme.danger } else { theme.accent };
+    let mut strip = row()
+        .key("update-strip")
+        .mx(Theme::SPACE_SM)
+        // No bottom margin: the user-menu block below carries its own
+        // SPACE_SM padding — doubling it read as a hole (gpui parity).
+        .px(Theme::SPACE_SM)
+        .py(6.0)
+        .radius(Theme::CONTROL_RADIUS)
+        .fill(tone.alpha(0.14))
+        .child(
+            text(label)
+                .font(TextStyle::new(11.0, 500.0))
+                .color(tone)
+                .truncate()
+                .grow(1.0),
+        );
+    if clickable {
+        strip = strip
             .cursor(Cursor::Pointer)
-            .hover(theme.accent.alpha(0.22))
-            .on_press(move |app: &mut App| {
-                super::dismiss_update(app, latest.clone());
-            })
-            .child(
-                text(label)
-                    .font(TextStyle::new(11.0, 500.0))
-                    .color(theme.accent)
-                    .truncate()
-                    .grow(1.0),
-            ),
-    )
+            .hover(tone.alpha(0.22))
+            .on_press_tx(|app: &mut App, tx: &mut rune::Tx| super::on_update_strip(app, tx));
+    }
+    Some(strip)
 }
 
 #[cfg(test)]

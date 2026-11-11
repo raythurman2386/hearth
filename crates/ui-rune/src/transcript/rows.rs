@@ -405,6 +405,67 @@ impl TranscriptState {
         }
         rows
     }
+
+    /// Cached row build for one SUBAGENT doc entry. The subagent transcript
+    /// re-renders every frame from a watch that mostly delivers unchanged
+    /// entries, so the same fingerprint cache as the primary transcript is
+    /// required here too (keys are doc-prefixed; the LRU is bounded by
+    /// [`super::MAX_SUBAGENT_ROWS`]).
+    pub(super) fn rows_for_doc(&self, doc_id: &str, entry: &SessionMessageEntry) -> Vec<Row> {
+        let streaming = entry.status == Some(MessageStatus::Streaming);
+        let fingerprint = entry_fingerprint(entry, false);
+        let cache_key = format!("{doc_id}\u{1}{}", entry.id);
+        if !streaming {
+            let cached = self
+                .sub_cache
+                .borrow()
+                .get(&cache_key)
+                .filter(|cached| cached.fingerprint == fingerprint)
+                .map(|cached| cached.rows.clone());
+            if let Some(rows) = cached {
+                self.touch_sub_cache(&cache_key);
+                return rows;
+            }
+        }
+
+        let mut live_parsers = self.live_parsers.borrow_mut();
+        let mut tree_cache = self.tree_cache.borrow_mut();
+        let mut parse = |key: &str, text: &str| -> Arc<BlockTree> {
+            let doc_key = format!("{doc_id}\u{1}{key}");
+            parse_for_row(streaming, &doc_key, text, &mut live_parsers, &mut tree_cache).0
+        };
+        let rows = rows_for_entry(entry, false, &mut parse);
+        drop(parse);
+        drop(live_parsers);
+        drop(tree_cache);
+
+        if !streaming {
+            self.sub_cache.borrow_mut().insert(
+                cache_key.clone(),
+                CachedRows {
+                    fingerprint,
+                    rows: rows.clone(),
+                },
+            );
+            self.touch_sub_cache(&cache_key);
+        }
+        rows
+    }
+
+    fn touch_sub_cache(&self, cache_key: &str) {
+        let mut recency = self.sub_recency.borrow_mut();
+        recency.retain(|candidate| candidate != cache_key);
+        recency.push_back(cache_key.to_string());
+        let mut cache = self.sub_cache.borrow_mut();
+        while cache.len() > super::MAX_SUBAGENT_ROWS {
+            let Some(victim) = recency.pop_front() else {
+                break;
+            };
+            if victim != cache_key {
+                cache.remove(&victim);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

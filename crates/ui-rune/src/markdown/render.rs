@@ -163,13 +163,18 @@ fn write_block(block: &Block, depth: usize, out: &mut String) {
             out.push('\n');
         }
         Block::CodeBlock { language, code } => {
-            out.push_str("```");
+            // The fence must be longer than any backtick run inside the code,
+            // or a fence in the payload closes it early.
+            let fence = code_fence(code);
+            out.push_str(&fence);
             if let Some(language) = language {
                 out.push_str(language);
             }
             out.push('\n');
             out.push_str(code);
-            out.push_str("\n```\n");
+            out.push('\n');
+            out.push_str(&fence);
+            out.push('\n');
         }
         Block::BlockQuote { children } => {
             let mut inner = String::new();
@@ -236,6 +241,21 @@ fn write_block(block: &Block, depth: usize, out: &mut String) {
     }
 }
 
+/// A code fence longer than any backtick run in the payload (≥ 3).
+fn code_fence(code: &str) -> String {
+    let mut longest = 0usize;
+    let mut run = 0usize;
+    for ch in code.chars() {
+        if ch == '`' {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    "`".repeat((longest + 1).max(3))
+}
+
 fn write_table_row(cells: &[Vec<InlineRun>], out: &mut String) {
     out.push('|');
     for cell in cells {
@@ -250,13 +270,11 @@ fn write_table_row(cells: &[Vec<InlineRun>], out: &mut String) {
 
 fn write_runs(runs: &[InlineRun], out: &mut String) {
     for run in runs {
-        let mut text = run.text.replace('\n', "  \n");
         if run.style.code {
-            out.push('`');
-            out.push_str(&text);
-            out.push('`');
+            out.push_str(&code_span(&run.text));
             continue;
         }
+        let text = escape_inline(&run.text).replace('\n', "  \n");
         if run.style.bold {
             out.push_str("**");
         }
@@ -270,7 +288,7 @@ fn write_runs(runs: &[InlineRun], out: &mut String) {
             out.push('[');
             out.push_str(&text);
             out.push_str("](");
-            out.push_str(url);
+            out.push_str(&escape_url(url));
             out.push(')');
         } else {
             out.push_str(&text);
@@ -284,7 +302,86 @@ fn write_runs(runs: &[InlineRun], out: &mut String) {
         if run.style.bold {
             out.push_str("**");
         }
-        text.clear();
+    }
+}
+
+/// Backslash-escape the characters a LITERAL text run must not re-parse as
+/// markup when its block is rebuilt.
+///
+/// The block tree carries runs, not source ranges, so the renderer re-emits
+/// source. Without this, a prompt containing `*`, `_`, `[`, a backtick or a
+/// line starting `- ` came back as emphasis, a link or a list on the round
+/// trip. CommonMark treats a backslash before any ASCII punctuation as that
+/// literal character, so escaping generously is safe (it never changes the
+/// rendered text); `|` is left to the table writer, which owns cell escaping.
+fn escape_inline(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    let mut line_start = true;
+    let mut digits_only = true;
+    for ch in text.chars() {
+        if ch == '\n' {
+            out.push(ch);
+            line_start = true;
+            digits_only = true;
+            continue;
+        }
+        if line_start && ch == ' ' {
+            out.push(ch);
+            continue;
+        }
+        let ordered_marker = (ch == '.' || ch == ')') && digits_only && !line_start;
+        if ordered_marker
+            || matches!(
+                ch,
+                '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '#' | '~' | '-' | '+' | '=' | '!'
+            )
+        {
+            out.push('\\');
+        }
+        out.push(ch);
+        line_start = false;
+        digits_only &= ch.is_ascii_digit();
+    }
+    out
+}
+
+/// An inline code span that survives backticks in its own text: a fence longer
+/// than the longest run inside, padded when the content starts or ends with a
+/// backtick or a space.
+fn code_span(text: &str) -> String {
+    let mut longest = 0usize;
+    let mut run = 0usize;
+    for ch in text.chars() {
+        if ch == '`' {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    let fence = "`".repeat(longest + 1);
+    let pad = if text.starts_with('`')
+        || text.ends_with('`')
+        || text.starts_with(' ')
+        || text.ends_with(' ')
+    {
+        " "
+    } else {
+        ""
+    };
+    format!("{fence}{pad}{text}{pad}{fence}")
+}
+
+/// A link destination in `(...)` form: angle-bracketed when it holds
+/// whitespace or parentheses, otherwise backslash-escaped for `)` and `\`.
+fn escape_url(url: &str) -> String {
+    if url
+        .chars()
+        .any(|ch| ch.is_whitespace() || ch == '(' || ch == ')' || ch == '<' || ch == '>')
+    {
+        format!("<{}>", url.replace('<', "%3C").replace('>', "%3E"))
+    } else {
+        url.replace('\\', "\\\\").replace(')', "\\)")
     }
 }
 
@@ -393,8 +490,9 @@ mod tests {
             "- one\n- two\n  - nested\n",
             "1. first\n2. second\n",
             "```rust\nlet x = 1;\n```\n",
-            "| a | b |\n|---|---|\n| 1 | 2 |\n",
+            "| a | b |\n|---|---|\n| 1 \\| 2 | 2 |\n",
             "> quoted\n> text\n",
+            "para with **literal \\* stars** and \\`tick\\`\n",
         ];
         for source in cases {
             let tree = parse_full(source);
@@ -440,6 +538,89 @@ mod tests {
         assert!(!spans.is_empty());
         for (range, _) in spans {
             assert!(range.start < range.end && range.end <= code.len());
+        }
+    }
+
+    /// Rebuild every block of `source` and parse the result again; the blocks
+    /// must match the original tree (kind + inline runs), proving the renderer
+    /// did not turn literal text into markup.
+    fn assert_round_trip(source: &str) {
+        let tree = parse_full(source);
+        let rebuilt: String = tree
+            .blocks
+            .iter()
+            .map(|top| block_source(&top.block))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let again = parse_full(&rebuilt);
+        assert_eq!(
+            tree.blocks.len(),
+            again.blocks.len(),
+            "block count changed for {source:?}:\n{rebuilt}"
+        );
+        for (a, b) in tree.blocks.iter().zip(again.blocks.iter()) {
+            assert_eq!(
+                a.block, b.block,
+                "block changed for {source:?}:\n{rebuilt}"
+            );
+        }
+    }
+
+    #[test]
+    fn literal_markdown_metacharacters_survive_the_round_trip() {
+        let cases = [
+            "a \\* b \\* c",
+            "literal \\_underscores\\_ here",
+            "\\[not a link\\] and \\[x\\]\\(y\\)",
+            "a backtick \\` in prose",
+            "\\- not a list\nsecond line",
+            "1\\. not an ordered list",
+            "\\# not a heading",
+            "\\> not a quote",
+            "\\!\\[not an image\\](x)",
+            "\\<not html\\>",
+            "a \\~tilde\\~ and \\|pipe\\|",
+            "\\\\ a literal backslash",
+        ];
+        for source in cases {
+            assert_round_trip(source);
+        }
+    }
+
+    #[test]
+    fn inline_code_with_backticks_uses_a_longer_fence() {
+        assert_round_trip("``code with a ` tick``\n");
+        let tree = parse_full("``code with a ` tick``\n");
+        let rebuilt = block_source(&tree.blocks[0].block);
+        assert!(rebuilt.contains("``"), "{rebuilt}");
+        assert_round_trip(&rebuilt);
+    }
+
+    #[test]
+    fn code_fence_longer_than_the_payload() {
+        let source = "````text\ncontains ``` inside\n````\n";
+        let tree = parse_full(source);
+        let rebuilt = block_source(&tree.blocks[0].block);
+        assert!(rebuilt.starts_with("````text"), "{rebuilt}");
+        assert_round_trip(source);
+    }
+
+    #[test]
+    fn paragraph_line_starts_cannot_become_blocks() {
+        for source in ["\\- dashed\n", "\\+ plus\n", "\\= equals\n", "\\# hash\n"] {
+            let tree = parse_full(source);
+            assert!(
+                matches!(tree.blocks[0].block, Block::Paragraph { .. }),
+                "{source:?} parsed as {:?}",
+                tree.blocks[0].block
+            );
+            let rebuilt = block_source(&tree.blocks[0].block);
+            let again = parse_full(&rebuilt);
+            assert!(
+                matches!(again.blocks[0].block, Block::Paragraph { .. }),
+                "round trip of {source:?} became {:?}:\n{rebuilt}",
+                again.blocks[0].block
+            );
         }
     }
 }

@@ -26,6 +26,7 @@ impl NotificationsPage {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn toggle_row(
     theme: &Theme,
     first: bool,

@@ -8,7 +8,7 @@ use hearth_rpc::methods;
 use crate::state::App;
 
 use super::model::{CheckoutKind, CheckoutPlan};
-use super::{PickersEvent, PickersState, loads};
+use super::{PickersEvent, PickersState, loads, post};
 
 /// The ref pick lives beside the switch path it falls back to, so the checkout
 /// module exposes the whole "pick a ref" surface: `pickers::checkout::pick_ref`.
@@ -64,6 +64,7 @@ impl PickersState {
             return;
         };
         let tx = self.tx.clone();
+        let wake = bridge.clone();
         let local = self.local_device.clone();
         bridge.spawn(async move {
             let mut params = serde_json::Map::new();
@@ -87,10 +88,14 @@ impl PickersState {
                 .await
                 .map(|_| ())
                 .map_err(|err| err.to_string());
-            let _ = tx.send(PickersEvent::Switched {
-                name: ref_name,
-                result,
-            });
+            post(
+                &tx,
+                &wake,
+                PickersEvent::Switched {
+                    name: ref_name,
+                    result,
+                },
+            );
         });
     }
 }
@@ -133,9 +138,10 @@ mod tests {
     use hearth_proto::RepoRef;
 
     fn state_with_refs(refs: Vec<RepoRef>) -> PickersState {
-        let mut state = PickersState::default();
-        state.refs = Loadable::Ready(refs);
-        state
+        PickersState {
+            refs: Loadable::Ready(refs),
+            ..PickersState::default()
+        }
     }
 
     fn bare(name: &str, current: bool, worktree: Option<&str>) -> RepoRef {

@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use rune::{Cx, El};
+use rune::{Cx, El, Tx};
 
 use crate::settings::SettingsSection;
 use crate::state::{App, GatePhase};
@@ -107,6 +107,19 @@ pub enum SplashPhase {
     Gone,
 }
 
+/// The in-app update strip's state (hearth `UpdateFlow`): the manifest fetch + payload
+/// staging run on [`crate::bridge::Bridge`], this is only what the strip shows.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum UpdateFlow {
+    #[default]
+    Idle,
+    Downloading,
+    /// Staged payload ready — one click restarts into it (macOS bundle path, or
+    /// managed `current/hearth` exe path).
+    Ready(String),
+    Failed(String),
+}
+
 /// A right-pane subagent tab: the doc and the strip title.
 #[derive(Debug, Clone)]
 pub struct SubagentTab {
@@ -168,6 +181,8 @@ pub enum ShellTask {
         generation: u64,
         result: Result<String, String>,
     },
+    /// An update payload finished staging (`Ok(exe/bundle path)`) or failed.
+    UpdateStaged(Result<String, String>),
 }
 
 /// View-local shell state: route, history, panes, popups, splash and per-chat panels.
@@ -221,6 +236,19 @@ pub struct ShellState {
     pub composer_focused_once: bool,
     /// Measured bottom chrome (composer stack) for the jump pill.
     pub bottom_stack: f32,
+    /// Last effective indicator per chat: the transition chime/banner baseline.
+    pub sound_prev: HashMap<String, hearth_proto::SessionStatus>,
+    /// The window holds keyboard focus (wired from Rune's `App::on_focus`). The
+    /// background-only banner setting reads it.
+    pub window_focused: bool,
+    /// An OS file drag is over the chat column: draw the "Drop images to attach" veil.
+    pub drop_hover: bool,
+    /// The tab index a titlebar-strip drag is currently over (live reorder preview).
+    pub right_tab_drag: Option<usize>,
+    /// How this binary was installed; decides what the update strip's click does.
+    pub install: hearth_update::InstallKind,
+    /// The update strip's visible phase.
+    pub update_flow: UpdateFlow,
     /// `side` channel results from `Bridge` jobs.
     pub(crate) task_tx: Sender<ShellTask>,
     pub(crate) task_rx: Receiver<ShellTask>,
@@ -277,6 +305,14 @@ impl Default for ShellState {
             focus_composer: false,
             composer_focused_once: false,
             bottom_stack: 0.0,
+            sound_prev: HashMap::new(),
+            // The app opens focused; a native focus transition corrects this
+            // before the first banner (Rune's `App::on_focus`).
+            window_focused: true,
+            drop_hover: false,
+            right_tab_drag: None,
+            install: hearth_update::detect_install(),
+            update_flow: UpdateFlow::Idle,
             task_tx,
             task_rx,
         }
@@ -340,6 +376,9 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
     // Composer popups (pickers, @ mentions, / commands, lightbox) mount above
     // the shell's own overlays.
     crate::composer::popups(app, theme, &mut layer);
+    if let Some(overlay) = crate::transcript::lightbox_overlay(app, theme) {
+        layer.push(overlay);
+    }
     rune_kit::root(body, layer)
 }
 
@@ -402,6 +441,21 @@ pub fn toggle_sidebar(app: &mut App) {
         app.shell.spaces_menu = None;
     }
     app.save_settings();
+}
+
+/// Native focus change. Lead wiring (Rune's `App` builder in `lib.rs`):
+///
+/// ```ignore
+/// .on_focus(|app: &mut App, focused: bool, _tx: &mut Tx| {
+///     hearth_ui_rune::shell::on_focus(app, focused)
+/// })
+/// ```
+///
+/// `AppSpec` has no `on_focus` field; the callback belongs on the `rune::App`
+/// builder next to `.on_close(..)` in [`crate::run_app`]. The notification gate
+/// reads [`ShellState::window_focused`].
+pub fn on_focus(app: &mut App, focused: bool) {
+    app.shell.window_focused = focused;
 }
 
 /// Flip the right pane for the current session.
@@ -580,6 +634,11 @@ pub fn poll(app: &mut App) -> bool {
     for task in tasks {
         match task {
             ShellTask::Notice(message) => app.shell.sidebar_notice = Some(message),
+            ShellTask::UpdateStaged(Ok(path)) => app.shell.update_flow = UpdateFlow::Ready(path),
+            ShellTask::UpdateStaged(Err(message)) => {
+                tracing::warn!(%message, "update download failed");
+                app.shell.update_flow = UpdateFlow::Failed(message);
+            }
             other => changed |= spaces::apply_task(app, other),
         }
     }
@@ -640,6 +699,37 @@ pub fn resolved_right_active(app: &App) -> RightSurface {
 pub fn set_right_active(app: &mut App, surface: RightSurface) {
     let key = app.shell.panel_key(app);
     app.shell.panels.update(&key, |p| p.right_active = surface);
+    if matches!(surface, RightSurface::Terminal(_)) {
+        app.shell.focus_terminal = true;
+    }
+}
+
+/// Move a stored surface tab (`from` → `to`); the stored order is the titlebar strip's
+/// order. Indices are clamped and an unchanged move is a no-op.
+pub fn reorder_right_surface(app: &mut App, from: usize, to: usize) {
+    let key = app.shell.panel_key(app);
+    let Some(tabs) = app.shell.right_tabs.get_mut(&key) else {
+        return;
+    };
+    if from >= tabs.len() {
+        return;
+    }
+    let to = to.min(tabs.len() - 1);
+    if from == to {
+        return;
+    }
+    let surface = tabs.remove(from);
+    tabs.insert(to, surface);
+}
+
+/// The drop index for a titlebar-strip drag starting at `from`: uniform chip slots of
+/// `slot` points, the same quantisation the terminal tab strip uses.
+pub fn surface_drop_index(from: usize, dx: f32, slot: f32, count: usize) -> usize {
+    if count == 0 || slot <= 0.0 {
+        return from;
+    }
+    let moved = from as f32 + (dx / slot).round();
+    moved.clamp(0.0, (count - 1) as f32) as usize
 }
 
 /// Open a fresh diff surface.
@@ -788,6 +878,11 @@ pub fn delete_chat(app: &mut App, chat_id: String) {
         }
     }
     app.shell.panels.remove(&chat_id);
+    app.shell.sound_prev.remove(&chat_id);
+    // The chat's PTY tabs outlive its surface tabs: `close_right_surface` only
+    // closes the terminal tab a surface names. This drops every terminal tab of
+    // the chat (CloseTerminal per tab) whether or not it is selected.
+    crate::terminal::close_chat_tabs(app, &chat_id);
     mutate(
         app,
         serde_json::json!({ "op": "deleteChat", "chatId": chat_id }),
@@ -840,4 +935,186 @@ pub fn dismiss_notice(app: &mut App) {
 /// Dismiss the update strip for a version.
 pub fn dismiss_update(app: &mut App, version: String) {
     app.shell.update_dismissed = Some(version);
+}
+
+// ---------------------------------------------------------------------------
+// In-app update
+// ---------------------------------------------------------------------------
+
+/// What clicking the update strip does, from the install kind and the current phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateClick {
+    /// Unmanaged (source) install: hide the strip for this version.
+    Dismiss,
+    /// Fetch the manifest and stage the payload.
+    Download,
+    /// A download is in flight: the strip is not clickable.
+    Wait,
+    /// A payload is staged: swap it in and relaunch.
+    Apply,
+}
+
+/// Hearth's `on_update_strip_click` decision, without side effects.
+pub fn update_click_action(
+    install: &hearth_update::InstallKind,
+    flow: &UpdateFlow,
+) -> UpdateClick {
+    use hearth_update::InstallKind;
+    match install {
+        InstallKind::Unmanaged => UpdateClick::Dismiss,
+        InstallKind::MacApp { .. } | InstallKind::Managed { .. } => match flow {
+            UpdateFlow::Idle | UpdateFlow::Failed(_) => UpdateClick::Download,
+            UpdateFlow::Downloading => UpdateClick::Wait,
+            UpdateFlow::Ready(_) => UpdateClick::Apply,
+        },
+    }
+}
+
+/// The update strip's press handler (takes `Tx` so a staged payload can quit+relaunch).
+pub fn on_update_strip(app: &mut App, tx: &mut Tx) {
+    match update_click_action(&app.shell.install, &app.shell.update_flow) {
+        UpdateClick::Dismiss => {
+            if let Some(version) = app
+                .update
+                .as_ref()
+                .and_then(|status| status.latest_version.clone())
+            {
+                dismiss_update(app, version);
+            }
+        }
+        UpdateClick::Download => begin_update_download(app),
+        UpdateClick::Wait => {}
+        UpdateClick::Apply => {
+            if let UpdateFlow::Ready(staged) = app.shell.update_flow.clone() {
+                apply_staged_update(app, &staged, tx);
+            }
+        }
+    }
+}
+
+/// Fetch the manifest and stage the update payload (macOS app tarball or managed
+/// headless tarball). The result comes back as [`ShellTask::UpdateStaged`].
+fn begin_update_download(app: &mut App) {
+    app.shell.update_flow = UpdateFlow::Downloading;
+    let edge_url = app.config.edge_url.clone();
+    let data_dir = app.config.data_dir.clone();
+    let install = app.shell.install.clone();
+    let bridge = app.bridge.clone();
+    let tx = app.shell.task_tx.clone();
+    app.bridge.spawn(async move {
+        let outcome = stage_update(&edge_url, &data_dir, &install).await;
+        let _ = tx.send(ShellTask::UpdateStaged(outcome));
+        bridge.wake();
+    });
+}
+
+/// The download half of the flow (hearth's `begin_update_download` body).
+async fn stage_update(
+    edge_url: &str,
+    data_dir: &std::path::Path,
+    install: &hearth_update::InstallKind,
+) -> Result<String, String> {
+    use hearth_update::InstallKind;
+    let manifest = hearth_update::fetch_latest(edge_url)
+        .await
+        .map_err(|err| format!("{err:#}"))?;
+    match install {
+        InstallKind::MacApp { .. } => hearth_update::stage_mac_app(edge_url, &manifest, data_dir)
+            .await
+            .map(|path| path.display().to_string())
+            .map_err(|err| format!("{err:#}")),
+        InstallKind::Managed { app_root } => {
+            hearth_update::stage_headless(edge_url, &manifest, app_root)
+                .await
+                .map_err(|err| format!("{err:#}"))?;
+            hearth_update::apply_headless(app_root, &manifest.version)
+                .map_err(|err| format!("{err:#}"))?;
+            let _ = hearth_update::restart_service();
+            Ok(app_root.join("current").join("hearth").display().to_string())
+        }
+        InstallKind::Unmanaged => Err("this install is not update-managed".to_string()),
+    }
+}
+
+/// Swap a staged payload in and relaunch (hearth's `apply_staged_update`). macOS
+/// replaces the `.app` bundle; a managed install already flipped `current` during
+/// the download and only relaunches the new exe.
+fn apply_staged_update(app: &mut App, staged: &str, tx: &mut Tx) {
+    use hearth_update::InstallKind;
+    match app.shell.install.clone() {
+        InstallKind::MacApp { bundle } => {
+            match hearth_update::apply_mac_app(std::path::Path::new(staged), &bundle) {
+                Ok(()) => {
+                    hearth_update::relaunch_app_after_exit(&bundle);
+                    tx.quit();
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, "update apply failed");
+                    app.shell.update_flow = UpdateFlow::Failed(format!("{err:#}"));
+                }
+            }
+        }
+        InstallKind::Managed { .. } => {
+            hearth_update::relaunch_exe_after_exit(std::path::Path::new(staged));
+            tx.quit();
+        }
+        InstallKind::Unmanaged => {}
+    }
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+    use hearth_update::InstallKind;
+
+    fn managed() -> InstallKind {
+        InstallKind::Managed {
+            app_root: std::path::PathBuf::from("/home/u/.hearth/app"),
+        }
+    }
+
+    #[test]
+    fn update_click_follows_the_install_kind_and_phase() {
+        assert_eq!(
+            update_click_action(&InstallKind::Unmanaged, &UpdateFlow::Idle),
+            UpdateClick::Dismiss
+        );
+        assert_eq!(
+            update_click_action(&managed(), &UpdateFlow::Idle),
+            UpdateClick::Download
+        );
+        assert_eq!(
+            update_click_action(&managed(), &UpdateFlow::Failed("x".into())),
+            UpdateClick::Download
+        );
+        assert_eq!(
+            update_click_action(&managed(), &UpdateFlow::Downloading),
+            UpdateClick::Wait
+        );
+        assert_eq!(
+            update_click_action(&managed(), &UpdateFlow::Ready("/tmp/x".into())),
+            UpdateClick::Apply
+        );
+        assert_eq!(
+            update_click_action(
+                &InstallKind::MacApp {
+                    bundle: std::path::PathBuf::from("/Applications/Hearth.app")
+                },
+                &UpdateFlow::Ready("/tmp/x".into())
+            ),
+            UpdateClick::Apply
+        );
+    }
+
+    #[test]
+    fn surface_drop_index_quantizes_uniform_slots() {
+        assert_eq!(surface_drop_index(0, 0.0, 116.0, 3), 0);
+        assert_eq!(surface_drop_index(0, 60.0, 116.0, 3), 1);
+        assert_eq!(surface_drop_index(0, -400.0, 116.0, 3), 0);
+        assert_eq!(surface_drop_index(2, 400.0, 116.0, 3), 2);
+        assert_eq!(surface_drop_index(1, 116.0, 116.0, 3), 2);
+        // Empty strip / nonsense slot: stay put.
+        assert_eq!(surface_drop_index(0, 50.0, 116.0, 0), 0);
+        assert_eq!(surface_drop_index(2, 50.0, 0.0, 3), 2);
+    }
 }

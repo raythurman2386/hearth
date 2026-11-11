@@ -988,3 +988,670 @@ fn spawn_subagent_watch(
         },
     )
 }
+
+#[cfg(test)]
+mod tests {
+    //! Pure reducer coverage for [`App`]: the gpui `AppState` behaviour this
+    //! port replaced, driven with fixed clocks so every grace-window boundary
+    //! is exact instead of timing-dependent.
+
+    use super::*;
+    use chrono::TimeDelta;
+    use hearth_doc::{MessageRole, SessionMessageEntry};
+    use hearth_proto::{
+        ChatConnectivity, ChatIndicator, ConnectivityState, SessionStatus,
+    };
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn base() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
+            .unwrap()
+            .to_utc()
+    }
+
+    /// A test app with a throwaway data dir, so the developer's
+    /// `ui-settings.json` cannot leak into assertions.
+    fn app() -> App {
+        let dir = tempfile::tempdir().expect("temp data dir");
+        App::new(crate::UiConfig {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        })
+    }
+
+    fn chat(
+        id: &str,
+        device: &str,
+        created_min: i64,
+        last_message_min: Option<i64>,
+    ) -> Chat {
+        Chat {
+            id: id.into(),
+            device_id: device.into(),
+            title: None,
+            archived: false,
+            cwd: None,
+            branch: None,
+            checkout_id: None,
+            config: None,
+            last_message_preview: None,
+            last_message_at: last_message_min.map(|m| base() + TimeDelta::minutes(m)),
+            created_at: base() + TimeDelta::minutes(created_min),
+            harness_session_id: None,
+            harness_session_cwd: None,
+            space_id: None,
+            last_seen_at: None,
+            room_gen: None,
+        }
+    }
+
+    fn space(id: &str, device: &str, name: &str, created_min: i64) -> Space {
+        Space {
+            id: id.into(),
+            device_id: device.into(),
+            path: format!("/repos/{name}"),
+            name: Some(name.into()),
+            git_detected: false,
+            git_checked_at: None,
+            checkout_id: None,
+            created_at: base() + TimeDelta::minutes(created_min),
+        }
+    }
+
+    fn entry(id: &str) -> SessionMessageEntry {
+        SessionMessageEntry {
+            id: id.into(),
+            role: MessageRole::User,
+            parts: Vec::new(),
+            created_at: 0,
+            device_id: "dev".into(),
+            status: None,
+            continuation_of: None,
+        }
+    }
+
+    fn ids(chats: &[Chat]) -> Vec<&str> {
+        chats.iter().map(|c| c.id.as_str()).collect()
+    }
+
+    // ---- lists and selection ----
+
+    #[test]
+    fn apply_chats_sorts_by_recency_then_creation() {
+        let mut app = app();
+        app.apply_chats(vec![
+            chat("no-messages-new", "dev", 5, None),
+            chat("old-message", "dev", 0, Some(1)),
+            chat("new-message", "dev", 0, Some(20)),
+        ]);
+        assert_eq!(
+            ids(&app.chats),
+            ["new-message", "no-messages-new", "old-message"],
+            "last message, falling back to creation, newest first"
+        );
+        assert!(app.chats_synced);
+    }
+
+    #[test]
+    fn apply_chats_drops_a_vanished_selection_and_clears_the_transcript() {
+        let mut app = app();
+        app.selected_chat = Some("gone".into());
+        app.transcript = vec![entry("m1")];
+        app.transcript_replayed = true;
+
+        app.apply_chats(vec![chat("kept", "dev", 0, None)]);
+
+        assert_eq!(app.selected_chat, None);
+        assert!(app.transcript.is_empty());
+        assert!(!app.transcript_replayed);
+    }
+
+    #[test]
+    fn apply_chats_keeps_a_selection_that_survived() {
+        let mut app = app();
+        app.selected_chat = Some("kept".into());
+        app.transcript = vec![entry("m1")];
+        app.transcript_replayed = true;
+
+        app.apply_chats(vec![chat("kept", "dev", 0, None)]);
+
+        assert_eq!(app.selected_chat.as_deref(), Some("kept"));
+        assert_eq!(app.transcript.len(), 1);
+        assert!(app.transcript_replayed);
+    }
+
+    #[test]
+    fn apply_spaces_sorts_and_heals_a_vanished_selection() {
+        let mut app = app();
+        app.selected_device = Some("dev-b".into());
+        app.selected_space = Some("gone".into());
+
+        app.apply_spaces(vec![
+            space("sp-b", "dev-b", "beta", 2),
+            space("sp-a", "dev-b", "alpha", 1),
+            space("sp-c", "dev-a", "gamma", 0),
+        ]);
+
+        assert_eq!(
+            app.spaces.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["sp-c", "sp-a", "sp-b"],
+            "creation order, id tiebreak"
+        );
+        assert_eq!(app.selected_space.as_deref(), Some("sp-a"));
+        assert!(app.spaces_synced);
+    }
+
+    #[test]
+    fn apply_spaces_prefers_the_local_device_when_nothing_is_picked() {
+        let mut app = app();
+        app.local_device_id = Some("dev-local".into());
+        app.selected_space = None;
+
+        app.apply_spaces(vec![
+            space("remote", "dev-remote", "aaa", 0),
+            space("local", "dev-local", "zzz", 1),
+        ]);
+
+        assert_eq!(app.selected_space.as_deref(), Some("local"));
+    }
+
+    #[test]
+    fn apply_spaces_leaves_the_canvas_alone_when_no_project_is_picked() {
+        let mut app = app();
+        app.no_project = true;
+        app.selected_space = None;
+
+        app.apply_spaces(vec![space("sp-a", "dev", "alpha", 0)]);
+
+        assert_eq!(app.selected_space, None, "the new-session canvas stays put");
+    }
+
+    #[test]
+    fn gate_follows_the_connection_and_never_lies() {
+        let mut app = app();
+        app.connection = ConnectionStatus::Connecting;
+        assert_eq!(app.gate(), GatePhase::Loading);
+        app.connection = ConnectionStatus::Failed("boom".into());
+        assert_eq!(app.gate(), GatePhase::Failed("boom".into()));
+        app.connection = ConnectionStatus::Ready;
+        assert_eq!(app.gate(), GatePhase::Ready);
+    }
+
+    #[test]
+    fn visible_chats_hides_archived_rows() {
+        let mut app = app();
+        let mut archived = chat("archived", "dev", 0, Some(9));
+        archived.archived = true;
+        app.apply_chats(vec![chat("live", "dev", 0, None), archived]);
+        let visible: Vec<_> = app.visible_chats().map(|c| c.id.as_str()).collect();
+        assert_eq!(visible, ["live"]);
+    }
+
+    #[test]
+    fn select_chat_scopes_the_space_or_the_device_and_clears_the_transcript() {
+        let mut app = app();
+        let mut with_space = chat("in-space", "dev-a", 0, None);
+        with_space.space_id = Some("sp-1".into());
+        let loose = chat("loose", "dev-b", 0, None);
+        app.apply_chats(vec![with_space, loose]);
+
+        app.transcript = vec![entry("stale")];
+        app.select_chat(Some("in-space".into()));
+        assert_eq!(app.selected_chat.as_deref(), Some("in-space"));
+        assert_eq!(app.selected_space.as_deref(), Some("sp-1"));
+        assert!(!app.no_project);
+        assert!(app.transcript.is_empty(), "a different chat starts empty");
+        assert!(app.auto_selected);
+
+        app.select_chat(Some("loose".into()));
+        assert!(app.no_project);
+        assert_eq!(app.selected_device.as_deref(), Some("dev-b"));
+
+        app.transcript = vec![entry("keep-on-reselect")];
+        app.select_chat(Some("loose".into()));
+        assert_eq!(
+            app.transcript.len(),
+            1,
+            "re-selecting the same chat must not wipe its transcript"
+        );
+
+        app.select_chat(None);
+        assert_eq!(app.selected_chat, None);
+        assert!(app.transcript.is_empty());
+    }
+
+    #[test]
+    fn select_space_marks_the_canvas_and_follows_the_owner_device() {
+        let mut app = app();
+        app.apply_spaces(vec![space("sp-a", "dev-a", "alpha", 0)]);
+
+        app.select_space(Some("sp-a".into()));
+        assert_eq!(app.selected_space.as_deref(), Some("sp-a"));
+        assert_eq!(app.selected_device.as_deref(), Some("dev-a"));
+        assert!(!app.no_project);
+
+        app.select_space(None);
+        assert!(app.no_project);
+        assert_eq!(
+            app.selected_space.as_deref(),
+            Some("sp-a"),
+            "None means the new-session canvas, not 'forget the project'"
+        );
+    }
+
+    // ---- presence and delivery ----
+
+    fn device(id: &str, seen_secs: Option<i64>) -> Device {
+        Device {
+            id: id.into(),
+            name: id.into(),
+            platform: "linux".into(),
+            last_seen_at: seen_secs.map(|s| base() - TimeDelta::seconds(s)),
+            created_at: Some(base()),
+            version: None,
+        }
+    }
+
+    #[test]
+    fn device_online_is_local_fresh_or_unknown() {
+        let mut app = app();
+        app.local_device_id = Some("me".into());
+        app.apply_devices(vec![
+            device("fresh", Some(10)),
+            device("edge", Some(70)),
+            device("stale", Some(71)),
+            Device {
+                last_seen_at: None,
+                ..device("never", None)
+            },
+        ]);
+
+        assert!(app.device_online("me", base()), "this device is always here");
+        assert!(app.device_online("fresh", base()));
+        assert!(app.device_online("edge", base()), "70s is still inside the window");
+        assert!(!app.device_online("stale", base()));
+        assert!(app.device_online("never", base()), "no clock, no claim");
+        assert!(
+            app.device_online("unknown-id", base()),
+            "an id no device row mentions is not evidence of absence"
+        );
+    }
+
+    /// A device that checked in on the wall clock — `chat_delivery_degraded`
+    /// reads presence from `Utc::now()`, not from a test-supplied instant.
+    fn device_now(id: &str) -> Device {
+        Device {
+            last_seen_at: Some(Utc::now()),
+            ..device(id, None)
+        }
+    }
+
+    fn remote_chat() -> Chat {
+        chat("remote-chat", "dev-remote", 0, Some(0))
+    }
+
+    fn connectivity(state: ConnectivityState, rooms: Vec<ChatConnectivity>) -> Connectivity {
+        Connectivity {
+            state,
+            chats: rooms,
+            ..Connectivity::default()
+        }
+    }
+
+    #[test]
+    fn chat_delivery_degraded_explains_every_offline_shape() {
+        let mut app = app();
+        app.local_device_id = Some("dev-local".into());
+        let mut local = chat("local-chat", "dev-local", 0, Some(0));
+        local.space_id = None;
+        app.apply_chats(vec![local, remote_chat()]);
+        app.apply_devices(vec![device_now("dev-remote")]);
+
+        app.apply_connectivity(connectivity(ConnectivityState::Disabled, vec![]));
+        assert!(!app.chat_delivery_degraded("remote-chat"));
+
+        app.apply_connectivity(connectivity(ConnectivityState::Offline, vec![]));
+        assert!(
+            !app.chat_delivery_degraded("local-chat"),
+            "a local chat never needs the edge"
+        );
+        assert!(app.chat_delivery_degraded("remote-chat"));
+        assert!(
+            app.chat_delivery_degraded("no-such-chat"),
+            "with no room to consult, an offline edge is the only truth"
+        );
+
+        app.apply_connectivity(connectivity(
+            ConnectivityState::Connected,
+            vec![ChatConnectivity {
+                chat_id: "remote-chat".into(),
+                connected: false,
+                pending_pushes: 0,
+            }],
+        ));
+        assert!(app.chat_delivery_degraded("remote-chat"), "room is down");
+
+        app.apply_connectivity(connectivity(
+            ConnectivityState::Connected,
+            vec![ChatConnectivity {
+                chat_id: "remote-chat".into(),
+                connected: true,
+                pending_pushes: 0,
+            }],
+        ));
+        assert!(!app.chat_delivery_degraded("remote-chat"));
+
+        // The room is fine, but its host stopped checking in.
+        app.apply_devices(vec![device("dev-remote", Some(600))]);
+        assert!(app.chat_delivery_degraded("remote-chat"));
+    }
+
+    #[test]
+    fn send_pending_overlays_working_until_the_grace_window() {
+        let mut app = app();
+        app.selected_chat = Some("c".into());
+        app.begin_pending_send("c", "msg-1", base());
+
+        assert!(app.send_pending("c", base()));
+        assert!(!app.send_undelivered("c", base()));
+        assert_eq!(app.pending_send_started("c", base()), Some(base()));
+
+        let edge = base() + TimeDelta::milliseconds(UNDELIVERED_GRACE_MS);
+        assert!(app.send_pending("c", edge), "the boundary is inclusive");
+        assert!(!app.send_undelivered("c", edge));
+
+        let past = base() + TimeDelta::milliseconds(UNDELIVERED_GRACE_MS + 1);
+        assert!(!app.send_pending("c", past));
+        assert!(app.send_undelivered("c", past));
+        assert_eq!(app.pending_send_started("c", past), None);
+    }
+
+    #[test]
+    fn degraded_delivery_holds_the_send_as_queued_indefinitely() {
+        let mut app = app();
+        app.local_device_id = Some("dev-local".into());
+        app.apply_chats(vec![remote_chat()]);
+        app.apply_devices(vec![device_now("dev-remote")]);
+        app.apply_connectivity(connectivity(ConnectivityState::Offline, vec![]));
+        app.begin_pending_send("remote-chat", "msg-1", base());
+
+        let much_later = base() + TimeDelta::minutes(10);
+        assert!(app.send_pending("remote-chat", much_later));
+        assert!(
+            app.send_undelivered("remote-chat", much_later),
+            "the truth is still 'not delivered'"
+        );
+        assert!(app.send_queued("remote-chat", much_later));
+        assert_eq!(
+            app.pending_send_started("remote-chat", much_later),
+            Some(base()),
+            "the elapsed timer keeps its original base while queued"
+        );
+    }
+
+    #[test]
+    fn retry_restarts_the_grace_clock_and_end_only_ends_its_own_send() {
+        let mut app = app();
+        app.selected_chat = Some("c".into());
+        app.begin_pending_send("c", "msg-1", base());
+
+        let past = base() + TimeDelta::milliseconds(UNDELIVERED_GRACE_MS + 5);
+        app.retry_pending_send("c", past);
+        assert!(!app.send_undelivered("c", past));
+        assert_eq!(app.pending_send_started("c", past), Some(past));
+
+        app.end_pending_send("c", "someone-else");
+        assert!(app.send_pending("c", past), "a stale ack must not clear it");
+        app.end_pending_send("c", "msg-1");
+        assert!(!app.send_pending("c", past));
+    }
+
+    #[test]
+    fn display_status_prefers_the_in_flight_send_over_the_session() {
+        let mut app = app();
+        let mut c = chat("c", "dev", 0, Some(1));
+        c.last_seen_at = None;
+        app.apply_chats(vec![c.clone()]);
+        app.selected_chat = Some("c".into());
+
+        assert_eq!(
+            app.display_status_for(&c, base()),
+            ChatIndicator::Completed,
+            "unseen activity"
+        );
+
+        app.begin_pending_send("c", "msg-1", base());
+        assert_eq!(app.display_status_for(&c, base()), ChatIndicator::Working);
+        let past = base() + TimeDelta::milliseconds(UNDELIVERED_GRACE_MS + 1);
+        assert_eq!(
+            app.display_status_for(&c, past),
+            ChatIndicator::Completed,
+            "past the window the overlay stops faking progress"
+        );
+
+        app.end_pending_send("c", "msg-1");
+        c.last_seen_at = Some(base() + TimeDelta::minutes(10));
+        app.chats[0].last_seen_at = c.last_seen_at;
+        assert_eq!(app.display_status_for(&c, base()), ChatIndicator::Idle);
+
+        app.apply_sessions(vec![Session {
+            chat_id: "c".into(),
+            device_id: "dev".into(),
+            status: SessionStatus::AwaitingInput,
+            started_at: None,
+            updated_at: base(),
+        }]);
+        assert_eq!(
+            app.display_status_for(&c, base()),
+            ChatIndicator::AwaitingInput
+        );
+    }
+
+    // ---- transfers and uploads ----
+
+    #[test]
+    fn transfers_track_by_upload_id_and_clamp_to_99() {
+        let mut app = app();
+        app.apply_transfers(vec![
+            TransferProgress {
+                upload_id: "u1".into(),
+                file_name: "a.png".into(),
+                done: 50,
+                total: 100,
+            },
+            TransferProgress {
+                upload_id: "u2".into(),
+                file_name: "b.png".into(),
+                done: 100,
+                total: 100,
+            },
+        ]);
+
+        assert_eq!(app.transfer_percent("u1"), Some(50));
+        assert_eq!(app.transfer_percent("u2"), Some(99), "100% stays a spinner");
+        assert_eq!(app.transfer_percent("missing"), None);
+
+        app.apply_transfers(vec![TransferProgress {
+            upload_id: "zero".into(),
+            file_name: "empty".into(),
+            done: 0,
+            total: 0,
+        }]);
+        assert_eq!(app.transfer_percent("zero"), None);
+
+        app.apply_transfers(vec![TransferProgress {
+            upload_id: "over".into(),
+            file_name: "over".into(),
+            done: 300,
+            total: 100,
+        }]);
+        assert_eq!(app.transfer_percent("over"), Some(99));
+    }
+
+    #[test]
+    fn upload_progress_reads_the_shared_counter_and_clears() {
+        let mut app = app();
+        let done = Arc::new(AtomicU64::new(0));
+        app.begin_upload_progress(200, done.clone());
+        assert_eq!(app.upload_progress_percent(), Some(0));
+
+        done.store(100, Ordering::Relaxed);
+        assert_eq!(app.upload_progress_percent(), Some(50));
+
+        done.store(200, Ordering::Relaxed);
+        assert_eq!(app.upload_progress_percent(), Some(99));
+
+        done.store(500, Ordering::Relaxed);
+        assert_eq!(
+            app.upload_progress_percent(),
+            Some(99),
+            "overshoot clamps, never exceeds the bar"
+        );
+
+        app.end_upload_progress();
+        assert_eq!(app.upload_progress_percent(), None);
+
+        app.begin_upload_progress(0, Arc::new(AtomicU64::new(0)));
+        assert_eq!(
+            app.upload_progress_percent(),
+            None,
+            "an empty transfer has no percentage to show"
+        );
+    }
+
+    // ---- echoes and acks ----
+
+    #[test]
+    fn echoes_are_per_chat_deduped_and_retired_by_the_doc_frame() {
+        let mut app = app();
+        app.push_echo("a", entry("m1"));
+        app.push_echo("a", entry("m1"));
+        app.push_echo("b", entry("m2"));
+        assert_eq!(app.pending_echoes().len(), 0, "nothing selected yet");
+
+        app.selected_chat = Some("a".into());
+        assert_eq!(app.pending_echoes().len(), 1, "push_echo dedupes by id");
+
+        app.remove_echo("a", "m1");
+        assert!(app.pending_echoes().is_empty());
+
+        app.push_echo("a", entry("m3"));
+        app.push_echo("a", entry("m4"));
+        app.apply_transcript(vec![entry("m3")]);
+        assert_eq!(
+            app.pending_echoes().iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            ["m4"],
+            "only the confirmed echo retires"
+        );
+        assert!(app.transcript_replayed);
+    }
+
+    #[test]
+    fn ack_clears_only_the_selected_chats_matching_send() {
+        let mut app = app();
+        app.apply_chats(vec![chat("a", "dev", 0, Some(0)), chat("b", "dev", 0, Some(0))]);
+        app.selected_chat = Some("a".into());
+        app.begin_pending_send("a", "msg-a", base());
+        app.begin_pending_send("b", "msg-b", base());
+
+        app.apply_transcript(vec![entry("msg-b")]);
+        assert!(
+            app.send_pending("a", base()),
+            "another chat's message is not an ack"
+        );
+
+        app.apply_transcript(vec![entry("msg-a")]);
+        assert!(!app.send_pending("a", base()));
+        assert!(
+            app.send_pending("b", base()),
+            "a's ack does not clear b's pending send"
+        );
+    }
+
+    // ---- diff comments ----
+
+    #[test]
+    fn diff_comments_add_remove_and_take_by_file() {
+        let mut app = app();
+        let one = crate::comments::DiffComment::new(
+            "src/main.rs",
+            crate::comments::CommentSide::New,
+            12,
+            "nit",
+        );
+        let two = crate::comments::DiffComment::new(
+            "src/lib.rs",
+            crate::comments::CommentSide::Old,
+            3,
+            "why?",
+        );
+        let one_id = one.id.clone();
+
+        app.add_diff_comment("src/main.rs", one);
+        app.add_diff_comment("src/main.rs", two.clone());
+        assert_eq!(app.diff_comments("src/main.rs").len(), 2);
+
+        app.remove_diff_comment("src/main.rs", &one_id);
+        assert_eq!(app.diff_comments("src/main.rs").first(), Some(&two));
+
+        app.remove_diff_comment("src/main.rs", "not-a-comment");
+        assert_eq!(app.diff_comments("src/main.rs").len(), 1);
+
+        app.add_diff_comment("empty-after-remove", two.clone());
+        app.remove_diff_comment("empty-after-remove", &two.id);
+        assert!(
+            app.diff_comments("empty-after-remove").is_empty(),
+            "the map drops empty entries"
+        );
+
+        let taken = app.take_diff_comments("src/main.rs");
+        assert_eq!(taken.len(), 1);
+        assert!(app.diff_comments("src/main.rs").is_empty());
+        assert!(app.take_diff_comments("never-seen").is_empty());
+    }
+
+    #[test]
+    fn purging_diff_comments_forgets_the_file_entirely() {
+        let mut app = app();
+        app.add_diff_comment(
+            "a.rs",
+            crate::comments::DiffComment::new(
+                "a.rs",
+                crate::comments::CommentSide::New,
+                1,
+                "x",
+            ),
+        );
+        app.purge_diff_comments("a.rs");
+        assert!(app.diff_comments("a.rs").is_empty());
+    }
+
+    // ---- devices ----
+
+    #[test]
+    fn a_local_workspace_names_the_unknown_device_sentinel() {
+        let mut app = app();
+        app.workspace_scope = Some(WorkspaceScope::Local);
+        app.local_device_id = Some("local".into());
+        app.apply_devices(vec![
+            device_with_name("local", "unknown-device"),
+            device_with_name("remote", "unknown-device"),
+        ]);
+        assert_eq!(app.device_name("local"), Some("Local"));
+        assert_eq!(app.device_name("remote"), Some("unknown-device"));
+
+        app.apply_devices(vec![device_with_name("local", "Studio")]);
+        assert_eq!(
+            app.device_name("local"),
+            Some("Studio"),
+            "a real name is never overwritten"
+        );
+    }
+
+    fn device_with_name(id: &str, name: &str) -> Device {
+        Device {
+            name: name.into(),
+            ..device(id, Some(0))
+        }
+    }
+}

@@ -127,3 +127,67 @@ The tree JSON is the layout regression net: check rects, not just pixels.
 7. Before declaring done: `cargo check -p hearth-ui-rune` is clean (warnings
    acceptable only for genuinely unused scaffolding) and the smoke snapshot
    still renders.
+
+## Transcript + markdown hardening (port/rune)
+
+**Per-chat viewport restore.** On a chat switch `TranscriptState::sync` snapshots
+the OUTGOING chat before the caches reset: the row anchor (first visible row from
+`on_visible_rows`, mapped through `SavedViewportCache`'s LRU 256), the live
+distance from the end (`on_scroll_offset` → a `Live<[f32; 2]>`), and an active
+own-turn runway. The incoming snapshot resolves once its replay lands: an exact
+row while the replay is pending, entry/index fallbacks only after an
+authoritative populated reset, retired on an authoritative empty reset.
+Deltas from gpui: the pixels scrolled into the anchor row are captured as 0
+(`scroll_top` is an index, not a `ListOffset`), so a restore lands the row top at
+the viewport top; and the restore executes in the rows' `on_layout_tx` (the only
+place a `Tx` exists) as `scroll_into_view` + `scroll_key_to`, so it costs one
+layout commit. The rows stack is keyed by chat, whose first layout is the commit
+the request is applied on.
+
+**Own-turn hold.** A send reserves the runway from the reservation math
+(`usable − turn height`) sized in the view build from `memo::layout` of the
+prompt and last rows; a fresh send takes the full usable height provisionally.
+The runway is a trailing virtual row AFTER the real rows — bottom padding on the
+last row renders but is not counted in the virtual list's scroll extent, so the
+viewport could not reach the prompt's inset. The bottom clearance (composer /
+terminal overlay) rides the same row.
+The prompt is then placed at its inset with `scroll_into_view` + `scroll_key_to`,
+and the hold across reply growth is `Tx::keep_on_screen` on the prompt row —
+Rune's equivalent of gpui's absolute per-frame re-assert (no eased corrections;
+the runtime's own scroll/clamp owns the motion). When the reply outgrows the
+reservation the anchor is released and the viewport hands back to
+`stick_bottom` via `scroll_to_bottom`.
+
+**Subagent transcripts** build rows through the same per-entry fingerprint cache
+as the primary transcript (`rows_for_doc`, LRU 2048 across docs), so a live
+subagent watch no longer re-parses every entry every frame.
+
+**Rail.** The rail receives the measured transcript viewport height
+(`on_layout_tx` on the viewport → `viewport_height`) and includes optimistic
+echoes in its ticks, so a just-sent prompt appears immediately.
+`on_visible_rows` returns `true` only when the active row changes.
+
+**Markdown round-trip.** `block_source` now backslash-escapes literal inline
+text (`\\ \\` `*` `_` `[` `]` `<` `>` `#` `~` `-` `+` `=` `!`, plus ordered-list
+`.`/`)` at a line start), chooses inline-code fences longer than any backtick run
+in their text, and picks a code fence longer than any run in the payload.
+Without this, literal metacharacters re-parsed as markup.
+
+**Lightbox.** `crate::attachments::lightbox` is modal (`modal(true, close)`),
+sized from the live `shell-root` rect (≤90% × 85%), closes on click/Escape and
+hands focus back to the composer. It is exposed as
+`transcript::lightbox_overlay(app, theme)` for the shell's overlay layer;
+`shell::view` should push it next to `composer::popups` (the transcript still
+mounts it in-tree as an interim fallback until that line lands).
+
+**Attachments.** Pending `pending://{uploadId}/{name}` refs render the dimmer,
+the transfer-percent ring (`App::transfer_percent`), or the indeterminate
+spinner, over the loaded thumbnail, and a pulsing skeleton while loading. The
+project-wide decoded-image cache is bounded by bytes (256 MiB) as well as entry
+count (128).
+
+**Working trailer.** The trailer reads `App::display_status_for` (Working), the
+`App::pending_send_started` → turn bridge ("Sending…"), the degraded-path queued
+line, and `App::send_undelivered` → the "Not delivered — click to retry"
+affordance, whose retry restarts the grace clock and fires `RetryDelivery` via
+`app.bridge.spawn`.

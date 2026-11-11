@@ -61,11 +61,12 @@ pub fn own_turn_reservation(usable: f32, turn_height: f32) -> f32 {
 /// anchor is kept so a send can reserve the runway and so a later `Tx`-based
 /// `scroll_to` can hold the prompt at its inset. The gpui absolute hold is not
 /// reimplemented (see docs/rune-port.md): the end-follow pin owns the view.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct OwnTurnAnchor {
     pub chat_id: String,
     pub message_id: String,
-    /// Current reservation pad on the last row (`usable − turn_height`).
+    /// Current reservation (`usable − turn_height`), rendered as the trailing
+    /// runway row so it counts toward the scroll range.
     pub runway: f32,
     /// The step still owns the viewport (glide → hold).
     pub held: bool,
@@ -91,8 +92,64 @@ impl OwnTurnAnchor {
     }
 }
 
+/// What the transcript's replay has delivered for the attached chat. Restore
+/// fallbacks are only safe once the authoritative doc rows have arrived: before
+/// that, rows hold nothing but optimistic echoes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TranscriptReplayState {
+    Pending,
+    Empty,
+    Populated,
+}
+
+impl TranscriptReplayState {
+    pub fn authoritative_empty(self) -> bool {
+        self == Self::Empty
+    }
+
+    /// May an anchor fall back from an exact row id to its entry or old index?
+    pub fn allows_fallback(self) -> bool {
+        self == Self::Populated
+    }
+}
+
+/// Identity of a restore that is still valid: a later chat switch (or a user
+/// scroll) bumps `generation`, and a newer layout bumps `layout_revision`.
+///
+/// The Rune port applies its restore through one `Tx` from a layout handler, so
+/// the token is only used by the restore tests and by callers that need to
+/// discard a deferred finalize; kept with the policy for parity.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewportFinalizeToken {
+    pub generation: u64,
+    pub layout_revision: u64,
+}
+
+#[allow(dead_code)]
+impl ViewportFinalizeToken {
+    pub fn still_current(self, generation: u64) -> bool {
+        self.generation == generation
+    }
+
+    pub fn layout_settled(self, layout_revision: u64) -> bool {
+        self.layout_revision == layout_revision
+    }
+}
+
+/// A restore resolved against the replay's rows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RestoredViewport {
+    /// Row key to place (`virtual_rows` keys rows by [`Row::id`]).
+    pub row_id: String,
+    /// Points of the row scrolled off above the viewport top.
+    pub offset_in_row: f32,
+    pub distance_from_bottom: f32,
+    pub own_turn: Option<OwnTurnAnchor>,
+}
+
 /// A stable per-chat viewport anchor.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ViewportAnchor {
     pub row_id: String,
     pub entry_id: String,
@@ -112,9 +169,16 @@ impl ViewportAnchor {
         })
     }
 
+    /// The exact row this anchor names, if it survived replay.
+    pub fn resolve_exact(&self, rows: &[super::model::Row]) -> Option<(usize, f32)> {
+        rows.iter()
+            .position(|row| row.id == self.row_id)
+            .map(|item_ix| (item_ix, self.offset_in_row))
+    }
+
     pub fn resolve(&self, rows: &[super::model::Row]) -> Option<(usize, f32)> {
-        if let Some(item_ix) = rows.iter().position(|row| row.id == self.row_id) {
-            return Some((item_ix, self.offset_in_row));
+        if let Some(exact) = self.resolve_exact(rows) {
+            return Some(exact);
         }
         let item_ix = rows
             .iter()
@@ -156,6 +220,46 @@ impl SavedViewport {
             anchor: ViewportAnchor::capture(rows, scroll_top_ix)?,
             distance_from_bottom,
             own_turn: own_turn.cloned(),
+        })
+    }
+
+    /// Resolve this snapshot against the replay's rows.
+    ///
+    /// Before the opening reset arrives, rows may hold only optimistic echoes.
+    /// In that gap an exact row is safe, but entry/index fallbacks would
+    /// mistake an unrelated echo for the authoritative transcript — so callers
+    /// pass `allow_fallback = replay.allows_fallback()`.
+    ///
+    /// A restored runway is always *released*: navigation never silently
+    /// re-arms the own-turn hold, and a turn whose prompt vanished in replay
+    /// (a failed send) drops its stale runway entirely.
+    pub fn resolve(&self, rows: &[super::model::Row], allow_fallback: bool) -> Option<RestoredViewport> {
+        let Self::Anchored {
+            anchor,
+            distance_from_bottom,
+            own_turn,
+        } = self
+        else {
+            return None;
+        };
+        let (ix, offset_in_row) = if allow_fallback {
+            anchor.resolve(rows)?
+        } else {
+            anchor.resolve_exact(rows)?
+        };
+        let row_id = rows.get(ix)?.id.clone();
+        let own_turn = own_turn
+            .clone()
+            .filter(|turn| {
+                rows.iter()
+                    .any(|row| row.turn_start && row.entry_id == turn.message_id)
+            })
+            .map(OwnTurnAnchor::released_for_restore);
+        Some(RestoredViewport {
+            row_id,
+            offset_in_row,
+            distance_from_bottom: *distance_from_bottom,
+            own_turn,
         })
     }
 }
@@ -216,6 +320,13 @@ mod tests {
         }
     }
 
+    fn prompt_row(id: &str, entry: &str) -> Row {
+        Row {
+            turn_start: true,
+            ..row(id, entry)
+        }
+    }
+
     #[test]
     fn stick_band_is_direction_aware() {
         assert!(should_restick(0.0, 10.0));
@@ -244,7 +355,7 @@ mod tests {
         };
         assert!(anchor.observe_prompt(false));
         assert!(anchor.observe_prompt(true));
-        assert!(anchor.observe_prompt(false) == false);
+        assert!(!anchor.observe_prompt(false));
         let restored = anchor.released_for_restore();
         assert!(!restored.held);
         assert!(!restored.positioned);
@@ -267,7 +378,7 @@ mod tests {
             offset_in_row: 4.0,
         };
         assert_eq!(reshaped.resolve(&rows), Some((2, 0.0)));
-        assert_eq!(ViewportAnchor::capture(&[], 0).is_none(), true);
+        assert!(ViewportAnchor::capture(&[], 0).is_none());
     }
 
     #[test]
@@ -282,5 +393,121 @@ mod tests {
         // Touching refreshes recency.
         cache.insert("fresh".into(), SavedViewport::FollowTail);
         assert!(cache.get_cloned_and_touch("chat20").is_some());
+    }
+
+    #[test]
+    fn saved_viewport_restores_the_same_row_across_a_replay() {
+        let rows = vec![row("a", "ea"), row("b", "eb"), row("c", "ec")];
+        let anchor = ViewportAnchor::capture(&rows, 1).expect("visible row");
+        let replay = vec![
+            row("new", "en"),
+            row("a", "ea"),
+            row("b", "eb"),
+            row("c", "ec"),
+        ];
+        assert_eq!(anchor.resolve(&replay), Some((2, 0.0)));
+        assert_eq!(anchor.resolve_exact(&replay), Some((2, 0.0)));
+
+        // A reshaped streaming block: the entry's surviving row, no offset.
+        let reshaped = vec![row("a", "ea"), row("b2", "eb"), row("inserted", "en")];
+        let fallback = ViewportAnchor {
+            row_id: "b".into(),
+            entry_id: "eb".into(),
+            fallback_ix: 1,
+            offset_in_row: 12.0,
+        };
+        assert_eq!(fallback.resolve_exact(&reshaped), None);
+        assert_eq!(fallback.resolve(&reshaped), Some((1, 0.0)));
+        assert_eq!(ViewportAnchor::capture(&[], 0), None);
+    }
+
+    #[test]
+    fn restore_refuses_an_index_fallback_before_the_replay() {
+        let history = vec![row("historical", "historical-entry")];
+        let saved = SavedViewport::capture(&history, 0, false, 480.0, None).expect("saved");
+        let echo_only = vec![row("echo", "echo-entry")];
+        assert!(
+            saved.resolve(&echo_only, false).is_none(),
+            "an unrelated echo is not an authoritative index fallback"
+        );
+        assert_eq!(
+            saved.resolve(&echo_only, true).expect("populated replay").row_id,
+            "echo"
+        );
+        assert!(TranscriptReplayState::Empty.authoritative_empty());
+        assert!(!TranscriptReplayState::Empty.allows_fallback());
+        assert!(!TranscriptReplayState::Pending.allows_fallback());
+        assert!(TranscriptReplayState::Populated.allows_fallback());
+    }
+
+    #[test]
+    fn saved_viewport_preserves_then_releases_an_active_turn_runway() {
+        let rows = vec![prompt_row("prompt", "prompt")];
+        let own_turn = OwnTurnAnchor {
+            chat_id: "chat-a".into(),
+            message_id: "prompt".into(),
+            runway: 640.0,
+            held: true,
+            positioned: true,
+            seen_prompt: true,
+        };
+        let saved =
+            SavedViewport::capture(&rows, 0, false, 0.0, Some(&own_turn)).expect("active chat");
+        let SavedViewport::Anchored {
+            own_turn: Some(saved_turn),
+            ..
+        } = &saved
+        else {
+            panic!("an active turn must keep its runway");
+        };
+        assert_eq!(saved_turn.runway, 640.0);
+        assert!(saved_turn.held && saved_turn.positioned);
+
+        let restored = saved.resolve(&rows, false).expect("exact prompt survives");
+        let turn = restored.own_turn.expect("valid runway");
+        assert_eq!(turn.runway, 640.0);
+        assert!(!turn.held, "navigation releases the automatic hold");
+        assert!(!turn.positioned);
+        assert!(turn.seen_prompt);
+
+        assert!(
+            SavedViewport::capture(&[], 0, false, 0.0, Some(&own_turn)).is_none(),
+            "an empty rapid switch must not overwrite the older snapshot"
+        );
+    }
+
+    #[test]
+    fn restore_discards_a_failed_optimistic_turn() {
+        let outgoing = vec![prompt_row("prompt", "prompt")];
+        let own_turn = OwnTurnAnchor {
+            chat_id: "chat-a".into(),
+            message_id: "prompt".into(),
+            runway: 640.0,
+            held: true,
+            positioned: true,
+            seen_prompt: true,
+        };
+        let saved =
+            SavedViewport::capture(&outgoing, 0, false, 420.0, Some(&own_turn)).expect("outgoing");
+
+        // The failed echo vanished while the chat was hidden: the ordinary
+        // anchor still restores, but no stale runway may intercept the jump.
+        let replay = vec![row("older", "older")];
+        let restored = saved.resolve(&replay, true).expect("index fallback");
+        assert!(restored.own_turn.is_none());
+        assert_eq!(restored.row_id, "older");
+        assert_eq!(restored.distance_from_bottom, 420.0);
+    }
+
+    #[test]
+    fn viewport_finalization_waits_for_its_generation_and_layout() {
+        let token = ViewportFinalizeToken {
+            generation: 7,
+            layout_revision: 11,
+        };
+        assert!(token.still_current(7));
+        assert!(!token.still_current(8));
+        assert!(token.layout_settled(11));
+        assert!(!token.layout_settled(12));
     }
 }

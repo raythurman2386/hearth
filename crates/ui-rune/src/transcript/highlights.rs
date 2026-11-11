@@ -82,12 +82,12 @@ impl HighlightStore {
     ) -> Option<Arc<HighlightedDocument>> {
         let slot_key = (row_id.to_string(), block_ix);
         let document_key = DocumentHighlightKey::new(language, code);
-        if let Some(entry) = self.entries.get(&slot_key) {
-            if entry.key == document_key {
-                let document = entry.document.clone();
-                self.touch(&slot_key);
-                return Some(document);
-            }
+        if let Some(entry) = self.entries.get(&slot_key)
+            && entry.key == document_key
+        {
+            let document = entry.document.clone();
+            self.touch(&slot_key);
+            return Some(document);
         }
         let document = if let Some(document) = self.cache.get(&document_key) {
             document

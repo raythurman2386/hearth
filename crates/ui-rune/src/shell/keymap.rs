@@ -19,8 +19,18 @@ use crate::state::App;
 
 use super::{open_new_session, spaces, toggle_right_pane, toggle_sidebar, toggle_terminal};
 
+/// One customizable command: its settings id and the shell action it runs.
+type ShortcutBinding = (ShortcutId, fn(&mut App));
+
 /// Handle a window key the focused control passed on. True when the shell took it.
 pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    // The question wizard owns digits/Enter/Escape while it is mounted. The
+    // focused free-text field gets them first (`composer::on_input_key`); this
+    // is the window-level fallback when focus is elsewhere.
+    if app.composer.wizard.is_some() && crate::composer::on_wizard_key(app, ev) {
+        return true;
+    }
+
     // Overlays own Escape while their modal is mounted; if focus is elsewhere, close the
     // shell's own popups rather than leaving one stranded.
     if matches!(ev.key, Key::Escape) && close_popups(app) {
@@ -38,7 +48,7 @@ pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     }
 
     // The customizable command shortcuts.
-    let bindings: [(ShortcutId, fn(&mut App)); 4] = [
+    let bindings: [ShortcutBinding; 4] = [
         (ShortcutId::NewSession, open_new_session),
         (ShortcutId::ToggleSidebar, toggle_sidebar),
         (ShortcutId::ToggleChanges, toggle_right_pane),

@@ -87,6 +87,13 @@ pub enum ComposerEvent {
         harness: HarnessId,
         outcome: Result<Vec<SlashCommand>, String>,
     },
+    /// Files read off the UI thread, headed for the chat key they were picked
+    /// for (staging survives navigation).
+    FilesStaged {
+        key: String,
+        staged: Vec<StagedAttachment>,
+        errors: Vec<String>,
+    },
     WizardAdvance {
         request_id: String,
     },
@@ -116,6 +123,10 @@ pub struct SendOutcome {
     pub error: Option<String>,
     pub comments: Vec<crate::comments::DiffComment>,
     pub staged: Vec<StagedAttachment>,
+    /// `(device, path)` transcript seeds minted for this send. Dropped once the
+    /// outcome lands: the transcript has decoded its own copy by then, or the
+    /// bubble never appears.
+    pub seeded: Vec<(String, String)>,
 }
 
 /// A sent prompt the transcript should anchor (the shell takes it once).
@@ -123,6 +134,23 @@ pub struct SendOutcome {
 pub struct SentEvent {
     pub chat_id: String,
     pub message_id: String,
+}
+
+/// A producer handle for background composer work: the state's event channel
+/// plus the app waker, so a result posted while the window is idle still
+/// schedules the frame that applies it.
+#[derive(Clone)]
+pub struct ComposerSender {
+    tx: Sender<ComposerEvent>,
+    bridge: crate::bridge::Bridge,
+}
+
+impl ComposerSender {
+    /// Post an event to [`ComposerState::poll`] and wake the Rune loop.
+    pub fn send(&self, event: ComposerEvent) {
+        let _ = self.tx.send(event);
+        self.bridge.wake();
+    }
 }
 
 /// The composer's whole state.
@@ -256,9 +284,14 @@ impl Default for ComposerState {
 }
 
 impl ComposerState {
-    /// A sender for background tasks (one clone per spawned job).
-    pub fn sender(&self) -> Sender<ComposerEvent> {
-        self.tx.clone()
+    /// A sender for background tasks (one clone per spawned job). It carries
+    /// the bridge so every post wakes the UI instead of leaving the result
+    /// invisible until the next incidental frame.
+    pub fn sender(&self, bridge: &crate::bridge::Bridge) -> ComposerSender {
+        ComposerSender {
+            tx: self.tx.clone(),
+            bridge: bridge.clone(),
+        }
     }
 
     /// Whether a send is in flight.
@@ -304,7 +337,22 @@ impl ComposerState {
     pub fn purge_chat(&mut self, chat_id: &str, app: &mut App) {
         self.attachments.remove(chat_id);
         self.drafts.remove(chat_id);
+        self.prune_thumbs(std::iter::empty());
         app.purge_diff_comments(chat_id);
+    }
+
+    /// Drop decoded thumbnails no staged attachment references any more.
+    /// `keep` lists ids a *failed* send is about to restore, which the caller
+    /// prunes before they are merged back into [`Self::attachments`]. Returns
+    /// true when the cache shrank.
+    pub fn prune_thumbs(&mut self, keep: impl IntoIterator<Item = String>) -> bool {
+        let mut keep: HashSet<String> = keep.into_iter().collect();
+        for list in self.attachments.values() {
+            keep.extend(list.iter().map(|attachment| attachment.id.clone()));
+        }
+        let before = self.thumbs.len();
+        self.thumbs.retain(|id, _| keep.contains(id));
+        self.thumbs.len() != before
     }
 
     /// The layout's stable composer width (from the container's `on_layout`).
@@ -464,6 +512,25 @@ impl ComposerState {
                     self.failure = Some(message);
                     self.failure_key = key;
                 }
+                ComposerEvent::FilesStaged {
+                    key,
+                    staged,
+                    errors,
+                } => {
+                    if !staged.is_empty() {
+                        for attachment in &staged {
+                            self.ensure_thumbnail(attachment);
+                        }
+                        self.attachments
+                            .entry(key.clone())
+                            .or_default()
+                            .extend(staged);
+                    }
+                    if let Some(message) = errors.into_iter().next() {
+                        self.failure = Some(message);
+                        self.failure_key = Some(key);
+                    }
+                }
                 ComposerEvent::WizardAdvance { request_id } => {
                     if self
                         .wizard
@@ -486,6 +553,8 @@ impl ComposerState {
             self.flip_morph = None;
             changed = true;
         }
+        // Retire transcript seed bytes the send no longer needs.
+        attachments::prune_seeded();
         changed
     }
 
@@ -551,15 +620,14 @@ pub fn poll(app: &mut App) -> bool {
             ComposerEvent::AnswerFinished {
                 request_id,
                 chat_id,
-                error,
+                error: Some(message),
             } => {
-                if let Some(message) = error {
-                    app.composer.failure = Some(message);
-                    app.composer.failure_key = Some(chat_id);
-                    // The answer never left this device — put the panel back.
-                    app.composer.answered_requests.remove(&request_id);
-                }
+                app.composer.failure = Some(message);
+                app.composer.failure_key = Some(chat_id);
+                // The answer never left this device — put the panel back.
+                app.composer.answered_requests.remove(&request_id);
             }
+            ComposerEvent::AnswerFinished { error: None, .. } => {}
             ComposerEvent::AnswerSettled { request_id } => {
                 // Safety net against a dead-looking session: the command
                 // queued, but the host may still REJECT it. If the very same
@@ -635,25 +703,41 @@ pub fn focus(app: &mut App, tx: &mut Tx) {
     tx.focus("composer/input", false);
 }
 
-/// Stage files dropped on the conversation column / picked with the paperclip.
+/// Stage files dropped on the conversation column / picked with the paperclip /
+/// pasted from a file manager. Supports a whole batch: metadata + bytes are
+/// read on a blocking worker, never in the click handler, and every supported
+/// path is staged (unsupported ones are silently skipped).
 pub fn add_paths(app: &mut App, paths: Vec<PathBuf>) {
-    let mut staged = Vec::new();
-    for path in &paths {
-        if attachments::format_by_extension(path).is_none() {
-            continue;
-        }
-        match attachments::stage_file(path) {
-            Ok(att) => {
-                app.composer.ensure_thumbnail(&att);
-                staged.push(att);
-            }
-            Err(message) => {
-                app.composer.failure = Some(message);
-                app.composer.failure_key = Some(app.composer.current_key.clone());
-            }
-        }
+    let paths: Vec<PathBuf> = paths
+        .into_iter()
+        .filter(|path| attachments::format_by_extension(path).is_some())
+        .collect();
+    if paths.is_empty() {
+        return;
     }
-    add_staged(app, staged);
+    // Bind the batch to the chat it was picked for: navigating mid-read must
+    // not drop files into another chat's strip.
+    let key = app.composer.current_key.clone();
+    let sender = app.composer.sender(&app.bridge);
+    let bridge = app.bridge.clone();
+    bridge.spawn(async move {
+        let files =
+            match tokio::task::spawn_blocking(move || attachments::stage_paths(&paths)).await {
+                Ok(files) => files,
+                Err(err) => {
+                    tracing::warn!(%err, "attachment staging task failed");
+                    attachments::StagedFiles {
+                        errors: vec!["Couldn't read the attachment.".to_string()],
+                        ..attachments::StagedFiles::default()
+                    }
+                }
+            };
+        sender.send(ComposerEvent::FilesStaged {
+            key,
+            staged: files.staged,
+            errors: files.errors,
+        });
+    });
 }
 
 /// Stage already-read attachments (clipboard images, restored sends).
@@ -811,4 +895,109 @@ pub fn pending_questions(
     transcript: &[SessionMessageEntry],
 ) -> Option<(String, Vec<UserInputQuestion>)> {
     pending_input_request(transcript)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A background producer must wake the loop, or its result sits invisible
+    /// until an unrelated frame happens to run.
+    #[test]
+    fn a_producer_post_wakes_the_loop_and_reaches_poll() {
+        let bridge = crate::bridge::Bridge::new();
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counter = wakes.clone();
+        bridge.set_waker(Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        let mut state = ComposerState::default();
+        let sender = state.sender(&bridge);
+        let spawn = bridge.clone();
+        spawn.spawn(async move {
+            sender.send(ComposerEvent::Failure {
+                key: None,
+                message: "woke".into(),
+            });
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while wakes.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert!(
+            wakes.load(Ordering::SeqCst) > 0,
+            "the producer must wake the Rune loop"
+        );
+        assert!(state.poll(), "the woken frame drains the event");
+        assert_eq!(state.failure.as_deref(), Some("woke"));
+    }
+
+    #[test]
+    fn thumbnails_drop_with_sent_attachments_but_keep_staged_ones() {
+        let mut state = ComposerState::default();
+        state.attachments.clear();
+        state.thumbs.clear();
+
+        let sent = attachments::staged_for_test("sent", b"sent");
+        let staged = attachments::staged_for_test("staged", b"staged");
+        let other_chat = attachments::staged_for_test("other", b"other");
+        for attachment in [&sent, &staged, &other_chat] {
+            state
+                .thumbs
+                .insert(attachment.id.clone(), attachments::thumbnail(attachment));
+        }
+        state
+            .attachments
+            .insert("canvas".into(), vec![staged.clone()]);
+        state
+            .attachments
+            .insert("other-chat".into(), vec![other_chat.clone()]);
+
+        // `sent` was taken by the send, so nothing references it any more.
+        assert!(state.prune_thumbs(std::iter::empty()));
+        assert!(!state.thumbs.contains_key("sent"));
+        assert!(state.thumbs.contains_key("staged"));
+        assert!(state.thumbs.contains_key("other"));
+        assert!(!state.prune_thumbs(std::iter::empty()), "stable");
+
+        // A failed send restores its ids before the prune: they survive.
+        state
+            .thumbs
+            .insert(sent.id.clone(), attachments::thumbnail(&sent));
+        assert!(!state.prune_thumbs(std::iter::once(sent.id.clone())));
+        assert!(state.thumbs.contains_key("sent"));
+    }
+
+    #[test]
+    fn staged_file_results_land_under_the_picking_chat() {
+        let mut state = ComposerState::default();
+        state.attachments.clear();
+        state.thumbs.clear();
+        state.current_key = "chat-a".into();
+        let staged = attachments::staged_for_test("picked", b"picked");
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        state.rx = rx;
+        let _ = tx.send(ComposerEvent::FilesStaged {
+            key: "chat-a".into(),
+            staged: vec![staged.clone()],
+            errors: vec!["broken.png could not be read.".into()],
+        });
+        assert!(state.poll());
+        assert_eq!(
+            state.attachments.get("chat-a").map(Vec::len),
+            Some(1),
+            "multi-path results append to the picking chat"
+        );
+        assert!(state.thumbs.contains_key("picked"));
+        assert_eq!(
+            state.failure.as_deref(),
+            Some("broken.png could not be read.")
+        );
+        assert_eq!(state.failure_key.as_deref(), Some("chat-a"));
+    }
 }

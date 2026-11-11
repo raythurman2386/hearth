@@ -36,7 +36,8 @@ pub fn spec() -> AppSpec<App> {
 }
 
 /// Named states the headless snapshot/tree tooling can render.
-static SCENES: &[(&str, fn(&mut App))] = &[
+type Scene = (&'static str, fn(&mut App));
+static SCENES: &[Scene] = &[
     ("ready", |app| {
         app.connection = crate::state::ConnectionStatus::Ready;
     }),
@@ -172,6 +173,9 @@ fn poll(app: &mut App, _now: f64, tx: &mut Tx) -> bool {
     changed |= app.transcript_state.poll();
     changed |= crate::changes::poll(app);
     changed |= app.terminal.poll();
+    if let Some(wait) = app.terminal.next_wake() {
+        tx.wake_after(wait);
+    }
     changed |= app.pickers.poll();
     changed |= crate::pickers::pump(app);
     changed |= crate::composer::poll(app);

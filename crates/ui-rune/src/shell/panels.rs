@@ -131,9 +131,11 @@ pub fn resize_handle(
     theme: &Theme,
     viewport_width: f32,
     viewport_height: f32,
+    scale: f32,
 ) -> El {
     let hover = theme.element_hover;
     let hairline = theme.hairline(0.18);
+    let inch = 1.0 / scale.max(1.0);
     let width = PANE_RESIZE_HITBOX_WIDTH;
     let left = -width / 2.0;
     let mut handle = el()
@@ -185,7 +187,7 @@ pub fn resize_handle(
         .child(
             // The seam's own hairline is the pane border; hover adds a stronger center
             // highlight that fades toward both ends.
-            el().absolute(0.0, 0.0).w(1.0).h_full().fill(hairline),
+            el().absolute(0.0, 0.0).w(inch).h_full().fill(hairline),
         );
 
     if kind == ResizeKind::Terminal {
@@ -195,8 +197,9 @@ pub fn resize_handle(
 }
 
 /// A horizontal terminal handle sits above the drawer inside the main column.
-pub fn terminal_handle(theme: &Theme, viewport_height: f32) -> El {
+pub fn terminal_handle(theme: &Theme, viewport_height: f32, scale: f32) -> El {
     let hairline = theme.hairline(0.18);
+    let inch = 1.0 / scale.max(1.0);
     el().w_full()
         .h(8.0)
         .cursor(Cursor::ResizeRow)
@@ -211,7 +214,7 @@ pub fn terminal_handle(theme: &Theme, viewport_height: f32) -> El {
             },
         )
         .on_double_press(|app: &mut App| reset_terminal(app))
-        .child(el().w_full().h(1.0).fill(hairline))
+        .child(el().w_full().h(inch).fill(hairline))
 }
 
 #[cfg(test)]

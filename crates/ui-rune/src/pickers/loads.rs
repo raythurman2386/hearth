@@ -14,7 +14,7 @@ use hearth_rpc::methods;
 use crate::state::App;
 
 use super::model;
-use super::{PickersEvent, PickersState, selection};
+use super::{PickersEvent, PickersState, post, selection};
 
 /// The catalog target helper, also reachable as `pickers::loads::space_target`.
 pub use super::checkout::space_target;
@@ -39,18 +39,13 @@ pub(crate) fn refresh_context(app: &mut App) {
 /// One async-loaded slot. `Ready` data stays visible while a forced refresh
 /// reloads (stale-while-revalidate); [`Loadable::Error`] never re-triggers a
 /// non-forced load (otherwise the retry row would flash back to a skeleton).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Loadable<T> {
+    #[default]
     Idle,
     Loading,
     Ready(T),
     Error(String),
-}
-
-impl<T> Default for Loadable<T> {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 impl<T> Loadable<T> {
@@ -182,6 +177,7 @@ impl PickersState {
             return;
         };
         let tx = self.tx.clone();
+        let wake = bridge.clone();
         let target = self.catalog_target.clone();
         bridge.spawn(async move {
             let mut params = serde_json::Map::new();
@@ -200,7 +196,7 @@ impl PickersState {
                     serde_json::from_value::<Vec<HarnessDescriptor>>(value)
                         .map_err(|err| err.to_string())
                 });
-            let _ = tx.send(PickersEvent::Harnesses(result));
+            post(&tx, &wake, PickersEvent::Harnesses(result));
         });
     }
 }
@@ -266,6 +262,7 @@ impl PickersState {
             return;
         };
         let tx = self.tx.clone();
+        let wake = bridge.clone();
         let target = self.catalog_target.clone();
         bridge.spawn(async move {
             let mut params = serde_json::json!({ "harness": harness });
@@ -283,7 +280,7 @@ impl PickersState {
                 .and_then(|value| {
                     serde_json::from_value::<Vec<Model>>(value).map_err(|err| err.to_string())
                 });
-            let _ = tx.send(PickersEvent::Models { harness, result });
+            post(&tx, &wake, PickersEvent::Models { harness, result });
         });
     }
 
@@ -365,6 +362,7 @@ impl PickersState {
             return;
         };
         let tx = self.tx.clone();
+        let wake = bridge.clone();
         let local = self.local_device.clone();
         let space_id = space.id.clone();
         bridge.spawn(async move {
@@ -387,10 +385,14 @@ impl PickersState {
                 .and_then(|value| {
                     serde_json::from_value::<Vec<RepoRef>>(value).map_err(|err| err.to_string())
                 });
-            let _ = tx.send(PickersEvent::Refs {
-                space: space_id,
-                result,
-            });
+            post(
+                &tx,
+                &wake,
+                PickersEvent::Refs {
+                    space: space_id,
+                    result,
+                },
+            );
         });
     }
 }
@@ -459,6 +461,7 @@ impl PickersState {
             return;
         };
         let tx = self.tx.clone();
+        let wake = bridge.clone();
         bridge.spawn(async move {
             let params = serde_json::json!({
                 "op": "setChatConfig",
@@ -471,10 +474,14 @@ impl PickersState {
                 .await
                 .map(|_| ())
                 .map_err(|err| err.to_string());
-            let _ = tx.send(PickersEvent::ChatConfigSaved {
-                chat_id: chat_id.clone(),
-                result,
-            });
+            post(
+                &tx,
+                &wake,
+                PickersEvent::ChatConfigSaved {
+                    chat_id: chat_id.clone(),
+                    result,
+                },
+            );
         });
     }
 }
