@@ -170,6 +170,7 @@ pub fn shell(app: &App, cx: &mut rune::Cx<App>, layer: &mut Vec<El>) -> El {
     super::overlays::render_chat_overlays(app, theme, layer);
     super::spaces::render_space_overlays(app, theme, layer);
     super::spaces::render_add_space(app, theme, layer);
+    crate::changes::popovers(&app.changes, app, theme, layer);
 
     let mut root = el()
         .key("shell-root")

@@ -61,6 +61,12 @@ static SCENES: &[Scene] = &[
         app.shell.route =
             crate::shell::Route::Settings(crate::settings::SettingsSection::Appearance);
     }),
+    ("models", |app| {
+        demo_scene(app);
+        crate::pickers::seed_demo_catalog(app);
+        app.pickers.model_rail = crate::pickers::ModelRail::Favorites;
+        app.pickers.open = Some(crate::pickers::PickerKind::HarnessModel);
+    }),
     ("narrow", |app| {
         demo_scene(app);
         let key = app.shell.panel_key(app);
@@ -68,15 +74,17 @@ static SCENES: &[Scene] = &[
             .panels
             .update(&key, |panels| panels.changes_open = true);
     }),
-    ("diff", |app| {
-        demo_scene(app);
-        let key = app.shell.panel_key(app);
-        app.shell
-            .panels
-            .update(&key, |panels| panels.changes_open = true);
-        crate::shell::add_diff_surface(app);
-        app.changes
-            .seed_demo(DEMO_PATCH, "chat-1", "/home/ret/Development/hearth");
+    ("diff", diff_scene),
+    ("scopes", |app| {
+        diff_scene(app);
+        app.changes.scope_menu_open = true;
+    }),
+    ("refs", |app| {
+        diff_scene(app);
+        app.changes.scope = crate::changes::DiffScope::Branch;
+        app.changes.base_ref = Some("main".into());
+        app.changes.branches = vec!["main".into(), "port/rune".into(), "feat/rune-scopes".into()];
+        app.changes.ref_menu_open = true;
     }),
     ("history", |app| {
         demo_scene(app);
@@ -185,6 +193,19 @@ fn stress_scene(app: &mut App) {
         .drafts
         .insert("chat-1".into(), format!("Draft with a long token: {long}"));
 }
+
+/// The right pane showing the demo patch (the `diff` and `scopes` scenes).
+fn diff_scene(app: &mut App) {
+    demo_scene(app);
+    let key = app.shell.panel_key(app);
+    app.shell
+        .panels
+        .update(&key, |panels| panels.changes_open = true);
+    crate::shell::add_diff_surface(app);
+    app.changes
+        .seed_demo(DEMO_PATCH, "chat-1", "/home/ret/Development/hearth");
+}
+
 const DEMO_PATCH: &str = r#"diff --git a/crates/ui-rune/src/shell.rs b/crates/ui-rune/src/shell.rs
 index 1111111..2222222 100644
 --- a/crates/ui-rune/src/shell.rs

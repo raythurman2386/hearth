@@ -1008,9 +1008,6 @@ pub fn header_controls(state: &ChangesState, app: &App, theme: &Theme) -> El {
     };
 
     let mut strip = row().w_full().h_full().center_y().gap(6.0).child(trigger);
-    if let Some(menu) = state.scope_menu_open.then(|| scope_menu(state, theme)) {
-        strip = strip.child(menu);
-    }
     if scope == DiffScope::Branch
         && let Some(selector) = ref_selector(state, theme)
     {
@@ -1080,6 +1077,17 @@ fn scope_menu(state: &ChangesState, theme: &Theme) -> El {
         .border(1.0, theme.border)
         .shadow(8.0, 24.0, theme.hairline(0.15))
         .anchored("app/changes/scope-trigger", Side::Bottom, Align::Start, 6.0)
+        .modal(true, |app: &mut App| app.changes.close_scope_menu())
+        .focusable(true)
+        .autofocus()
+        .on_key(|app: &mut App, ev, _tx| {
+            if matches!(ev.key, rune::Key::Escape) {
+                app.changes.close_scope_menu();
+                true
+            } else {
+                false
+            }
+        })
         .children(DiffScope::ALL.into_iter().map(|scope| {
             let current = state.scope == scope;
             let mut item = row()
@@ -1134,24 +1142,22 @@ fn ref_selector(state: &ChangesState, theme: &Theme) -> Option<El> {
                 .min_w(0.0),
         )
         .child(icon(&crate::icons::ALT_ARROW_DOWN, 9.0).color(theme.text_muted.alpha(0.7)));
-    let mut selector = row()
-        .min_w(0.0)
-        .center_y()
-        .gap(6.0)
-        .ml(6.0)
-        .child(
-            text(branch)
-                .font(mono(11.5, 400.0))
-                .color(theme.text_dim)
-                .truncate()
-                .min_w(0.0),
-        )
-        .child(icon(&crate::icons::ARROW_RIGHT, 10.0).color(theme.text_faint))
-        .child(trigger);
-    if state.ref_menu_open {
-        selector = selector.child(ref_menu(state, theme));
-    }
-    Some(selector)
+    Some(
+        row()
+            .min_w(0.0)
+            .center_y()
+            .gap(6.0)
+            .ml(6.0)
+            .child(
+                text(branch)
+                    .font(mono(11.5, 400.0))
+                    .color(theme.text_dim)
+                    .truncate()
+                    .min_w(0.0),
+            )
+            .child(icon(&crate::icons::ARROW_RIGHT, 10.0).color(theme.text_faint))
+            .child(trigger),
+    )
 }
 
 fn ref_menu(state: &ChangesState, theme: &Theme) -> El {
@@ -1216,6 +1222,16 @@ fn ref_menu(state: &ChangesState, theme: &Theme) -> El {
         .border(1.0, theme.border)
         .shadow(8.0, 24.0, theme.hairline(0.15))
         .anchored("app/changes/ref-trigger", Side::Bottom, Align::Start, 6.0)
+        .modal(true, |app: &mut App| app.changes.close_ref_menu())
+        .focusable(true)
+        .on_key(|app: &mut App, ev, _tx| {
+            if matches!(ev.key, rune::Key::Escape) {
+                app.changes.close_ref_menu();
+                true
+            } else {
+                false
+            }
+        })
         .child(
             rune::text_input(&state.ref_search, TextStyle::new(12.0, 400.0).lh(18.0))
                 .key("app/changes/ref-search")
@@ -1225,7 +1241,35 @@ fn ref_menu(state: &ChangesState, theme: &Theme) -> El {
                 .single_line()
                 .placeholder("Search branches…", theme.text_faint)
                 .caret(theme.caret, theme.selection)
-                .on_edit(|app: &mut App| &mut app.changes.ref_search),
+                .on_edit(|app: &mut App| &mut app.changes.ref_search)
+                .on_input_key(|app: &mut App, ev, _tx| {
+                    if matches!(ev.key, rune::Key::Escape) {
+                        app.changes.close_ref_menu();
+                        true
+                    } else {
+                        false
+                    }
+                }),
         )
         .child(list)
+}
+
+/// The pane's floating menus (scope + base ref), mounted by the shell in the
+/// overlay layer. Mounting them inside the pane header clipped them to the
+/// 34 pt strip, which made a click read as a one-line artifact.
+pub fn popovers(state: &ChangesState, app: &App, theme: &Theme, layer: &mut Vec<El>) {
+    if !crate::shell::right_pane_open(app)
+        || !matches!(
+            crate::shell::resolved_right_active(app),
+            crate::shell::RightSurface::Diff(_)
+        )
+    {
+        return;
+    }
+    if state.scope_menu_open {
+        layer.push(scope_menu(state, theme));
+    }
+    if state.ref_menu_open {
+        layer.push(ref_menu(state, theme));
+    }
 }

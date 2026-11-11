@@ -527,6 +527,76 @@ pub(crate) fn search_row_rank(
         .map(|rank| (rank, (!favorite) as usize))
 }
 
+/// Headless-scene and interaction-test helper: a ready harness catalog with
+/// three Huginn models, one of each starred, and the sticky picks a real
+/// session would carry. Keeps `pickers::pump` from replacing them with the
+/// empty on-disk defaults on its first frame.
+#[doc(hidden)]
+pub fn seed_demo_catalog(app: &mut crate::state::App) {
+    use hearth_engine::registry::HarnessDescriptor;
+    use hearth_proto::{HarnessId, Model, SteeringMode};
+
+    app.pickers.initialised = true;
+    app.pickers.draft_owner = app.selected_chat.clone();
+    app.pickers.space_owner = app.selected_space.clone();
+
+    let descriptor = |id, name: &str| HarnessDescriptor {
+        id,
+        name: name.to_string(),
+        supports_steering: true,
+        steering_mode: SteeringMode::StepBoundary,
+        reasoning_levels: Vec::new(),
+        installed: true,
+        enabled: Some(true),
+    };
+    app.pickers.harnesses = Loadable::Ready(vec![
+        descriptor(HarnessId::Huginn, "Huginn"),
+        descriptor(HarnessId::Codex, "Codex"),
+        descriptor(HarnessId::Grok, "Grok"),
+    ]);
+    let models = vec![
+        Model {
+            id: "deepseek-v4-flash:cloud".into(),
+            label: "ollama · deepseek-v4-flash:cloud".into(),
+            description: Some("Huginn".into()),
+            reasoning_levels: Vec::new(),
+            options: Vec::new(),
+        },
+        Model {
+            id: "deepseek-v4-pro:cloud".into(),
+            label: "ollama · deepseek-v4-pro:cloud".into(),
+            description: Some("Huginn".into()),
+            reasoning_levels: Vec::new(),
+            options: Vec::new(),
+        },
+        Model {
+            id: "glm-5.3-flash:cloud".into(),
+            label: "ollama · glm-5.3-flash:cloud".into(),
+            description: Some("Huginn".into()),
+            reasoning_levels: Vec::new(),
+            options: Vec::new(),
+        },
+    ];
+    app.pickers.defaults.favorites = models
+        .iter()
+        .map(|model| FavoriteModel {
+            harness: HarnessId::Huginn,
+            model: model.id.clone(),
+        })
+        .collect();
+    app.pickers.defaults.harness = Some(HarnessId::Huginn);
+    app.pickers.defaults.model_by_harness.insert(
+        HarnessId::Huginn,
+        RememberedModel {
+            id: "deepseek-v4-flash:cloud".into(),
+            label: "ollama · deepseek-v4-flash:cloud".into(),
+        },
+    );
+    app.pickers
+        .models
+        .insert(HarnessId::Huginn, Loadable::Ready(models));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

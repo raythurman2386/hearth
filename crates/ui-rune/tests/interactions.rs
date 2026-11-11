@@ -277,6 +277,63 @@ fn typing_reaches_the_composer_text_model() {
     assert_eq!(rt.state.composer.edit.text, "hello from rune");
 }
 
+#[test]
+fn the_scope_menu_mounts_above_the_header_and_switches_scope() {
+    let Harness { mut app, dir: _dir } = harness();
+    shell::add_diff_surface(&mut app);
+    let key = app.shell.panel_key(&app);
+    app.shell
+        .panels
+        .update(&key, |panels| panels.changes_open = true);
+    let mut rt = runtime(app);
+
+    click(&mut rt, "app/changes/scope-trigger");
+    assert!(rt.state.changes.scope_menu_open);
+    let (rect, _) = rt
+        .presented("app/changes/scope-menu")
+        .expect("the scope menu mounts in the overlay layer");
+    assert!(
+        rect[3] > 100.0,
+        "the menu keeps its five rows instead of clipping to the 34pt header: {rect:?}"
+    );
+
+    click(&mut rt, "app/changes/scope-row/history");
+    assert_eq!(
+        rt.state.changes.scope,
+        hearth_ui_rune::changes::DiffScope::History
+    );
+    assert!(!rt.state.changes.scope_menu_open);
+}
+
+#[test]
+fn a_model_star_toggles_without_picking_the_row() {
+    use hearth_ui_rune::pickers::{ModelRail, PickerKind};
+
+    let Harness { mut app, dir: _dir } = harness();
+    hearth_ui_rune::pickers::seed_demo_catalog(&mut app);
+    app.pickers.defaults.favorites.clear();
+    app.pickers.model_rail = ModelRail::Harness;
+    app.pickers.open = Some(PickerKind::HarnessModel);
+    let mut rt = runtime(app);
+
+    assert!(
+        rt.state.pickers.defaults.favorites.is_empty(),
+        "no stars to begin with"
+    );
+    click(&mut rt, "pickers/model-star/0");
+
+    assert_eq!(
+        rt.state.pickers.defaults.favorites.len(),
+        1,
+        "the star press reaches the favorite toggle"
+    );
+    assert_eq!(
+        rt.state.pickers.open,
+        Some(PickerKind::HarnessModel),
+        "starring reorders rows but must not pick a model or close the picker"
+    );
+}
+
 #[tokio::test]
 async fn the_terminal_shortcut_opens_the_drawer_with_a_tab() {
     let Harness { mut app, dir } = harness();

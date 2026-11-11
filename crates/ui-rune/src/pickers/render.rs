@@ -156,15 +156,27 @@ pub fn render_new_session(state: &PickersState, app: &App, theme: &Theme) -> El 
         .map(|s| s.display_name().to_string())
         .unwrap_or_else(|| "No project".to_string());
 
-    let device_chip = footer_chip(theme, PickerKind::Device, ANCHOR_DEVICE, device_label, "⌘")
-        .on_press(|app: &mut App| toggle_picker(app, PickerKind::Device));
+    let device_chip = footer_chip(
+        theme,
+        PickerKind::Device,
+        ANCHOR_DEVICE,
+        device_label,
+        &crate::icons::MONITOR,
+    )
+    .on_press(|app: &mut App| toggle_picker(app, PickerKind::Device));
     let device_chip = if offline {
         device_chip.fill(theme.warning.alpha(0.10))
     } else {
         device_chip
     };
-    let project_chip = footer_chip(theme, PickerKind::Space, ANCHOR_SPACE, &project_label, "▤")
-        .on_press(|app: &mut App| toggle_picker(app, PickerKind::Space));
+    let project_chip = footer_chip(
+        theme,
+        PickerKind::Space,
+        ANCHOR_SPACE,
+        &project_label,
+        &crate::icons::FOLDER,
+    )
+    .on_press(|app: &mut App| toggle_picker(app, PickerKind::Space));
 
     col()
         .w_full()
@@ -197,9 +209,9 @@ pub fn render_footer(state: &PickersState, app: &App, theme: &Theme) -> Option<E
         let space = space.as_ref().filter(|s| s.git_detected)?;
         let is_worktree = chat.cwd.as_deref().is_some_and(|cwd| cwd != space.path);
         let (mark, label) = if is_worktree {
-            ("⑂", "Worktree")
+            (&crate::icons::FOLDER, "Worktree")
         } else {
-            ("⌂", "Local checkout")
+            (&crate::icons::HOME, "Local checkout")
         };
         let left = row()
             .gap(4.0)
@@ -208,7 +220,7 @@ pub fn render_footer(state: &PickersState, app: &App, theme: &Theme) -> Option<E
             .child(footer_label(theme, mark, label));
         let right = row().gap(4.0).center_y().min_w(0.0).child(footer_label(
             theme,
-            "⑂",
+            &crate::icons::GIT_BRANCH,
             chat.branch.as_deref().unwrap_or("No ref"),
         ));
         return Some(
@@ -232,15 +244,15 @@ pub fn render_footer(state: &PickersState, app: &App, theme: &Theme) -> Option<E
         PickerKind::Branch,
         ANCHOR_BRANCH,
         &state.ref_label(),
-        "⑂",
+        &crate::icons::GIT_BRANCH,
     )
     .on_press(|app: &mut App| toggle_picker(app, PickerKind::Branch));
     let kind_mark = match (
         state.config.checkout,
         state.selected_ref_worktree().is_some(),
     ) {
-        (CheckoutKind::Local, false) => "⌂",
-        _ => "⑂",
+        (CheckoutKind::Local, false) => &crate::icons::HOME,
+        _ => &crate::icons::FOLDER,
     };
     let kind_chip = footer_chip(
         theme,
@@ -584,7 +596,7 @@ fn footer_chip(
     _kind: PickerKind,
     anchor: &'static str,
     label: &str,
-    mark: &str,
+    mark: &'static rune::Icon,
 ) -> El {
     row()
         .key(anchor)
@@ -598,11 +610,7 @@ fn footer_chip(
         .cursor(rune::Cursor::Pointer)
         .fill(Color::TRANSPARENT)
         .hover(theme.element_hover)
-        .child(
-            text(mark.to_string())
-                .font(text_style(11.0, 500.0))
-                .color(theme.text_muted.alpha(0.7)),
-        )
+        .child(icon(mark, 14.0).color(theme.text_muted.alpha(0.7)))
         .child(
             text(label.to_string())
                 .font(text_style(12.0, 500.0))
@@ -611,14 +619,10 @@ fn footer_chip(
                 .grow(1.0)
                 .min_w(0.0),
         )
-        .child(
-            text("⌄")
-                .font(text_style(11.0, 500.0))
-                .color(theme.text_muted.alpha(0.5)),
-        )
+        .child(icon(&crate::icons::ALT_ARROW_DOWN, 9.0).color(theme.text_muted.alpha(0.5)))
 }
 
-fn footer_label(theme: &Theme, mark: &str, label: &str) -> El {
+fn footer_label(theme: &Theme, mark: &'static rune::Icon, label: &str) -> El {
     row()
         .h(FOOTER_CHIP_HEIGHT)
         .max_w(160.0)
@@ -626,11 +630,7 @@ fn footer_label(theme: &Theme, mark: &str, label: &str) -> El {
         .gap(6.0)
         .px(FOOTER_CHIP_PAD_X)
         .center_y()
-        .child(
-            text(mark.to_string())
-                .font(text_style(11.0, 500.0))
-                .color(theme.text_muted.alpha(0.6)),
-        )
+        .child(icon(mark, 13.0).color(theme.text_muted.alpha(0.6)))
         .child(
             text(label.to_string())
                 .font(text_style(12.0, 500.0))
@@ -826,11 +826,7 @@ fn search_box(state: &PickersState, theme: &Theme, placeholder: &str) -> El {
         .gap(8.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], theme.ink(0.08))
-        .child(
-            text("⌕")
-                .font(text_style(14.0, 400.0))
-                .color(theme.text_muted.alpha(0.7)),
-        )
+        .child(icon(&crate::icons::MAGNIFER, 14.0).color(theme.text_muted.alpha(0.7)))
         .child(
             row()
                 .grow(1.0)
@@ -928,13 +924,11 @@ fn model_popover_body(state: &PickersState, app: &App, theme: &Theme) -> El {
                     app.pickers.active = active;
                 })
                 .child(
-                    text("★")
-                        .font(text_style(17.0, 400.0))
-                        .color(if favorites_active {
-                            theme.text
-                        } else {
-                            theme.text_muted.alpha(0.75)
-                        }),
+                    icon(&crate::icons::STAR_BOLD, 18.0).color(if favorites_active {
+                        theme.text
+                    } else {
+                        theme.text_muted.alpha(0.75)
+                    }),
                 )
                 .children(favorites_active.then(|| rail_indicator(theme))),
         );
@@ -1171,13 +1165,19 @@ fn model_row(
                 selection::toggle_model_favorite(app, harness, &model_id);
             })
             .child(
-                text(if favorite { "★" } else { "☆" })
-                    .font(text_style(13.0, 400.0))
-                    .color(if favorite {
-                        theme.warning
+                icon(
+                    if favorite {
+                        &crate::icons::STAR_BOLD
                     } else {
-                        theme.text_muted.alpha(0.45)
-                    }),
+                        &crate::icons::STAR
+                    },
+                    13.0,
+                )
+                .color(if favorite {
+                    theme.warning
+                } else {
+                    theme.text_muted.alpha(0.45)
+                }),
             ),
     );
     col()
@@ -1412,13 +1412,21 @@ fn checkout_popover_body(state: &PickersState, app: &App, theme: &Theme) -> El {
     } else {
         "Current checkout"
     };
-    let options: [(CheckoutKind, &str, &str); 2] = [
+    let options: [(CheckoutKind, &str, &'static rune::Icon); 2] = [
         (
             CheckoutKind::Local,
             local_label,
-            if has_worktree { "⑂" } else { "⌂" },
+            if has_worktree {
+                &crate::icons::FOLDER
+            } else {
+                &crate::icons::HOME
+            },
         ),
-        (CheckoutKind::NewWorktree, "New worktree", "⑂"),
+        (
+            CheckoutKind::NewWorktree,
+            "New worktree",
+            &crate::icons::FOLDER,
+        ),
     ];
     let mut body = col().w_full().gap(2.0);
     for (ix, (kind, label, mark)) in options.into_iter().enumerate() {
@@ -1432,11 +1440,7 @@ fn checkout_popover_body(state: &PickersState, app: &App, theme: &Theme) -> El {
             label,
             Some(check_mark(theme, is_selected)),
         )
-        .child(
-            text(mark.to_string())
-                .font(text_style(13.0, 400.0))
-                .color(theme.text_muted),
-        )
+        .child(icon(mark, 13.0).color(theme.text_muted))
         .on_press(move |app: &mut App| checkout::pick_checkout(app, kind));
         body = body.child(row);
     }

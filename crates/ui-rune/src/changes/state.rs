@@ -391,6 +391,8 @@ impl ChangesState {
         self.started = false;
         self.watch_target = None;
         self.scoped_inflight = None;
+        self.scope_menu_open = false;
+        self.ref_menu_open = false;
     }
 
     /// Drain background results. The shell calls this once per frame.
