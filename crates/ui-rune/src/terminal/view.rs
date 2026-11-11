@@ -16,7 +16,7 @@
 use rune::color::srgb_decode;
 use rune::{Color, Key, KeyEvent, Mods};
 
-use crate::theme::{Appearance, Theme};
+use crate::theme::{ANSI16_DARK, ANSI16_LIGHT, Appearance, Theme};
 
 use super::emulator::{CellColor, Side};
 
@@ -75,10 +75,15 @@ pub fn terminal_bg_for(appearance: Appearance) -> Color {
 /// chrome; opaque platforms keep the true tone.
 pub fn terminal_panel_bg(theme: &Theme) -> Color {
     if theme.is_glass() {
-        terminal_bg_for(theme.appearance).alpha(0.4)
+        theme.terminal_bg.alpha(0.4)
     } else {
-        terminal_bg_for(theme.appearance)
+        theme.terminal_bg
     }
+}
+
+/// Selection wash over the grid.
+pub fn terminal_selection(theme: &Theme) -> Color {
+    theme.terminal_selection
 }
 
 /// Selection wash over the grid: achromatic on purpose, so selected output
@@ -101,48 +106,6 @@ pub fn terminal_selection_for(appearance: Appearance) -> Color {
     }
 }
 
-/// The 16 ANSI colors tuned for the near-black background (indexes 0-7 normal,
-/// 8-15 bright).
-const ANSI16_DARK: [(u8, u8, u8); 16] = [
-    (0x2a, 0x31, 0x2c), // black — Ravenwood bg (visible against bg0)
-    (0xda, 0x63, 0x62), // red — dimRed
-    (0x5e, 0x8d, 0x5e), // green — dimGreen
-    (0xbf, 0x98, 0x3d), // yellow — dimYellow
-    (0x5a, 0x93, 0xa2), // blue — dimBlue
-    (0xb8, 0x7b, 0x9d), // magenta — dimPurple
-    (0x44, 0x7d, 0x6b), // cyan — dimAqua
-    (0x85, 0x92, 0x89), // white — grey1 (muted beige)
-    (0x2d, 0x38, 0x32), // bright black — bg2, one step up from black
-    (0xe6, 0x7e, 0x80), // bright red — full red
-    (0x4a, 0xde, 0x80), // bright green — full green
-    (0xfb, 0xbf, 0x24), // bright yellow — full yellow
-    (0x22, 0xd3, 0xee), // bright blue — full blue
-    (0xf4, 0x72, 0xb6), // bright magenta — full purple
-    (0x34, 0xd3, 0x99), // bright cyan — full aqua
-    (0xe8, 0xd5, 0xb7), // bright white — Ravenwood fg (warm beige)
-];
-
-/// The same 16 slots for the light background — same hue families as
-/// [`ANSI16_DARK`], moved down the tonal scale.
-const ANSI16_LIGHT: [(u8, u8, u8); 16] = [
-    (0x14, 0x18, 0x14), // black — deep olive, visible against cream
-    (0xc0, 0x3c, 0x39), // red — full red
-    (0x5c, 0x7a, 0x0c), // green — full green
-    (0xb0, 0x85, 0x00), // yellow — full yellow (Ravenwood light)
-    (0x1a, 0x6d, 0x9e), // blue — full blue
-    (0xb8, 0x4d, 0x94), // magenta — full purple
-    (0x1e, 0x7d, 0x5a), // cyan — full aqua (Ravenwood light)
-    (0x3d, 0x4c, 0x53), // white — Ravenwood fg (cool slate)
-    (0x2d, 0x38, 0x32), // bright black — bg2, lighter than the black slot
-    (0x9e, 0x2b, 0x29), // bright red — dimRed
-    (0x4a, 0x62, 0x10), // bright green — dimGreen
-    (0x8f, 0x6b, 0x00), // bright yellow — dimYellow
-    (0x14, 0x5a, 0x7a), // bright blue — dimBlue
-    (0x8f, 0x3d, 0x74), // bright magenta — dimPurple
-    (0x1a, 0x63, 0x47), // bright cyan — dimAqua
-    (0x18, 0x1c, 0x1e), // bright white — max emphasis, near-slate
-];
-
 /// An opaque linear-sRGB color from 8-bit sRGB components.
 pub fn rgb8(r: u8, g: u8, b: u8) -> Color {
     Color {
@@ -162,7 +125,7 @@ const CUBE_LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
 /// - **16-231** is the 6×6×6 cube; left alone in both appearances.
 /// - **232-255** is the grayscale ramp; light mode mirrors it so index 232
 ///   stays the faintest and 255 the strongest against the paper.
-pub fn indexed_rgb(appearance: Appearance, index: u8) -> (u8, u8, u8) {
+pub fn indexed_rgb(appearance: Appearance, index: u8) -> [u8; 3] {
     match index {
         0..=15 => match appearance {
             Appearance::Dark => ANSI16_DARK[index as usize],
@@ -170,11 +133,11 @@ pub fn indexed_rgb(appearance: Appearance, index: u8) -> (u8, u8, u8) {
         },
         16..=231 => {
             let n = index as usize - 16;
-            (
+            [
                 CUBE_LEVELS[n / 36],
                 CUBE_LEVELS[(n / 6) % 6],
                 CUBE_LEVELS[n % 6],
-            )
+            ]
         }
         _ => {
             let step = index - 232;
@@ -183,7 +146,7 @@ pub fn indexed_rgb(appearance: Appearance, index: u8) -> (u8, u8, u8) {
                 Appearance::Light => 23 - step,
             };
             let v = 8 + 10 * step;
-            (v, v, v)
+            [v, v, v]
         }
     }
 }
@@ -191,13 +154,21 @@ pub fn indexed_rgb(appearance: Appearance, index: u8) -> (u8, u8, u8) {
 /// Resolve a cell color to paint against the theme.
 pub fn resolve_color(color: CellColor, theme: &Theme) -> Color {
     match color {
-        CellColor::Foreground => theme.text,
-        CellColor::Background => terminal_bg_for(theme.appearance),
-        CellColor::Indexed(ix) => {
-            let (r, g, b) = indexed_rgb(theme.appearance, ix);
-            rgb8(r, g, b)
-        }
+        CellColor::Foreground => theme.terminal_fg,
+        CellColor::Background => theme.terminal_bg,
+        CellColor::Indexed(ix) => indexed_color(theme, ix),
         CellColor::Rgb(r, g, b) => rgb8(r, g, b),
+    }
+}
+
+/// Resolve an indexed colour against the theme: 0–15 are the theme's ANSI
+/// slots, 16–255 the fixed cube/grayscale ramp.
+pub fn indexed_color(theme: &Theme, index: u8) -> Color {
+    if index <= 15 {
+        theme.ansi[index as usize]
+    } else {
+        let [r, g, b] = indexed_rgb(theme.appearance, index);
+        rgb8(r, g, b)
     }
 }
 
@@ -752,8 +723,8 @@ mod tests {
         0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
     }
 
-    fn contrast(a: (u8, u8, u8), b: (u8, u8, u8)) -> f32 {
-        let (la, lb) = (luminance(a.0, a.1, a.2), luminance(b.0, b.1, b.2));
+    fn contrast(a: [u8; 3], b: [u8; 3]) -> f32 {
+        let (la, lb) = (luminance(a[0], a[1], a[2]), luminance(b[0], b[1], b[2]));
         let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
         (hi + 0.05) / (lo + 0.05)
     }
@@ -761,19 +732,19 @@ mod tests {
     #[test]
     fn cube_is_appearance_independent() {
         for appearance in [Appearance::Dark, Appearance::Light] {
-            assert_eq!(indexed_rgb(appearance, 16), (0, 0, 0));
-            assert_eq!(indexed_rgb(appearance, 231), (255, 255, 255));
-            assert_eq!(indexed_rgb(appearance, 196), (255, 0, 0));
-            assert_eq!(indexed_rgb(appearance, 21), (0, 0, 255));
+            assert_eq!(indexed_rgb(appearance, 16), [0, 0, 0]);
+            assert_eq!(indexed_rgb(appearance, 231), [255, 255, 255]);
+            assert_eq!(indexed_rgb(appearance, 196), [255, 0, 0]);
+            assert_eq!(indexed_rgb(appearance, 21), [0, 0, 255]);
         }
     }
 
     #[test]
     fn grayscale_ramp_mirrors_in_light() {
-        assert_eq!(indexed_rgb(Appearance::Dark, 232), (8, 8, 8));
-        assert_eq!(indexed_rgb(Appearance::Dark, 255), (238, 238, 238));
-        assert_eq!(indexed_rgb(Appearance::Light, 232), (238, 238, 238));
-        assert_eq!(indexed_rgb(Appearance::Light, 255), (8, 8, 8));
+        assert_eq!(indexed_rgb(Appearance::Dark, 232), [8, 8, 8]);
+        assert_eq!(indexed_rgb(Appearance::Dark, 255), [238, 238, 238]);
+        assert_eq!(indexed_rgb(Appearance::Light, 232), [238, 238, 238]);
+        assert_eq!(indexed_rgb(Appearance::Light, 255), [8, 8, 8]);
     }
 
     #[test]
@@ -807,8 +778,8 @@ mod tests {
         const MIN_TEXT: f32 = 3.0;
         const MIN_GREY: f32 = 1.25;
         let cases = [
-            (Appearance::Dark, ANSI16_DARK, (0x14, 0x18, 0x14)),
-            (Appearance::Light, ANSI16_LIGHT, (0xfd, 0xf6, 0xe3)),
+            (Appearance::Dark, ANSI16_DARK, [0x14, 0x18, 0x14]),
+            (Appearance::Light, ANSI16_LIGHT, [0xfd, 0xf6, 0xe3]),
         ];
         for (appearance, table, bg) in cases {
             for (ix, color) in table.iter().enumerate() {
@@ -827,7 +798,7 @@ mod tests {
     /// a light field, not lighter.
     #[test]
     fn bright_slots_gain_emphasis_in_both_appearances() {
-        let lum = |c: (u8, u8, u8)| luminance(c.0, c.1, c.2);
+        let lum = |c: [u8; 3]| luminance(c[0], c[1], c[2]);
         for ix in 0..8 {
             if ix == ANSI_BLACK {
                 continue;

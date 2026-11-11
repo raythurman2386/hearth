@@ -9,6 +9,7 @@
 use rune::{Cursor, El, Phase, TextStyle, Tx, el, icon, row, text};
 
 use crate::icons;
+use crate::settings::{RIGHT_PANE_DEFAULT, SIDEBAR_DEFAULT};
 use crate::state::App;
 use crate::theme::Theme;
 
@@ -244,7 +245,7 @@ fn content_start(app: &App, cx: &rune::Cx<App>) -> f32 {
     let sidebar = if app.settings.sidebar_collapsed {
         0.0
     } else {
-        app.settings.sidebar_width
+        SIDEBAR_DEFAULT
     };
     let cluster = platform_cluster_inset(cx) + CLUSTER_BUTTONS_WIDTH + TITLEBAR_IDENTITY_GAP;
     (sidebar + Theme::SPACE_LG).max(cluster)
@@ -281,14 +282,14 @@ fn render_session_identity(app: &App, theme: &Theme, cx: &rune::Cx<App>) -> El {
     let right_w = right_target(
         right_open,
         app.shell.right_pane_expanded,
-        app.settings.right_pane_width,
+        RIGHT_PANE_DEFAULT,
         cx.layout("shell-root")
             .map(|r| r[2])
             .unwrap_or(crate::app::WINDOW_SIZE.0),
         if app.settings.sidebar_collapsed {
             0.0
         } else {
-            app.settings.sidebar_width
+            SIDEBAR_DEFAULT
         },
     );
 

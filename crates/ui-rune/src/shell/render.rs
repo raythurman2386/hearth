@@ -12,10 +12,11 @@
 use rune::{Cursor, El, TextStyle, col, el, icon, row, text};
 
 use crate::icons;
+use crate::settings::{RIGHT_PANE_DEFAULT, SIDEBAR_DEFAULT};
 use crate::state::App;
 use crate::theme::Theme;
 
-use super::panels::{self, conversation_width, resize_handle, right_target, sidebar_target};
+use super::panels::{self, conversation_width, right_target, sidebar_target};
 use super::tabs::right_pane_expand_icon;
 use super::titlebar::platform_cluster_inset;
 use super::{
@@ -89,12 +90,12 @@ pub fn shell(app: &App, cx: &mut rune::Cx<App>, layer: &mut Vec<El>) -> El {
         .filter(|height| *height > 0.0)
         .unwrap_or(crate::app::WINDOW_SIZE.1);
 
-    let sidebar_w = sidebar_target(app.settings.sidebar_collapsed, app.settings.sidebar_width);
+    let sidebar_w = sidebar_target(app.settings.sidebar_collapsed, SIDEBAR_DEFAULT);
     let right_open = right_pane_open(app);
     let right_w = right_target(
         right_open,
         app.shell.right_pane_expanded,
-        app.settings.right_pane_width,
+        RIGHT_PANE_DEFAULT,
         viewport,
         sidebar_w,
     );
@@ -116,19 +117,6 @@ pub fn shell(app: &App, cx: &mut rune::Cx<App>, layer: &mut Vec<El>) -> El {
         } else {
             el()
         });
-
-    let scale = app.scale.get().max(1.0);
-    let sidebar_seam = if sidebar_w > 0.5 {
-        seam(
-            panels::ResizeKind::Sidebar,
-            viewport,
-            viewport_h,
-            theme,
-            scale,
-        )
-    } else {
-        el()
-    };
 
     let main = col()
         .key("main-pane")
@@ -163,17 +151,6 @@ pub fn shell(app: &App, cx: &mut rune::Cx<App>, layer: &mut Vec<El>) -> El {
         } else {
             el()
         });
-    let right_seam = if right_open && right_w > 0.5 {
-        seam(
-            panels::ResizeKind::RightPane,
-            viewport,
-            viewport_h,
-            theme,
-            scale,
-        )
-    } else {
-        el()
-    };
 
     let tone = el()
         .absolute(0.0, 0.0)
@@ -186,9 +163,7 @@ pub fn shell(app: &App, cx: &mut rune::Cx<App>, layer: &mut Vec<El>) -> El {
         .w_full()
         .h_full()
         .child(sidebar)
-        .child(sidebar_seam)
         .child(main)
-        .child(right_seam)
         .child(right);
 
     // Overlay layers owned by the shell. rune-kit menus/dialogs push themselves into `layer`.
@@ -225,14 +200,6 @@ pub fn shell(app: &App, cx: &mut rune::Cx<App>, layer: &mut Vec<El>) -> El {
     root
 }
 
-fn seam(kind: panels::ResizeKind, viewport: f32, viewport_h: f32, theme: &Theme, scale: f32) -> El {
-    el().w(0.0)
-        .h_full()
-        .child(resize_handle(kind, theme, viewport, viewport_h, scale))
-}
-
-/// The chat route's content: transcript + composer, or the new-session canvas.
-///
 /// The chat route's content: the transcript module's viewport and the composer
 /// module's input, or the new-session canvas.
 pub fn main_outlet(app: &App, theme: &Theme) -> El {
@@ -259,7 +226,9 @@ pub fn transcript_slot(app: &App, theme: &Theme) -> El {
 }
 
 pub fn composer_slot(app: &App, theme: &Theme) -> El {
-    el().w_full()
+    col()
+        .w_full()
+        .items_center()
         .on_layout(|app: &mut App, [_, _, _, h]| {
             app.shell.bottom_stack = h;
         })
@@ -424,6 +393,7 @@ fn right_pane(app: &App, theme: &Theme) -> El {
             el().h_full()
                 .grow(1.0)
                 .min_w(0.0)
+                .clip_soft(0.0)
                 .child(crate::changes::header_controls(&app.changes, app, theme)),
         );
     } else {
@@ -651,6 +621,6 @@ pub fn open_last_settings(app: &mut App) {
 
 /// The main-pane header start (kept for the wave-2 transcript header).
 pub fn content_left(app: &App, cx: &rune::Cx<App>) -> f32 {
-    let sidebar = sidebar_target(app.settings.sidebar_collapsed, app.settings.sidebar_width);
+    let sidebar = sidebar_target(app.settings.sidebar_collapsed, SIDEBAR_DEFAULT);
     sidebar.max(platform_cluster_inset(cx))
 }

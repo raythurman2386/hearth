@@ -430,7 +430,11 @@ pub fn render_block(block: &Block, streaming: bool, selectable: bool, theme: &Th
                 ),
             )
         })
+        .scroll_wide(true)
         .build(&theme.kit)
+        .w_full()
+        .min_w(0.0)
+        .clip_soft(0.0)
 }
 
 /// A settled block from a tree; `None` when the index is out of range.

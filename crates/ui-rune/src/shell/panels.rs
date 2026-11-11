@@ -7,21 +7,12 @@
 
 use rune::{Cursor, El, Phase, el};
 
-use crate::settings::{
-    CHAT_PANEL_MIN, RIGHT_PANE_DEFAULT, RIGHT_PANE_MIN, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
-    TERMINAL_MIN_HEIGHT,
-};
+use crate::settings::{CHAT_PANEL_MIN, TERMINAL_MIN_HEIGHT};
 use crate::state::App;
 use crate::theme::Theme;
 
 /// Sidebar row height for the resort FLIP estimate: space line + title + meta line.
 pub const CHAT_ROW_HEIGHT: f32 = 61.0;
-
-/// Vertical pane-resize hitboxes yield the global titlebar.
-pub const PANE_RESIZE_HITBOX_TOP: f32 = Theme::TITLEBAR_HEIGHT;
-
-/// Width of a pane resize hit target (6 points each side of the seam).
-pub const PANE_RESIZE_HITBOX_WIDTH: f32 = 12.0;
 
 pub fn stable_panel_content_width(target: f32, transition: Option<(f32, f32)>) -> f32 {
     transition.map(|(from, to)| from.max(to)).unwrap_or(target)
@@ -68,22 +59,6 @@ pub fn right_target(open: bool, expanded: bool, width: f32, viewport: f32, sideb
     }
 }
 
-/// Clamp a sidebar width into its persisted range.
-pub fn clamp_sidebar_width(width: f32) -> f32 {
-    width.clamp(SIDEBAR_MIN, SIDEBAR_MAX)
-}
-
-/// Clamp a right-pane width: at least [`RIGHT_PANE_MIN`] when the window has room, never past
-/// the conversation floor.
-pub fn clamp_right_pane_width(width: f32, viewport: f32, sidebar: f32) -> f32 {
-    let max = right_pane_max_width(viewport, sidebar);
-    if max >= RIGHT_PANE_MIN {
-        width.clamp(RIGHT_PANE_MIN, max)
-    } else {
-        max
-    }
-}
-
 /// Clamp the terminal drawer height: 160 points minimum, 55% of the viewport maximum.
 pub fn clamp_terminal_height(height: f32, viewport_height: f32) -> f32 {
     let max = (viewport_height * crate::settings::TERMINAL_MAX_VH).max(TERMINAL_MIN_HEIGHT);
@@ -95,105 +70,9 @@ pub fn terminal_target(open: bool, height: f32) -> f32 {
     if open { height } else { 0.0 }
 }
 
-/// Reset widths to the catalog defaults (double-click on a handle).
-pub fn reset_sidebar(app: &mut App) {
-    app.settings.sidebar_width = SIDEBAR_DEFAULT;
-    app.settings.sidebar_collapsed = false;
-    app.save_settings();
-}
-
-pub fn reset_right_pane(app: &mut App) {
-    app.settings.right_pane_width = RIGHT_PANE_DEFAULT;
-    app.save_settings();
-}
-
 pub fn reset_terminal(app: &mut App) {
     app.settings.terminal_height = crate::settings::TERMINAL_DEFAULT_HEIGHT;
     app.save_settings();
-}
-
-/// Which seam a handle resizes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResizeKind {
-    Sidebar,
-    RightPane,
-    Terminal,
-}
-
-/// A drag handle for a pane seam. `onside` places it over the seam: the caller gives it a
-/// zero-width relative parent, so this is an absolute 12-point target centered on the edge.
-///
-/// - Sidebar: `width = start + dx`.
-/// - Right pane: `width = start - dx`, clamped to the conversation floor.
-/// - Terminal: `height = start - dy`, clamped to 160–55vh.
-pub fn resize_handle(
-    kind: ResizeKind,
-    theme: &Theme,
-    viewport_width: f32,
-    viewport_height: f32,
-    scale: f32,
-) -> El {
-    let hover = theme.element_hover;
-    let hairline = theme.hairline(0.18);
-    let inch = 1.0 / scale.max(1.0);
-    let width = PANE_RESIZE_HITBOX_WIDTH;
-    let left = -width / 2.0;
-    let mut handle = el()
-        .absolute(left, PANE_RESIZE_HITBOX_TOP)
-        .w(width)
-        .h((viewport_height - PANE_RESIZE_HITBOX_TOP).max(0.0))
-        .cursor(if kind == ResizeKind::Terminal {
-            Cursor::ResizeRow
-        } else {
-            Cursor::ResizeColumn
-        })
-        .hover(hover)
-        .on_drag(
-            move |app: &mut App, drag: &mut rune::Drag, _tx| match drag.phase {
-                Phase::Down => {
-                    drag.data = match kind {
-                        ResizeKind::Sidebar => app.settings.sidebar_width,
-                        ResizeKind::RightPane => app.settings.right_pane_width,
-                        ResizeKind::Terminal => app.settings.terminal_height,
-                    };
-                }
-                Phase::Move => match kind {
-                    ResizeKind::Sidebar => {
-                        app.settings.sidebar_width = clamp_sidebar_width(drag.data + drag.dx);
-                        app.settings.sidebar_collapsed = false;
-                    }
-                    ResizeKind::RightPane => {
-                        let sidebar = sidebar_target(
-                            app.settings.sidebar_collapsed,
-                            app.settings.sidebar_width,
-                        );
-                        app.settings.right_pane_width =
-                            clamp_right_pane_width(drag.data - drag.dx, viewport_width, sidebar);
-                        app.shell.right_pane_expanded = false;
-                    }
-                    ResizeKind::Terminal => {
-                        app.settings.terminal_height =
-                            clamp_terminal_height(drag.data - drag.dy, viewport_height);
-                    }
-                },
-                Phase::Up => app.save_settings(),
-            },
-        )
-        .on_double_press(move |app: &mut App| match kind {
-            ResizeKind::Sidebar => reset_sidebar(app),
-            ResizeKind::RightPane => reset_right_pane(app),
-            ResizeKind::Terminal => reset_terminal(app),
-        })
-        .child(
-            // The seam's own hairline is the pane border; hover adds a stronger center
-            // highlight that fades toward both ends.
-            el().absolute(0.0, 0.0).w(inch).h_full().fill(hairline),
-        );
-
-    if kind == ResizeKind::Terminal {
-        handle = handle.h(8.0).w_full().absolute(0.0, -4.0);
-    }
-    handle
 }
 
 /// A horizontal terminal handle sits above the drawer inside the main column.
@@ -236,11 +115,6 @@ mod tests {
     }
 
     #[test]
-    fn pane_resize_hitboxes_yield_the_titlebar_chrome() {
-        assert_eq!(PANE_RESIZE_HITBOX_TOP, Theme::TITLEBAR_HEIGHT);
-    }
-
-    #[test]
     fn right_panel_content_keeps_the_larger_width_only_during_transition() {
         assert_eq!(right_panel_content_width(520.0, None, None), 520.0);
         assert_eq!(
@@ -267,10 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_bounds_and_collapse() {
-        assert_eq!(clamp_sidebar_width(10.0), SIDEBAR_MIN);
-        assert_eq!(clamp_sidebar_width(999.0), SIDEBAR_MAX);
-        assert_eq!(clamp_sidebar_width(300.0), 300.0);
+    fn sidebar_collapses_to_zero() {
         assert_eq!(sidebar_target(true, 256.0), 0.0);
         assert_eq!(sidebar_target(false, 256.0), 256.0);
     }
@@ -282,13 +153,6 @@ mod tests {
         assert_eq!(right_target(true, true, 520.0, 1320.0, 256.0), 1064.0);
         // An over-wide request is capped so the conversation keeps its 300 points.
         assert_eq!(right_target(true, false, 2000.0, 1320.0, 256.0), 764.0);
-    }
-
-    #[test]
-    fn right_pane_clamp_keeps_the_floor_when_room_is_scarce() {
-        assert_eq!(clamp_right_pane_width(100.0, 1320.0, 256.0), RIGHT_PANE_MIN);
-        assert_eq!(clamp_right_pane_width(900.0, 1320.0, 256.0), 764.0);
-        assert_eq!(clamp_right_pane_width(400.0, 800.0, 256.0), 244.0);
     }
 
     #[test]

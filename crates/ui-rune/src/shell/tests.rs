@@ -9,8 +9,8 @@ use crate::settings::{CHAT_PANEL_MIN, RIGHT_PANE_MIN, SettingsSection, platform_
 use crate::theme::Theme;
 
 use super::panels::{
-    PANE_RESIZE_HITBOX_TOP, conversation_width, right_pane_max_width, right_pane_takeover_width,
-    right_panel_content_width, stable_panel_content_width,
+    conversation_width, right_pane_max_width, right_pane_takeover_width, right_panel_content_width,
+    stable_panel_content_width,
 };
 use super::tabs::right_pane_expand_icon;
 use super::titlebar::{
@@ -60,11 +60,6 @@ fn right_pane_takeover_control_reverses_direction() {
         right_pane_expand_icon(true).name,
         icons::COLLAPSE_ARROWS.name
     );
-}
-
-#[test]
-fn pane_resize_hitboxes_yield_the_titlebar_chrome() {
-    assert_eq!(PANE_RESIZE_HITBOX_TOP, Theme::TITLEBAR_HEIGHT);
 }
 
 #[test]

@@ -140,6 +140,8 @@ pub fn render_user_attachments(
     let mut strip = row()
         .w_full()
         .h(ATT_STRIP_H)
+        .min_w(0.0)
+        .clip_soft(0.0)
         .justify_end()
         .items_start()
         .gap(8.0)

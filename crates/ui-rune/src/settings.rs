@@ -526,17 +526,11 @@ pub fn display_combo_on(mac: bool, combo: &str) -> String {
 }
 
 impl UiSettings {
-    /// Clamp widths into their legal ranges (also heals NaN to defaults).
+    /// Widths are fixed for the cleaner single-pane aesthetic. The persisted
+    /// fields stay for older settings files but are no longer adjustable.
     pub fn clamped(mut self) -> Self {
-        self.sidebar_width = clamp_or(
-            self.sidebar_width,
-            SIDEBAR_MIN,
-            SIDEBAR_MAX,
-            SIDEBAR_DEFAULT,
-        );
-        // The right pane has no persisted upper bound: its live drag clamps
-        // against the current window, which is unavailable while loading.
-        self.right_pane_width = min_or(self.right_pane_width, RIGHT_PANE_MIN, RIGHT_PANE_DEFAULT);
+        self.sidebar_width = SIDEBAR_DEFAULT;
+        self.right_pane_width = RIGHT_PANE_DEFAULT;
         self.terminal_height = clamp_or(
             self.terminal_height,
             TERMINAL_MIN_HEIGHT,
@@ -584,14 +578,6 @@ fn clamp_or(value: f32, min: f32, max: f32, default: f32) -> f32 {
     }
 }
 
-fn min_or(value: f32, min: f32, default: f32) -> f32 {
-    if value.is_finite() {
-        value.max(min)
-    } else {
-        default
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -600,7 +586,7 @@ mod tests {
     fn round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let settings = UiSettings {
-            sidebar_width: 300.0,
+            sidebar_width: SIDEBAR_DEFAULT,
             sidebar_collapsed: true,
             last_space_id: Some("space-1".into()),
             open_tabs: Some(vec!["b".to_string(), "a".to_string()]),
@@ -608,7 +594,7 @@ mod tests {
             sound_enabled: false,
             notifications_enabled: false,
             notifications_background_only: false,
-            right_pane_width: 700.0,
+            right_pane_width: RIGHT_PANE_DEFAULT,
             terminal_height: 320.0,
             keymap: KeymapConfig {
                 toggle_sidebar: "mod-shift-s".into(),
@@ -634,7 +620,7 @@ mod tests {
         .unwrap();
         let loaded = UiSettings::load(dir.path());
         assert_eq!(loaded.appearance, crate::appearance::AppearanceMode::System);
-        assert_eq!(loaded.sidebar_width, 300.0);
+        assert_eq!(loaded.sidebar_width, SIDEBAR_DEFAULT);
         assert!(!loaded.sound_enabled, "other keys still parse");
         assert!(
             loaded.notifications_enabled,
@@ -663,18 +649,20 @@ mod tests {
         )
         .unwrap();
         let loaded = UiSettings::load(dir.path());
-        assert_eq!(loaded.sidebar_width, SIDEBAR_MAX);
-        assert_eq!(loaded.right_pane_width, RIGHT_PANE_MIN);
+        assert_eq!(loaded.sidebar_width, SIDEBAR_DEFAULT);
+        assert_eq!(loaded.right_pane_width, RIGHT_PANE_DEFAULT);
     }
 
     #[test]
-    fn large_right_pane_width_is_preserved() {
+    fn widths_are_fixed() {
         let loaded = UiSettings {
+            sidebar_width: 2400.0,
             right_pane_width: 2400.0,
             ..Default::default()
         }
         .clamped();
-        assert_eq!(loaded.right_pane_width, 2400.0);
+        assert_eq!(loaded.sidebar_width, SIDEBAR_DEFAULT);
+        assert_eq!(loaded.right_pane_width, RIGHT_PANE_DEFAULT);
     }
 
     #[test]

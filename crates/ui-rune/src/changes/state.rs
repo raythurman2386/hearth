@@ -15,7 +15,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use hearth_proto::{CheckoutDiff, GitHistoryCommit, GitHistoryPage};
-use hearth_rpc::methods;
+use hearth_rpc::{RpcError, methods};
 use rune::TextEdit;
 
 use crate::bridge::Bridge;
@@ -303,7 +303,7 @@ impl Default for ChangesState {
             fetch_error: None,
             fetch_for: None,
             copied_sha: None,
-            wrap: false,
+            wrap: true,
             change_requests: ChangeRequestsState::default(),
             scope_menu_open: false,
             ref_menu_open: false,
@@ -664,6 +664,63 @@ impl ChangesState {
 
     fn current_parse_key(&self) -> Option<String> {
         self.active_diff().map(|diff| self.parse_key(diff))
+    }
+
+    /// Headless-scene helper: install a parsed patch as the pane's content so
+    /// the diff/history layouts can be rendered without an engine.
+    #[doc(hidden)]
+    pub fn seed_demo(&mut self, patch: &str, chat_id: &str, cwd: &str) {
+        let files = super::model::parse_patch(patch);
+        let (rows, ranges) = super::rows::flatten_rows(&files, &[], None, self.mode, |_| false);
+        let additions = files.iter().map(|file| file.additions).sum();
+        let deletions = files.iter().map(|file| file.deletions).sum();
+        self.parsed = Some(ParsedDiff {
+            key: "demo".into(),
+            truncated: false,
+            additions,
+            deletions,
+            file_count: files.len(),
+            files: Arc::new(files),
+        });
+        self.rows = rows;
+        self.row_ranges = ranges;
+        self.row_version = self.row_version.wrapping_add(1);
+        self.scope = DiffScope::LatestTurn;
+        self.scoped = Some(CheckoutDiff {
+            checkout_id: "demo".into(),
+            device_id: "dev-local".into(),
+            cwd: cwd.into(),
+            patch: patch.into(),
+            files: Vec::new(),
+            additions,
+            deletions,
+            truncated: false,
+            checksum: "demo".into(),
+            updated_at: chrono::Utc::now(),
+        });
+        // Match `ensure_scoped`'s context key so the demo is not cleared and
+        // re-fetched on the first poll.
+        self.scoped_for = Some(format!("local|{chat_id}|{cwd}|{}|||", self.scope.mode()));
+    }
+
+    /// Headless-scene helper: install a history page without an engine.
+    #[doc(hidden)]
+    pub fn seed_history_demo(
+        &mut self,
+        cwd: &str,
+        commits: Vec<GitHistoryCommit>,
+        head_sha: Option<String>,
+    ) {
+        self.scope = DiffScope::History;
+        self.history_lead_count = Some(commits.len());
+        self.history_total = Some(commits.len());
+        self.history = commits;
+        self.history_loading = false;
+        self.history_error = None;
+        self.history_cursor = None;
+        self.head_sha = head_sha;
+        self.history_for = Some(format!("local:{cwd}"));
+        self.history_version = self.history_version.wrapping_add(1);
     }
 
     pub fn phase(&self, app: &App) -> DiffPhase {
@@ -1339,6 +1396,9 @@ impl ChangesState {
             self.scoped_error = None;
         }
         let Some(engine) = env.engine.clone() else {
+            self.scoped = None;
+            self.scoped_error = Some("Diff needs a running engine.".to_string());
+            self.scoped_for = Some(key);
             return;
         };
         let mode = self.scope.mode().to_string();
@@ -1359,17 +1419,23 @@ impl ChangesState {
             if let Some(target) = target {
                 params.insert("targetDeviceId".into(), serde_json::Value::String(target));
             }
-            let result = engine
-                .client
-                .call(
+            let result = match tokio::time::timeout(
+                Duration::from_secs(8),
+                engine.client.call(
                     methods::GET_CHECKOUT_DIFF,
                     serde_json::Value::Object(params),
-                )
-                .await
-                .map_err(|err| err.to_string())
-                .and_then(|value| {
-                    serde_json::from_value::<CheckoutDiff>(value).map_err(|err| err.to_string())
-                });
+                ),
+            )
+            .await
+            {
+                Ok(Ok(value)) => serde_json::from_value::<CheckoutDiff>(value)
+                    .map_err(|err| format!("Diff response: {err}")),
+                Ok(Err(RpcError::UnknownMethod(_))) => {
+                    Err("unknown method: scoped diffs are unsupported by this engine".into())
+                }
+                Ok(Err(err)) => Err(err.to_string()),
+                Err(_) => Err("Diff request timed out — is the engine responding?".into()),
+            };
             let _ = tx.send(ChangesEvent::Scoped { key, result });
             wake.wake();
         });
@@ -1445,21 +1511,28 @@ impl ChangesState {
     }
 
     fn fetch_history(&mut self, cursor: usize, reset: bool) {
+        self.history_loading = true;
+        self.history_error = None;
         let Some(env) = self.env.clone() else {
+            self.history_loading = false;
+            self.history_error = Some("History needs an engine connection.".to_string());
             return;
         };
         let Some(cwd) = self.scoped_cwd() else {
+            self.history_loading = false;
+            self.history_error = Some("This session has no working directory.".to_string());
             return;
         };
         let Some(engine) = env.engine.clone() else {
+            self.history_loading = false;
+            self.history_error = Some("History needs a running engine.".to_string());
             return;
         };
         let Some(key) = self.history_key() else {
+            self.history_loading = false;
             return;
         };
         let target = env.target();
-        self.history_loading = true;
-        self.history_error = None;
         let tx = self.tx.clone();
         let wake = env.bridge.clone();
         env.bridge.spawn(async move {
@@ -1473,14 +1546,22 @@ impl ChangesState {
             if let Some(target) = target {
                 params.insert("targetDeviceId".into(), serde_json::Value::String(target));
             }
-            let result = engine
-                .client
-                .call(methods::LIST_GIT_HISTORY, serde_json::Value::Object(params))
-                .await
-                .map_err(|err| err.to_string())
-                .and_then(|value| {
-                    serde_json::from_value::<GitHistoryPage>(value).map_err(|err| err.to_string())
-                });
+            let result = match tokio::time::timeout(
+                Duration::from_secs(8),
+                engine
+                    .client
+                    .call(methods::LIST_GIT_HISTORY, serde_json::Value::Object(params)),
+            )
+            .await
+            {
+                Ok(Ok(value)) => serde_json::from_value::<GitHistoryPage>(value)
+                    .map_err(|err| format!("History response: {err}")),
+                Ok(Err(RpcError::UnknownMethod(_))) => {
+                    Err("This engine build does not support git history — update it.".to_string())
+                }
+                Ok(Err(err)) => Err(err.to_string()),
+                Err(_) => Err("History request timed out — is the engine responding?".to_string()),
+            };
             let _ = tx.send(ChangesEvent::History { key, reset, result });
             wake.wake();
         });
@@ -1656,16 +1737,17 @@ fn spawn_diff_watch(
                     serde_json::Value::String(target.clone()),
                 );
             }
-            match engine
-                .client
-                .subscribe(
+            match tokio::time::timeout(
+                Duration::from_secs(8),
+                engine.client.subscribe_checked(
                     methods::WATCH_CHECKOUT_DIFFS,
                     serde_json::Value::Object(params),
-                )
-                .await
+                ),
+            )
+            .await
             {
-                Ok(mut rx) => {
-                    while let Some(value) = rx.recv().await {
+                Ok(Ok(mut subscription)) => {
+                    while let Some(value) = subscription.recv().await {
                         let _ = tx.send(ChangesEvent::Diffs { generation, value });
                         bridge.wake();
                     }
@@ -1674,10 +1756,25 @@ fn spawn_diff_watch(
                         message: "Diff stream interrupted — retrying".to_string(),
                     });
                 }
-                Err(err) => {
+                Ok(Err(RpcError::UnknownMethod(_))) => {
+                    let _ = tx.send(ChangesEvent::WatchError {
+                        generation,
+                        message: "unknown method: live diffs are unsupported by this engine build"
+                            .to_string(),
+                    });
+                    bridge.wake();
+                    return;
+                }
+                Ok(Err(err)) => {
                     let _ = tx.send(ChangesEvent::WatchError {
                         generation,
                         message: format!("Diff watch unavailable: {err}"),
+                    });
+                }
+                Err(_) => {
+                    let _ = tx.send(ChangesEvent::WatchError {
+                        generation,
+                        message: "Diff watch timed out — is the engine responding?".to_string(),
                     });
                 }
             }
@@ -1833,6 +1930,7 @@ mod tests {
     #[test]
     fn wrap_toggle_bumps_the_row_version_once() {
         let mut state = ChangesState::default();
+        state.set_wrap(false);
         let before = state.row_version;
         state.set_wrap(true);
         assert!(state.wrap);
@@ -1893,6 +1991,7 @@ mod tests {
             files: Arc::new(files),
         });
         assert!(!app.changes.rows.is_empty());
+        app.changes.set_wrap(false);
 
         let mut rt = rune::Runtime::new(
             app,

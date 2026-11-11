@@ -23,6 +23,7 @@ pub mod loaders;
 pub mod markdown;
 pub mod motion;
 pub mod notify;
+pub mod omarchy;
 pub mod pickers;
 pub mod rail;
 pub mod settings;

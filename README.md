@@ -2,7 +2,7 @@
 
 A **local-first** control surface for coding agents (Huginn, Codex, Grok) on Linux, macOS, and Windows.
 
-Hearth is a fork of [**Zeron**](https://github.com/zeronsh/comet) — a native rewrite (Rust + [Rune](https://github.com/anomalyco/rune)) of a multi-device agent controller. This fork keeps the part that matters on a single machine: a fast, private harness runner you drive locally. No hosted account, no cloud sync, and no telemetry is required for normal use.
+Hearth is a native [Rust](https://www.rust-lang.org/) + [Rune](https://github.com/anomalyco/rune) app. It keeps the part that matters on a single machine: a fast, private harness runner you drive locally. No hosted account, no cloud sync, and no telemetry is required for normal use.
 
 ## What it is
 
@@ -76,12 +76,12 @@ Details: [docs/usage.md](docs/usage.md), [docs/harnesses.md](docs/harnesses.md).
 
 ## Sync
 
-Sync is **off** by default. This fork syncs over **Tailscale** instead of a hosted account service: the tailnet is the trust boundary, and an always-on host (typically minis) serves the chat2/registry rooms.
+Sync is **off** by default. Hearth syncs over **Tailscale** instead of a hosted account service: the tailnet is the trust boundary, and an always-on host (typically minis) serves the chat2/registry rooms.
 
 To opt in, set `HEARTH_TAILNET_HOST` to the hub's MagicDNS name (see [docs/configuration.md](docs/configuration.md)). A bare install never dials out.
 
 ## Credit
 
-Fork of **Zeron** by the **zeronsh** maintainers ([zeronsh/comet](https://github.com/zeronsh/comet)). This fork renames the product to Hearth, adds Huginn as a first-class ACP harness, ports the Ravenwood theme, defaults to local-only operation, and drops mobile/web apps and cloud-centric CI from the default path.
+Built with [Rune](https://github.com/anomalyco/rune). Licensed under the [MIT License](LICENSE).
 
 Licensed under the [MIT License](LICENSE).

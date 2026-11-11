@@ -404,14 +404,12 @@ pub fn history_controls(state: &ChangesState, _app: &App, theme: &Theme) -> El {
 }
 
 fn history_strip(state: &ChangesState, theme: &Theme) -> El {
-    let count = state
-        .history_lead_count
-        .or(state.history_total)
-        .unwrap_or(state.history.len());
+    // The pane header already carries the commit count, branch and Fetch
+    // action; the strip only anchors the repository being browsed.
     row()
         .w_full()
         .shrink()
-        .h(36.0)
+        .h(32.0)
         .px(Theme::SPACE_LG)
         .gap(10.0)
         .center_y()
@@ -424,16 +422,6 @@ fn history_strip(state: &ChangesState, theme: &Theme) -> El {
                 .grow(1.0)
                 .min_w(0.0),
         )
-        .children((!state.history.is_empty()).then(|| {
-            text(format!(
-                "{count} commit{}",
-                if count == 1 { "" } else { "s" }
-            ))
-            .font(TextStyle::new(11.0, 400.0))
-            .color(theme.text_faint)
-            .shrink()
-        }))
-        .child(fetch_button(state, theme))
 }
 
 fn column_header(lane_count: usize, theme: &Theme) -> El {

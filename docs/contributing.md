@@ -86,4 +86,4 @@ User-facing claims must match the binary. Prefer linking to code or citing defau
 
 ## Upstream lineage
 
-Hearth is a fork of Zeron/comet. Large design docs under `docs/research/` and `ARCHITECTURE.md` still describe optional multi-device sync. When contributing local-first features, do not assume sync is on; default paths must work with no edge credentials.
+Hearth's design docs under `docs/research/` and `ARCHITECTURE.md` still describe optional multi-device sync. When contributing local-first features, do not assume sync is on; default paths must work with no edge credentials.

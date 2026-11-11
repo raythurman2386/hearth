@@ -35,8 +35,8 @@ use crate::theme::Theme;
 pub use keymap::on_key;
 pub use nav::{NavEntry, NavHistory};
 pub use panels::{
-    CHAT_ROW_HEIGHT, PANE_RESIZE_HITBOX_TOP, conversation_width, right_pane_max_width,
-    right_pane_takeover_width, right_panel_content_width, stable_panel_content_width,
+    CHAT_ROW_HEIGHT, conversation_width, right_pane_max_width, right_pane_takeover_width,
+    right_panel_content_width, stable_panel_content_width,
 };
 pub use routes::Route;
 pub use tabs::{cycle_target, in_space_filter};
@@ -390,40 +390,7 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
 /// opaque seeds; its warm layers don't match the green-grey elevation ladder. Shell overlays
 /// read this instead so menus, dialogs and popovers paint the same surfaces as the shell.
 pub fn shell_kit(theme: &Theme) -> rune_kit::Kit {
-    let mut kit = theme.kit.clone();
-    kit.c.page = theme.bg;
-    kit.c.bg_base = theme.bg;
-    kit.c.bg_deep = theme.bg;
-    kit.c.layer_01 = theme.surface_overlay;
-    kit.c.layer_02 = theme.surface_dialog;
-    kit.c.layer_03 = theme.surface_raised;
-    kit.c.layer_04 = theme.surface_raised_hover;
-    kit.c.surface_base = theme.surface;
-    kit.c.surface_weak = theme.surface_card;
-    kit.c.surface_hover = theme.element_hover;
-    kit.c.surface_raised = theme.surface_raised;
-    kit.c.surface_raised_base = theme.surface_raised;
-    kit.c.surface_raised_hover = theme.surface_raised_hover;
-    kit.c.surface_float = theme.surface_overlay;
-    kit.c.text_base = theme.text;
-    kit.c.text_muted = theme.text_muted;
-    kit.c.text_faint = theme.text_faint;
-    kit.c.text_weak = theme.text_dim;
-    kit.c.text_strong = theme.text;
-    kit.c.icon_base = theme.text;
-    kit.c.icon_muted = theme.text_muted;
-    kit.c.icon_faint = theme.text_faint;
-    kit.c.border_muted = theme.border;
-    kit.c.border_base = theme.border;
-    kit.c.border_strong = theme.border_strong;
-    kit.c.border_weak = theme.border;
-    kit.c.hover = theme.element_hover;
-    kit.c.pressed = theme.wash(0.10);
-    kit.c.scrim = theme.scrim();
-    kit.c.submit_fg = theme.on_solid;
-    kit.c.submit_icon = theme.on_solid;
-    kit.c.bg_accent = theme.accent;
-    kit
+    theme.kit.clone()
 }
 
 /// Convert a persisted gpui-style combo (`mod-s`, `ctrl-shift-tab`) into Rune's `Chord`/`Shortcut`

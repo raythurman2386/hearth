@@ -38,7 +38,7 @@ use super::emulator::{
 use super::view::{
     COALESCE_MS, InputCoalescer, RESIZE_DEBOUNCE_MS, SELECTION_DRAG_THRESHOLD, TERM_LINE_HEIGHT,
     TERM_PADDING, cell_at, cell_width, key_event_bytes, paste_bytes, resolve_color, term_style,
-    terminal_panel_bg, terminal_selection_for,
+    terminal_panel_bg, terminal_selection,
 };
 
 /// Fixed tab width — drag-reorder math stays analytic.
@@ -1877,7 +1877,7 @@ fn render_row(
     }
 
     // Selection wash, painted over the cell backgrounds and under the glyphs.
-    let wash = terminal_selection_for(theme.appearance);
+    let wash = terminal_selection(theme);
     let mut sel_start: Option<usize> = None;
     for col in 0..=cells.len() {
         let selected = cells.get(col).is_some_and(|cell| cell.selected);

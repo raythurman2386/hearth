@@ -2,7 +2,7 @@
 
 **Status: shipped behind the `reg1/` room namespace; replaces the `ws4/` Loro workspace doc.**
 
-**Implementation (this fork):** Rust hub rooms in `crates/sync` (`registry_room.rs`, `hub.rs`) over Tailscale. References to `edge/src/registry-room.ts` below are historical; the merge logic still lives in `crates/doc/src/registry.rs`.
+**Implementation:** Rust hub rooms in `crates/sync` (`registry_room.rs`, `hub.rs`) over Tailscale. References to `edge/src/registry-room.ts` below are historical; the merge logic still lives in `crates/doc/src/registry.rs`.
 
 ## Why
 

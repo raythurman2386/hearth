@@ -9,6 +9,7 @@ use rune::{Cursor, El, TextStyle, col, el, icon, row, text};
 use rune_kit::Placement;
 
 use crate::icons;
+use crate::settings::SIDEBAR_DEFAULT;
 use crate::state::App;
 use crate::theme::Theme;
 
@@ -86,7 +87,7 @@ pub fn render_user_menu(app: &App, theme: &Theme, layer: &mut Vec<El>) -> El {
         );
 
     let body = col()
-        .w((app.settings.sidebar_width - 2.0 * Theme::SPACE_SM).max(160.0))
+        .w((SIDEBAR_DEFAULT - 2.0 * Theme::SPACE_SM).max(160.0))
         .gap(2.0)
         .child(
             text(identity)

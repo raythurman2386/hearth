@@ -53,6 +53,7 @@ pub fn render(app: &App, theme: &Theme) -> El {
         .key("composer-root")
         .w_full()
         .max_w(COMPOSER_MAX_WIDTH)
+        .min_w(0.0)
         .gap(Theme::SPACE_SM)
         .px(Theme::SPACE_LG)
         .pb(Theme::SPACE_LG);

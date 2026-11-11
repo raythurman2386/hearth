@@ -352,6 +352,7 @@ fn row_el(
                     rrow().w_full().justify_end().child(
                         el().min_w(0.0)
                             .max_w(MAX_CONTENT_WIDTH * 0.8)
+                            .clip_soft(0.0)
                             .fill(crate::theme::user_bubble_bg(theme.appearance))
                             .radius(Theme::BUBBLE_RADIUS)
                             .px(16.0)
@@ -475,12 +476,16 @@ fn user_bubble_text(prompt: &str, mentions: &[super::model::MentionSpan], theme:
         text(prompt.to_string())
             .font(TextStyle::new(14.0, 400.0).lh(22.0))
             .color(theme.text)
-            .wrap()
+            .w_full()
+            .min_w(0.0)
+            .wrap_anywhere()
     } else {
         rune::rich(prompt.to_string(), spans)
             .font(TextStyle::new(14.0, 400.0).lh(22.0))
             .color(theme.text)
-            .wrap()
+            .w_full()
+            .min_w(0.0)
+            .wrap_anywhere()
     }
 }
 
@@ -526,9 +531,15 @@ fn render_tool_group(
                     .fill(theme.ink(0.06))
                     .center()
                     .child(
-                        text(if open { "▾" } else { "▸" })
-                            .font(TextStyle::new(10.0, 400.0))
-                            .color(theme.text_muted.alpha(0.7)),
+                        rune::icon(
+                            if open {
+                                &crate::icons::ALT_ARROW_DOWN
+                            } else {
+                                &crate::icons::ALT_ARROW_RIGHT
+                            },
+                            10.0,
+                        )
+                        .color(theme.text_muted.alpha(0.7)),
                     ),
             )
             .child(

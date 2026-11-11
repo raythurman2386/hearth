@@ -41,6 +41,10 @@ static SCENES: &[Scene] = &[
     ("ready", |app| {
         app.connection = crate::state::ConnectionStatus::Ready;
     }),
+    ("loading", |app| {
+        app.connection = crate::state::ConnectionStatus::Connecting;
+        app.shell.splash = crate::shell::SplashPhase::Visible;
+    }),
     ("failure", |app| {
         app.connection = crate::state::ConnectionStatus::Failed("engine unreachable".to_string());
     }),
@@ -54,13 +58,152 @@ static SCENES: &[Scene] = &[
     }),
     ("narrow", |app| {
         demo_scene(app);
-        app.settings.sidebar_width = 256.0;
         let key = app.shell.panel_key(app);
         app.shell
             .panels
             .update(&key, |panels| panels.changes_open = true);
     }),
+    ("diff", |app| {
+        demo_scene(app);
+        let key = app.shell.panel_key(app);
+        app.shell
+            .panels
+            .update(&key, |panels| panels.changes_open = true);
+        crate::shell::add_diff_surface(app);
+        app.changes
+            .seed_demo(DEMO_PATCH, "chat-1", "/home/ret/Development/hearth");
+    }),
+    ("history", |app| {
+        demo_scene(app);
+        let key = app.shell.panel_key(app);
+        app.shell
+            .panels
+            .update(&key, |panels| panels.changes_open = true);
+        crate::shell::add_diff_surface(app);
+        app.changes.scope = crate::changes::DiffScope::History;
+        let now = chrono::Utc::now();
+        // A deterministic fake hash so demo rows look like real commits.
+        let fake_sha = |n: usize| -> String {
+            let mut x = (n as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            (0..40)
+                .map(|_| {
+                    x = x
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    char::from_digit((x >> 60) as u32, 16).unwrap_or('0')
+                })
+                .collect()
+        };
+        let commits: Vec<hearth_proto::GitHistoryCommit> = (0..24)
+            .map(|i| hearth_proto::GitHistoryCommit {
+                sha: fake_sha(i),
+                parent_shas: if i + 1 < 24 {
+                    vec![fake_sha(i + 1)]
+                } else {
+                    Vec::new()
+                },
+                subject: format!(
+                    "Port the {} surface to Rune",
+                    [
+                        "shell",
+                        "transcript",
+                        "composer",
+                        "terminal",
+                        "diff",
+                        "settings"
+                    ][i % 6]
+                ),
+                author_name: "ret".into(),
+                author_email: "ret@example.com".into(),
+                authored_at: now.to_rfc3339(),
+                refs: if i == 0 {
+                    vec![
+                        hearth_proto::GitHistoryRef {
+                            kind: hearth_proto::GitHistoryRefKind::Branch,
+                            label: "main".into(),
+                        },
+                        hearth_proto::GitHistoryRef {
+                            kind: hearth_proto::GitHistoryRefKind::Tag,
+                            label: "v0.3.0".into(),
+                        },
+                    ]
+                } else {
+                    Vec::new()
+                },
+            })
+            .collect();
+        app.changes
+            .seed_history_demo("/home/ret/Development/hearth", commits, Some(fake_sha(0)));
+    }),
+    ("stress", stress_scene),
 ];
+
+/// Stress the transcript/composer with long unbroken tokens at a narrow width.
+fn stress_scene(app: &mut App) {
+    demo_scene(app);
+    use chrono::Utc;
+    use hearth_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry};
+    let now = Utc::now();
+    let long = format!("https://example.com/{}", "a".repeat(180));
+    app.transcript.push(SessionMessageEntry {
+        id: "msg-user-stress".into(),
+        role: MessageRole::User,
+        parts: vec![MessagePart::Text {
+            id: "part-user-stress".into(),
+            text: format!(
+                "Here is a long unbroken token: {long} and another: {} plus a code-ish blob {}",
+                "b".repeat(160),
+                "c".repeat(120)
+            ),
+        }],
+        created_at: now.timestamp_millis() + 2000,
+        device_id: "dev-local".into(),
+        status: Some(MessageStatus::Complete),
+        continuation_of: None,
+    });
+    app.transcript.push(SessionMessageEntry {
+        id: "msg-assistant-stress".into(),
+        role: MessageRole::Assistant,
+        parts: vec![MessagePart::Text {
+            id: "part-assistant-stress".into(),
+            text: format!(
+                "A long code line follows:\n\n```rust\nlet token = \"{}\";\n```\n\nAnd a wide table:\n\n| Key | Value |\n| --- | --- |\n| token | {long} |",
+                "d".repeat(160)
+            ),
+        }],
+        created_at: now.timestamp_millis() + 3000,
+        device_id: "dev-local".into(),
+        status: Some(MessageStatus::Complete),
+        continuation_of: None,
+    });
+    app.composer
+        .drafts
+        .insert("chat-1".into(), format!("Draft with a long token: {long}"));
+}
+const DEMO_PATCH: &str = r#"diff --git a/crates/ui-rune/src/shell.rs b/crates/ui-rune/src/shell.rs
+index 1111111..2222222 100644
+--- a/crates/ui-rune/src/shell.rs
++++ b/crates/ui-rune/src/shell.rs
+@@ -1,7 +1,9 @@
+ fn main() {
+-    let shell = Shell::new();
+-    shell.run();
++    let shell = Shell::new();
++    shell.install_theme();
++    shell.run();
+ }
+ 
+ // trailing context
+diff --git a/README.md b/README.md
+index 3333333..4444444 100644
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,4 @@
+ # Hearth
+ 
+-Old copy
++New copy with a very long line that should scroll horizontally instead of widening the pane: https://example.com/a/really/long/path/that/keeps/going/and/going
+"#;
 
 /// A populated chat for layout snapshots: one project, one session, a user
 /// prompt and an assistant reply with markdown + a code fence.
@@ -158,16 +301,19 @@ fn setup(app: &mut App, waker: rune::runtime::Waker) {
 /// changed.
 fn poll(app: &mut App, _now: f64, tx: &mut Tx) -> bool {
     let mut changed = app.drain_events();
+    changed |= app.refresh_omarchy_if_changed();
 
-    // Follow the OS when the user chose "System".
-    let system = if app.system_dark.get() {
-        Appearance::Dark
-    } else {
-        Appearance::Light
-    };
-    if app.appearance.system != system {
-        app.appearance.system = system;
-        changed |= app.refresh_theme();
+    // Follow the OS when the user chose "System" and no Omarchy theme wins.
+    if app.omarchy.is_none() {
+        let system = if app.system_dark.get() {
+            Appearance::Dark
+        } else {
+            Appearance::Light
+        };
+        if app.appearance.system != system {
+            app.appearance.system = system;
+            changed |= app.refresh_theme();
+        }
     }
 
     changed |= crate::shell::poll(app);

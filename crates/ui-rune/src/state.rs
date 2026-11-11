@@ -112,6 +112,12 @@ pub struct App {
     pub changes: ChangesState,
     pub pickers: PickersState,
     pub settings_ui: crate::settings::SettingsUi,
+
+    /// The active Omarchy theme, when one is installed. `theme` is built from
+    /// it; the Appearance setting is only the fallback.
+    pub omarchy: Option<crate::omarchy::OmarchyTheme>,
+    pub omarchy_generation: Option<String>,
+    pub omarchy_checked_at: std::time::Instant,
 }
 
 impl App {
@@ -123,15 +129,23 @@ impl App {
         } else {
             UiSettings::load(&data_dir)
         };
-        let system = Appearance::Dark;
+        let omarchy = crate::omarchy::OmarchyTheme::load();
+        let system = omarchy
+            .as_ref()
+            .map(|om| om.appearance)
+            .unwrap_or(Appearance::Dark);
         let appearance = AppearanceState::new(settings.appearance, system, data_dir.clone());
-        let theme = Theme::for_appearance(appearance.resolved());
+        let theme = omarchy
+            .as_ref()
+            .map(Theme::from_omarchy)
+            .unwrap_or_else(|| Theme::for_appearance(appearance.resolved()));
+        let omarchy_generation = omarchy.as_ref().map(|om| om.generation.clone());
         Self {
             config,
             settings,
             appearance,
             theme,
-            system_dark: std::cell::Cell::new(true),
+            system_dark: std::cell::Cell::new(system.is_dark()),
             scale: std::cell::Cell::new(1.0),
             bridge: Bridge::new(),
             engine: None,
@@ -171,6 +185,9 @@ impl App {
             changes: ChangesState::default(),
             pickers: PickersState::default(),
             settings_ui: crate::settings::SettingsUi::default(),
+            omarchy,
+            omarchy_generation,
+            omarchy_checked_at: std::time::Instant::now(),
         }
     }
 
@@ -908,12 +925,51 @@ impl App {
     /// Rebuild the theme after an appearance change. Returns true when the
     /// palette changed.
     pub fn refresh_theme(&mut self) -> bool {
+        if let Some(om) = &self.omarchy {
+            self.theme = Theme::from_omarchy(om);
+            return true;
+        }
         let resolved = self.appearance.resolved();
         if resolved == self.theme.appearance {
             return false;
         }
         self.theme = Theme::for_appearance(resolved);
         true
+    }
+
+    /// Follow an Omarchy theme change. Cheap: reads the generation file at most
+    /// once a second and only rebuilds when it changed.
+    pub fn refresh_omarchy_if_changed(&mut self) -> bool {
+        if self.omarchy_checked_at.elapsed() < std::time::Duration::from_secs(1) {
+            return false;
+        }
+        self.omarchy_checked_at = std::time::Instant::now();
+        let generation = crate::omarchy::current_generation();
+        if generation.as_deref() == self.omarchy_generation.as_deref() {
+            return false;
+        }
+        match generation {
+            Some(generation) => {
+                let Some(om) = crate::omarchy::OmarchyTheme::load() else {
+                    return false;
+                };
+                self.appearance.system = om.appearance;
+                self.omarchy = Some(om);
+                self.omarchy_generation = Some(generation);
+                let theme = Theme::from_omarchy(self.omarchy.as_ref().expect("just set"));
+                self.theme = theme;
+                true
+            }
+            None => {
+                if self.omarchy.take().is_some() {
+                    self.omarchy_generation = None;
+                    self.refresh_theme();
+                    true
+                } else {
+                    false
+                }
+            }
+        }
     }
 
     /// Persist settings (debounced by the caller).

@@ -168,8 +168,11 @@ fn option_card(theme: &Theme, mode: AppearanceMode, selected: bool) -> El {
 }
 
 /// Apply a mode: persist it and repaint the theme when the resolved appearance
-/// changed.
+/// changed. Omarchy owns the palette when it is active.
 pub fn set_appearance(app: &mut App, mode: AppearanceMode) {
+    if app.omarchy.is_some() {
+        return;
+    }
     app.settings.appearance = mode;
     if app.appearance.set_mode(mode) {
         app.refresh_theme();
@@ -178,6 +181,46 @@ pub fn set_appearance(app: &mut App, mode: AppearanceMode) {
 
 /// The Appearance page body.
 pub fn render(page: &AppearancePage, app: &App, theme: &Theme) -> El {
+    let _ = page;
+    if let Some(om) = &app.omarchy {
+        let content = widgets::page_column()
+            .child(widgets::page_header(theme, "Appearance", None))
+            .child(
+                widgets::page_subtitle(
+                    theme,
+                    "Hearth follows the active Omarchy theme. Change it system-wide; Hearth \
+                     updates live.",
+                )
+                .max_w(512.0),
+            )
+            .child(
+                col()
+                    .mt(32.0)
+                    .gap(8.0)
+                    .child(widgets::field_label(theme, "Omarchy theme"))
+                    .child(
+                        text(om.name.clone())
+                            .font(TextStyle::new(13.0, 500.0))
+                            .color(theme.text),
+                    )
+                    .child(
+                        text(format!(
+                            "Set it with `omarchy theme set <name>`. The light/dark picker is \
+                             disabled while an Omarchy theme is active (currently {}).",
+                            if om.appearance.is_dark() {
+                                "dark"
+                            } else {
+                                "light"
+                            }
+                        ))
+                        .font(TextStyle::new(12.0, 400.0).lh(18.0))
+                        .color(theme.text_muted)
+                        .wrap(),
+                    ),
+            );
+        return widgets::page_root("appearance-page").child(content);
+    }
+
     let current = app.appearance.mode;
     let system = app.appearance.system;
     let cards: Vec<El> = AppearanceMode::ALL
@@ -209,7 +252,6 @@ pub fn render(page: &AppearancePage, app: &App, theme: &Theme) -> El {
                 .wrap(),
         );
 
-    let _ = page;
     widgets::page_root("appearance-page").child(content)
 }
 

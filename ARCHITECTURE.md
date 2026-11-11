@@ -1,6 +1,6 @@
 # hearth — Architecture
 
-User and contributor guides live under [`docs/`](docs/README.md) (usage, configuration, harnesses, troubleshooting). This file is the **system architecture** note for the engine/UI/optional-tailnet topology. Sync paths described below are **opt-in** in this fork; a bare install stays local-only.
+User and contributor guides live under [`docs/`](docs/README.md) (usage, configuration, harnesses, troubleshooting). This file is the **system architecture** note for the engine/UI/optional-tailnet topology. Sync paths described below are **opt-in**; a bare install stays local-only.
 
 A ground-up native rewrite (Zeron/comet lineage) of a multi-device controller for coding agents
 — in Rust, with a Rune UI. Fresh app; no backwards compatibility required.
@@ -246,7 +246,7 @@ Loopback is allowed without whois (tests). Other peers must resolve through `tai
 Status legend: ✅ shipped · 🟡 shipped with named gaps (see `docs/PARITY.md` for upstream lineage).
 
 - ✅ **M0–M3** — scaffold, doc/sync core, engine core, Rune UI (sessions, composer, transcript).
-- ✅ **M4 Multi-device (this fork)** — Tailscale hub-and-spoke: chat2 + registry rooms on the hub,
+- ✅ **M4 Multi-device** — Tailscale hub-and-spoke: chat2 + registry rooms on the hub,
   direct `/rpc` on every device, `tailscale whois` identity. Proven by `scripts/e2e-smoke.sh`
   (loopback hub) and `crates/sync/tests/hub.rs`.
 - 🟡 **M5 Full surface** — terminals, diff pane, repo/branch/folder pickers + worktrees,

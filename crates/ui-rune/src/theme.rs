@@ -13,7 +13,9 @@
 
 use hearth_syntax::HighlightKind;
 use rune::color::{Color, oklch, srgb_decode};
-use rune_kit::{Kit, PaletteSeed};
+use rune_kit::{Kit, PaletteSeed, StateColors};
+
+use crate::omarchy::OmarchyTheme;
 
 /// Which appearance the app is painting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -168,6 +170,98 @@ impl SyntaxPalette {
             invalid: danger,
         }
     }
+
+    /// Map an Omarchy theme's ANSI/status colours onto the syntax roles.
+    fn from_omarchy(om: &OmarchyTheme) -> Self {
+        Self {
+            comment: om.muted,
+            keyword: om.red,
+            string: om.green,
+            string_special: om.magenta,
+            escape: om.yellow,
+            number: om.yellow,
+            boolean: om.magenta,
+            type_name: om.cyan,
+            type_builtin: om.cyan,
+            constructor: om.cyan,
+            function: om.blue,
+            function_builtin: om.blue,
+            macro_name: om.magenta,
+            property: om.cyan,
+            constant: om.yellow,
+            variable: om.blue,
+            variable_special: om.magenta,
+            parameter: om.foreground,
+            operator: om.blue,
+            punctuation: om.muted,
+            tag: om.magenta,
+            attribute: om.yellow,
+            label: om.yellow,
+            invalid: om.red,
+        }
+    }
+}
+
+/// Built-in Ravenwood ANSI slots for the dark appearance (normal 0–7, bright 8–15).
+pub const ANSI16_DARK: [[u8; 3]; 16] = [
+    [0x2a, 0x31, 0x2c],
+    [0xda, 0x63, 0x62],
+    [0x5e, 0x8d, 0x5e],
+    [0xbf, 0x98, 0x3d],
+    [0x5a, 0x93, 0xa2],
+    [0xb8, 0x7b, 0x9d],
+    [0x44, 0x7d, 0x6b],
+    [0x85, 0x92, 0x89],
+    [0x2d, 0x38, 0x32],
+    [0xe6, 0x7e, 0x80],
+    [0x4a, 0xde, 0x80],
+    [0xfb, 0xbf, 0x24],
+    [0x22, 0xd3, 0xee],
+    [0xf4, 0x72, 0xb6],
+    [0x34, 0xd3, 0x99],
+    [0xe8, 0xd5, 0xb7],
+];
+
+/// Built-in Ravenwood ANSI slots for the light appearance.
+pub const ANSI16_LIGHT: [[u8; 3]; 16] = [
+    [0x14, 0x18, 0x14],
+    [0xc0, 0x3c, 0x39],
+    [0x5c, 0x7a, 0x0c],
+    [0xb0, 0x85, 0x00],
+    [0x1a, 0x6d, 0x9e],
+    [0xb8, 0x4d, 0x94],
+    [0x1e, 0x7d, 0x5a],
+    [0x3d, 0x4c, 0x53],
+    [0x2d, 0x38, 0x32],
+    [0x9e, 0x2b, 0x29],
+    [0x4a, 0x62, 0x10],
+    [0x8f, 0x6b, 0x00],
+    [0x14, 0x5a, 0x7a],
+    [0x8f, 0x3d, 0x74],
+    [0x1a, 0x63, 0x47],
+    [0x18, 0x1c, 0x1e],
+];
+
+fn rgb8(r: u8, g: u8, b: u8) -> Color {
+    Color {
+        r: srgb_decode(r as f32 / 255.0),
+        g: srgb_decode(g as f32 / 255.0),
+        b: srgb_decode(b as f32 / 255.0),
+        a: 1.0,
+    }
+}
+
+fn ansi_from(table: [[u8; 3]; 16]) -> [Color; 16] {
+    table.map(|[r, g, b]| rgb8(r, g, b))
+}
+
+fn state_colors(fg: Color) -> StateColors {
+    StateColors {
+        bg: fg.alpha(0.12),
+        fg,
+        border: fg.alpha(0.35),
+        icon: fg,
+    }
 }
 
 /// The app theme. Two concrete instances — [`Theme::dark`] and [`Theme::light`].
@@ -244,6 +338,14 @@ pub struct Theme {
     /// The rune-kit semantic token set derived from this palette. Built once per
     /// appearance and rebuilt only when the appearance changes.
     pub kit: Kit,
+
+    // ---- terminal ----
+    /// The 16 ANSI slots (normal 0–7, bright 8–15).
+    pub ansi: [Color; 16],
+    pub terminal_bg: Color,
+    pub terminal_fg: Color,
+    pub terminal_cursor: Color,
+    pub terminal_selection: Color,
 }
 
 impl Theme {
@@ -367,6 +469,11 @@ impl Theme {
             font_sans: "Geist",
             font_mono: "Geist Mono",
             kit: Kit::neutral(true),
+            ansi: ansi_from(ANSI16_DARK),
+            terminal_bg: hex("141814"),
+            terminal_fg: hex("e8d5b7"),
+            terminal_cursor: hex("22d3ee"),
+            terminal_selection: Color::WHITE.alpha(0.22),
         }
         .with_kit()
     }
@@ -416,6 +523,11 @@ impl Theme {
             font_sans: "Geist",
             font_mono: "Geist Mono",
             kit: Kit::neutral(false),
+            ansi: ansi_from(ANSI16_LIGHT),
+            terminal_bg: hex("fdf6e3"),
+            terminal_fg: hex("3d4c53"),
+            terminal_cursor: hex("1a6d9e"),
+            terminal_selection: Color::BLACK.alpha(0.16),
         }
         .with_kit()
     }
@@ -428,13 +540,136 @@ impl Theme {
         }
     }
 
-    /// Derive the rune-kit token set from this palette.
+    /// Build the theme from the active Omarchy theme.
+    pub fn from_omarchy(om: &OmarchyTheme) -> Self {
+        let syntax = SyntaxPalette::from_omarchy(om);
+        let bg = om.background;
+        let raised = om.lighter_background;
+        Self {
+            appearance: om.appearance,
+            bg,
+            // Omarchy is flat: the page, sidebar and pane share the background;
+            // hairline borders and raised cards carry the separation.
+            surface: bg,
+            surface_raised: raised,
+            surface_card: raised,
+            surface_dialog: raised,
+            surface_overlay: raised,
+            element_hover: om.selection,
+            border: om.inactive_border,
+            border_strong: om.light_foreground.alpha(0.25),
+            text: om.foreground,
+            text_muted: om.light_foreground,
+            text_faint: om.muted,
+            text_dim: om.dark_foreground,
+            solid: om.foreground,
+            on_solid: bg,
+            accent: om.accent,
+            accent_strong: om.accent,
+            on_accent: bg,
+            danger: om.red,
+            danger_muted: om.bright_red,
+            warning: om.yellow,
+            warning_muted: om.bright_yellow,
+            success: om.green,
+            busy: om.blue,
+            success_muted: om.bright_green,
+            surface_raised_hover: raised.mix(om.foreground, 0.07),
+            band: om.darker_background.alpha(0.6),
+            input_bg: raised,
+            selection: om.selection,
+            cursor: om.terminal_cursor,
+            caret: om.terminal_cursor,
+            danger_strong: om.red,
+            code_text: om.cyan,
+            code_wash: om.selection.alpha(0.6),
+            syntax,
+            diff_add: om.green,
+            diff_del: om.red,
+            diff_hunk_bg: om.selection.alpha(0.5),
+            font_sans: "Geist",
+            font_mono: "Geist Mono",
+            kit: Kit::neutral(om.appearance.is_dark()),
+            ansi: om.ansi,
+            terminal_bg: om.terminal_bg,
+            terminal_fg: om.terminal_fg,
+            terminal_cursor: om.terminal_cursor,
+            terminal_selection: om.terminal_selection.alpha(0.6),
+        }
+        .with_kit()
+    }
+
+    /// Derive the rune-kit semantic token set from this palette, so every
+    /// component (not just the shell) paints the active theme.
     fn with_kit(mut self) -> Self {
-        self.kit = Kit::from_palette(PaletteSeed {
+        let mut kit = Kit::from_palette(PaletteSeed {
             bg: self.bg,
             fg: self.text,
             accent: self.accent,
         });
+        kit.blend_over = Some(self.bg);
+        kit.c.page = self.bg;
+        kit.c.bg_base = self.bg;
+        kit.c.bg_deep = self.bg;
+        kit.c.layer_01 = self.surface_overlay;
+        kit.c.layer_02 = self.surface_dialog;
+        kit.c.layer_03 = self.surface_raised;
+        kit.c.layer_04 = self.surface_raised_hover;
+        kit.c.surface_base = self.surface;
+        kit.c.surface_weak = self.surface_card;
+        kit.c.surface_hover = self.element_hover;
+        kit.c.surface_raised = self.surface_raised;
+        kit.c.surface_raised_base = self.surface_raised;
+        kit.c.surface_raised_hover = self.surface_raised_hover;
+        kit.c.surface_float = self.surface_overlay;
+        kit.c.surface_disabled = self.surface_card;
+        kit.c.text_base = self.text;
+        kit.c.text_muted = self.text_muted;
+        kit.c.text_faint = self.text_faint;
+        kit.c.text_weak = self.text_dim;
+        kit.c.text_strong = self.text;
+        kit.c.text_accent = self.accent;
+        kit.c.icon_base = self.text;
+        kit.c.icon_muted = self.text_muted;
+        kit.c.icon_faint = self.text_faint;
+        kit.c.icon_accent = self.accent;
+        kit.c.border_muted = self.border;
+        kit.c.border_base = self.border;
+        kit.c.border_strong = self.border_strong;
+        kit.c.border_weak = self.border;
+        kit.c.border_focus = self.accent;
+        kit.c.hover = self.element_hover;
+        kit.c.pressed = self.wash(0.10);
+        kit.c.scrim = self.scrim();
+        kit.c.submit_fg = self.on_solid;
+        kit.c.submit_icon = self.on_solid;
+        kit.c.submit_highlight = Color::WHITE.alpha(0.18);
+        kit.c.submit_hover = self.bg.alpha(0.12);
+        kit.c.bg_accent = self.accent;
+        kit.c.bg_button_neutral = self.surface_raised;
+        kit.c.bg_icon_button_contrast = self.solid;
+        kit.c.bg_inverse = self.solid;
+        kit.c.bg_contrast = self.solid;
+        kit.c.text_inverse = self.on_solid;
+        kit.c.text_contrast = self.on_solid;
+        kit.c.icon_inverse = self.on_solid;
+        kit.c.icon_contrast = self.on_solid;
+        kit.c.knob = self.surface_raised;
+        kit.c.knob_on = self.accent;
+        kit.c.white = Color::WHITE;
+        kit.c.black = Color::BLACK;
+        kit.c.depth_top = Color::WHITE.alpha(0.10);
+        kit.c.depth_bottom = Color::BLACK.alpha(0.12);
+        kit.c.std_border = self.border;
+        kit.c.std_icon = self.text;
+        kit.c.std_icon_invert = self.on_solid;
+        kit.c.std_icon_strong = self.text;
+        kit.c.std_text = self.text;
+        kit.c.success = state_colors(self.success);
+        kit.c.warning = state_colors(self.warning);
+        kit.c.danger = state_colors(self.danger);
+        kit.c.info = state_colors(self.busy);
+        self.kit = kit;
         self
     }
 

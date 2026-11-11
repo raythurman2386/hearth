@@ -9,7 +9,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use rune::{Align, Color, El, GrowthSpec, ScrollSpec, Side, TextStyle, col, el, row, text};
+use rune::{Align, Color, El, GrowthSpec, ScrollSpec, Side, TextStyle, col, el, icon, row, text};
 
 use crate::state::App;
 use crate::theme::Theme;
@@ -321,7 +321,11 @@ fn row_el(app: &App, ix: usize, theme: &Theme) -> El {
 
 fn file_header(state: &ChangesState, ix: usize, file: &FileDiff, theme: &Theme) -> El {
     let fold = state.folds.get(&file.path).copied().unwrap_or_default();
-    let chevron = if fold.collapsed { ">" } else { "v" };
+    let chevron = if fold.collapsed {
+        &crate::icons::ALT_ARROW_RIGHT
+    } else {
+        &crate::icons::ALT_ARROW_DOWN
+    };
     let collapsed = fold.collapsed;
     // Path-keyed, never index-keyed: a virtual row kept by `memo` can move to
     // a different index, and an index capture would toggle the wrong file.
@@ -351,11 +355,11 @@ fn file_header(state: &ChangesState, ix: usize, file: &FileDiff, theme: &Theme) 
                 .fill(theme.hairline(0.04))
         }))
         .child(
-            row().size(14.0, 14.0).shrink().center().child(
-                text(chevron)
-                    .font(TextStyle::new(11.0, 500.0).mono())
-                    .color(theme.text_muted.alpha(0.7)),
-            ),
+            row()
+                .size(14.0, 14.0)
+                .shrink()
+                .center()
+                .child(icon(chevron, 11.0).color(theme.text_muted.alpha(0.7))),
         )
         .child(
             text(file.path.clone())
@@ -482,20 +486,16 @@ fn diff_line_el(state: &ChangesState, file: &FileDiff, line: &DiffLine, theme: &
         return root;
     };
     let path = file.path.clone();
-    if state.hovering(&path, (side, line_no)) {
-        root = root.child(render_comment_adder(&path, side, line_no, theme).absolute(
-            comment_adder_left(side, gutter_px),
-            (DIFF_LINE_HEIGHT - COMMENT_ADDER_SIZE) / 2.0,
-        ));
-    }
-    let hover_path = path;
-    root.on_hover_change(move |app: &mut App, hovered, _tx: &mut rune::Tx| {
-        if hovered {
-            app.changes.set_hover(&hover_path, Some((side, line_no)));
-        } else {
-            app.changes.clear_hover(&hover_path, (side, line_no));
-        }
-    })
+    // The adder is paint-only: it is always laid out and revealed by the
+    // row's hover group, so a pointer crossing diff lines never commits.
+    root.hover_group().child(
+        render_comment_adder(&path, side, line_no, theme)
+            .absolute(
+                comment_adder_left(side, gutter_px),
+                (DIFF_LINE_HEIGHT - COMMENT_ADDER_SIZE) / 2.0,
+            )
+            .group_opacity(0.0, 1.0),
+    )
 }
 
 fn mono(size: f32, weight: f32) -> TextStyle {
@@ -660,22 +660,14 @@ fn split_line_el(
     {
         let (side, line_no) = anchor;
         let path = file.path.clone();
-        if state.hovering(&path, anchor) {
-            right_cell =
-                right_cell.child(render_comment_adder(&path, side, line_no, theme).absolute(
+        right_cell = right_cell.hover_group().child(
+            render_comment_adder(&path, side, line_no, theme)
+                .absolute(
                     split_adder_left(gutter_px),
                     (DIFF_LINE_HEIGHT - COMMENT_ADDER_SIZE) / 2.0,
-                ));
-        }
-        let hover_path = path;
-        right_cell =
-            right_cell.on_hover_change(move |app: &mut App, hovered, _tx: &mut rune::Tx| {
-                if hovered {
-                    app.changes.set_hover(&hover_path, Some(anchor));
-                } else {
-                    app.changes.clear_hover(&hover_path, anchor);
-                }
-            });
+                )
+                .group_opacity(0.0, 1.0),
+        );
     }
     let mut outer = row().w_full().shrink().items_stretch();
     outer = if wrap {
@@ -1001,11 +993,7 @@ pub fn header_controls(state: &ChangesState, app: &App, theme: &Theme) -> El {
                 .font(TextStyle::new(12.0, 400.0))
                 .color(theme.text),
         )
-        .child(
-            text("v")
-                .font(mono(10.0, 400.0))
-                .color(theme.text_muted.alpha(0.7)),
-        );
+        .child(icon(&crate::icons::ALT_ARROW_DOWN, 10.0).color(theme.text_muted.alpha(0.7)));
 
     let trailing = if scope == DiffScope::History {
         crate::history::history_controls(state, app, theme)
@@ -1033,23 +1021,33 @@ pub fn header_controls(state: &ChangesState, app: &App, theme: &Theme) -> El {
 
 fn split_toggle(state: &ChangesState, theme: &Theme) -> El {
     let active = state.mode.is_split();
-    header_button("app/changes/split", "||", active, theme).on_press(|app: &mut App| {
+    header_button(
+        "app/changes/split",
+        &crate::icons::SPLIT_COLUMNS,
+        active,
+        theme,
+    )
+    .on_press(|app: &mut App| {
         app.changes.toggle_mode();
     })
 }
 
 fn wrap_toggle(state: &ChangesState, theme: &Theme) -> El {
-    header_button("app/changes/wrap", "↩", state.wrap, theme).on_press(|app: &mut App| {
-        app.changes.toggle_wrap();
-    })
+    header_button("app/changes/wrap", &crate::icons::LIST, state.wrap, theme)
+        .on_press(|app: &mut App| app.changes.toggle_wrap())
 }
 
 fn fold_all_button(theme: &Theme) -> El {
-    header_button("app/changes/fold-all", "≡", false, theme)
-        .on_press(|app: &mut App| app.changes.toggle_collapse_all())
+    header_button(
+        "app/changes/fold-all",
+        &crate::icons::FOLD_VERTICAL,
+        false,
+        theme,
+    )
+    .on_press(|app: &mut App| app.changes.toggle_collapse_all())
 }
 
-fn header_button(id: &'static str, glyph: &'static str, active: bool, theme: &Theme) -> El {
+fn header_button(id: &'static str, glyph: &'static rune::Icon, active: bool, theme: &Theme) -> El {
     let mut button = row()
         .key(id)
         .size(24.0, 24.0)
@@ -1062,13 +1060,11 @@ fn header_button(id: &'static str, glyph: &'static str, active: bool, theme: &Th
     button = if active {
         button
             .fill(theme.wash(0.14))
-            .child(text(glyph).font(mono(12.0, 500.0)).color(theme.text))
+            .child(icon(glyph, 13.0).color(theme.text))
     } else {
-        button.hover(theme.wash(0.14)).child(
-            text(glyph)
-                .font(mono(12.0, 500.0))
-                .color(theme.text_muted.alpha(0.7)),
-        )
+        button
+            .hover(theme.wash(0.14))
+            .child(icon(glyph, 13.0).color(theme.text_muted.alpha(0.7)))
     };
     button
 }
@@ -1137,12 +1133,7 @@ fn ref_selector(state: &ChangesState, theme: &Theme) -> Option<El> {
                 .truncate()
                 .min_w(0.0),
         )
-        .child(
-            text("v")
-                .font(mono(9.0, 400.0))
-                .shrink()
-                .color(theme.text_muted.alpha(0.7)),
-        );
+        .child(icon(&crate::icons::ALT_ARROW_DOWN, 9.0).color(theme.text_muted.alpha(0.7)));
     let mut selector = row()
         .min_w(0.0)
         .center_y()
@@ -1155,12 +1146,7 @@ fn ref_selector(state: &ChangesState, theme: &Theme) -> Option<El> {
                 .truncate()
                 .min_w(0.0),
         )
-        .child(
-            text("→")
-                .font(mono(10.0, 400.0))
-                .shrink()
-                .color(theme.text_faint),
-        )
+        .child(icon(&crate::icons::ARROW_RIGHT, 10.0).color(theme.text_faint))
         .child(trigger);
     if state.ref_menu_open {
         selector = selector.child(ref_menu(state, theme));

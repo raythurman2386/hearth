@@ -145,54 +145,44 @@ pub fn upload_progress_ring(percent: u8, diameter: f32) -> El {
         )
 }
 
-/// Full-window boot splash (hearth `App.tsx` `Splash`): the ASCII hero over the glass, with an
-/// uppercase tracked "Loading" line. `fading` plays the splash-out sequence; the shell removes
-/// it once the phase reaches `Gone`.
+/// Full-window boot splash: the pulsing Hearth mark, wordmark and a small
+/// "Starting…" spinner over the page. `fading` plays the splash-out sequence;
+/// the shell removes it once the phase reaches `Gone`.
 pub fn splash_overlay(theme: &Theme, fading: bool) -> El {
     let content = col()
         .absolute(0.0, 0.0)
         .w_full()
         .h_full()
-        .fill(theme.glass())
+        .fill(theme.bg)
         .center()
-        .gap(28.0)
-        .child(hero_ascii(theme))
-        .child(loading_word(theme));
+        .gap(20.0)
+        .child(hearth_pulse(theme, 88.0))
+        .child(
+            text("Hearth")
+                .font(rune::TextStyle::new(26.0, 600.0).tracking(0.4))
+                .color(theme.text),
+        )
+        .child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(
+                    rune_kit::Loader::new()
+                        .size(15.0)
+                        .color(theme.text_muted)
+                        .build(&theme.kit),
+                )
+                .child(
+                    text("Starting the local engine…")
+                        .font(rune::TextStyle::new(12.0, 400.0))
+                        .color(theme.text_muted.alpha(0.85)),
+                ),
+        );
     if fading {
         motion::splash_out(content)
     } else {
         content
     }
-}
-
-/// The landing page's hero comet, monochrome: one text line per row. The rectangle is softened
-/// on all four edges so the block dissolves into the frost.
-fn hero_ascii(theme: &Theme) -> El {
-    /// Glyph cell: the site runs 7.6px/1.25; a hair smaller keeps the 110-column art inside a
-    /// narrow window.
-    const FONT: f32 = 7.0;
-    const LINE: f32 = 8.75;
-    const FADE_BAND: f32 = 72.0;
-    let art = col()
-        .font(
-            rune::TextStyle::new(FONT, 400.0)
-                .mono()
-                .lh(LINE)
-                .features("'liga' 0, 'calt' 0, 'dlig' 0"),
-        )
-        .color(theme.text.alpha(0.55))
-        .children(HERO_ASCII.lines().map(|line| text(line.to_string())));
-    crate::edge_fade::fade_all(art, FADE_BAND)
-}
-
-/// The landing page's hero comet (`apps/landing/public/index.html` `.hero-ascii`).
-const HERO_ASCII: &str = include_str!("../assets/hero.txt");
-
-/// "L O A D I N G" — `text-[11px] uppercase tracking-[0.32em] text-muted-foreground/70`.
-pub fn loading_word(theme: &Theme) -> El {
-    text("L\u{2009}O\u{2009}A\u{2009}D\u{2009}I\u{2009}N\u{2009}G")
-        .font(rune::TextStyle::new(11.0, 500.0).tracking(1.2))
-        .color(theme.text_muted.alpha(0.7))
 }
 
 /// A tiny inline "thinking" loader for buttons and inline status: Rune-kit's Spinner when the
@@ -241,10 +231,5 @@ mod tests {
             let s = mark_cell_stagger(x, y);
             assert!((0.0..=MARK_SPREAD + 1e-6).contains(&s));
         }
-    }
-
-    #[test]
-    fn splash_art_is_present() {
-        assert!(HERO_ASCII.lines().count() > 20);
     }
 }
