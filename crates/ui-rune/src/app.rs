@@ -3,8 +3,9 @@
 
 use rune::{AppSpec, KeyEvent, Tx};
 
+use crate::shell::Route;
 use crate::state::App;
-use crate::theme::Theme;
+use crate::theme::{Appearance, Theme};
 
 /// Embedded UI fonts — Geist and Geist Mono (variable), © Vercel Inc.,
 /// licensed under the SIL Open Font License 1.1.
@@ -149,6 +150,18 @@ fn setup(app: &mut App, waker: rune::runtime::Waker) {
 /// changed.
 fn poll(app: &mut App, _now: f64, tx: &mut Tx) -> bool {
     let mut changed = app.drain_events();
+
+    // Follow the OS when the user chose "System".
+    let system = if app.system_dark.get() {
+        Appearance::Dark
+    } else {
+        Appearance::Light
+    };
+    if app.appearance.system != system {
+        app.appearance.system = system;
+        changed |= app.refresh_theme();
+    }
+
     changed |= crate::shell::poll(app);
     changed |= app.settings_ui.poll();
     app.settings_ui.sync(&app.devices);
@@ -164,6 +177,29 @@ fn poll(app: &mut App, _now: f64, tx: &mut Tx) -> bool {
     changed |= crate::composer::poll(app);
     if let Some(sent) = crate::composer::take_sent(app) {
         app.transcript_state.on_own_send(sent.chat_id, sent.message_id);
+        changed = true;
+    }
+
+    // Focus hand-offs requested by shell handlers (they have no `Tx`).
+    if app.shell.focus_terminal {
+        app.shell.focus_terminal = false;
+        tx.focus("terminal-body", false);
+        changed = true;
+    }
+    if app.shell.focus_composer {
+        app.shell.focus_composer = false;
+        crate::composer::focus(app, tx);
+        changed = true;
+    }
+    // First usable frame: put the caret in the prompt so typing works without
+    // a click (the gpui shell focused the composer on Ready).
+    if !app.shell.composer_focused_once
+        && app.connection == crate::state::ConnectionStatus::Ready
+        && app.shell.route == Route::Chat
+        && !crate::shell::terminal_open(app)
+    {
+        app.shell.composer_focused_once = true;
+        crate::composer::focus(app, tx);
         changed = true;
     }
     changed

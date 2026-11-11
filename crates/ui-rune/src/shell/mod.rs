@@ -215,6 +215,12 @@ pub struct ShellState {
     pub fullscreen: bool,
     /// `HEARTH_OPEN_DIALOG` debug knob (rename/delete/model/add-space).
     pub debug_dialog: Option<String>,
+    /// Focus hand-offs resolved in `App::poll` (handlers have no `Tx`).
+    pub focus_terminal: bool,
+    pub focus_composer: bool,
+    pub composer_focused_once: bool,
+    /// Measured bottom chrome (composer stack) for the jump pill.
+    pub bottom_stack: f32,
     /// `side` channel results from `Bridge` jobs.
     pub(crate) task_tx: Sender<ShellTask>,
     pub(crate) task_rx: Receiver<ShellTask>,
@@ -267,6 +273,10 @@ impl Default for ShellState {
             pinned_new_canvas,
             fullscreen: false,
             debug_dialog,
+            focus_terminal: false,
+            focus_composer: false,
+            composer_focused_once: false,
+            bottom_stack: 0.0,
             task_tx,
             task_rx,
         }
@@ -305,6 +315,10 @@ impl ShellState {
 
 /// The shell root: the gate decides between splash, failure card and the shell.
 pub fn view(app: &App, cx: &mut Cx<App>) -> El {
+    // The view is the only place `Cx` exists; record the environment for
+    // `App::poll` (appearance reconciliation) and HIDPI hairlines.
+    app.system_dark.set(cx.system_dark());
+    app.scale.set(cx.env().scale);
     let theme = &app.theme;
     let mut layer: Vec<El> = Vec::new();
     let (body, splash) = match app.gate() {
@@ -405,7 +419,13 @@ pub fn toggle_right_pane(app: &mut App) {
 /// Flip the bottom terminal drawer for the current session.
 pub fn toggle_terminal(app: &mut App) {
     let key = app.shell.panel_key(app);
-    app.shell.panels.toggle_terminal(&key);
+    let open = app.shell.panels.toggle_terminal(&key);
+    if open {
+        crate::terminal::ensure_tab(app);
+        app.shell.focus_terminal = true;
+    } else {
+        app.shell.focus_composer = true;
+    }
 }
 
 /// Expand/restore right-pane takeover.
@@ -435,6 +455,7 @@ pub fn open_chat(app: &mut App, chat_id: String) {
     app.shell.route = Route::Chat;
     app.select_chat(Some(chat_id));
     app.shell.nav.push(NavEntry::Chat(entry));
+    app.shell.focus_composer = true;
 }
 
 /// `+` in the titlebar: open the new-session canvas, honouring the sidebar filter.
@@ -450,6 +471,7 @@ pub fn open_new_session(app: &mut App) {
     }
     app.select_chat(None);
     app.shell.nav.push(NavEntry::Chat(String::new()));
+    app.shell.focus_composer = true;
 }
 
 /// Alias used by the native menu actions.
@@ -473,6 +495,7 @@ pub fn close_settings(app: &mut App) {
     app.shell
         .nav
         .push(NavEntry::Chat(app.shell.active_chat.clone()));
+    app.shell.focus_composer = true;
 }
 
 /// Browser Back.
@@ -561,6 +584,10 @@ pub fn poll(app: &mut App) -> bool {
         }
     }
     changed |= state_sync::poll(app);
+    // Keep the embedded terminal surface on the tab it names.
+    if let RightSurface::Terminal(key) = resolved_right_active(app) {
+        crate::terminal::select_tab_by_key(app, key);
+    }
     changed
 }
 
@@ -629,20 +656,21 @@ pub fn add_diff_surface(app: &mut App) {
     set_right_active(app, RightSurface::Diff(id));
 }
 
-/// Open a fresh embedded terminal surface.
+/// Open a fresh embedded terminal surface backed by a real PTY tab.
 pub fn add_terminal_surface(app: &mut App) {
-    app.shell.terminal_seq += 1;
-    let id = app.shell.terminal_seq;
+    let Some(tab_key) = crate::terminal::new_tab(app) else {
+        return;
+    };
     app.shell
         .terminal_titles
-        .insert(id, format!("Terminal {id}"));
+        .insert(tab_key, format!("Terminal {tab_key}"));
     let key = app.shell.panel_key(app);
     app.shell
         .right_tabs
         .entry(key)
         .or_default()
-        .push(RightSurface::Terminal(id));
-    set_right_active(app, RightSurface::Terminal(id));
+        .push(RightSurface::Terminal(tab_key));
+    set_right_active(app, RightSurface::Terminal(tab_key));
 }
 
 /// A spawn chip's "Open subagent": focus the existing tab or open one.
@@ -684,6 +712,7 @@ pub fn close_right_surface(app: &mut App, surface: RightSurface) {
             app.shell.diff_titles.remove(&id);
         }
         RightSurface::Terminal(id) => {
+            crate::terminal::close_tab_by_key(app, id);
             app.shell.terminal_titles.remove(&id);
         }
         RightSurface::Subagent(id) => {

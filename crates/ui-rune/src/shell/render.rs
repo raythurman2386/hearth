@@ -200,7 +200,7 @@ pub fn shell(app: &App, cx: &mut rune::Cx<App>, layer: &mut Vec<El>) -> El {
     if let Some(captions) = super::titlebar::render_captions(app, theme) {
         root = root.child(captions);
     }
-    if let Some(pill) = super::overlays::render_jump_to_bottom(app, theme, 0.0) {
+    if let Some(pill) = super::overlays::render_jump_to_bottom(app, theme, app.shell.bottom_stack) {
         root = root.child(pill);
     }
     root
@@ -240,7 +240,12 @@ pub fn transcript_slot(app: &App, theme: &Theme) -> El {
 }
 
 pub fn composer_slot(app: &App, theme: &Theme) -> El {
-    crate::composer::render(app, theme)
+    el()
+        .w_full()
+        .on_layout(|app: &mut App, [_, _, _, h]| {
+            app.shell.bottom_stack = h;
+        })
+        .child(crate::composer::render(app, theme))
 }
 
 fn onboarding_canvas(app: &App, theme: &Theme) -> El {
@@ -336,7 +341,7 @@ pub fn terminal_slot(app: &App, theme: &Theme, height: f32, viewport_h: f32) -> 
         .h(height)
         .clip_soft(0.0)
         .motion(crate::motion::RESIZE)
-        .border_sides([1.0 / 1.0, 0.0, 0.0, 0.0], theme.border)
+        .border_sides([1.0 / app.scale.get().max(1.0), 0.0, 0.0, 0.0], theme.border)
         .child(panels::terminal_handle(theme, viewport_h))
         .child(
             el().w_full()
@@ -356,7 +361,8 @@ fn right_pane(app: &App, theme: &Theme) -> El {
         .px(Theme::SPACE_SM)
         .gap(4.0)
         .center_y()
-        .border_sides([0.0, 0.0, 1.0 / 1.0, 0.0], theme.border);
+        .clip_soft(0.0)
+        .border_sides([0.0, 0.0, 1.0 / app.scale.get().max(1.0), 0.0], theme.border);
     if rows.is_empty() {
         header = header.child(
             text("Surfaces")
@@ -383,6 +389,8 @@ fn right_pane(app: &App, theme: &Theme) -> El {
                     .child(
                         text(title)
                             .font(TextStyle::new(11.5, 500.0))
+                            .truncate()
+                            .max_w(160.0)
                             .color(if selected {
                                 theme.text
                             } else {

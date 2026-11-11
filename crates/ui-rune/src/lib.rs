@@ -84,10 +84,17 @@ pub fn run_app(config: UiConfig) {
             rune::Titlebar::new(app::titlebar_height()).traffic_lights(14.0, 14.0),
         )
         .on_close(|app, _tx| {
-            // Graceful teardown: an in-process engine drains live runs and
-            // flushes doc snapshots before the process exits.
+            // Graceful teardown: drain live runs and flush doc snapshots before
+            // the process exits. `on_close` runs on the UI thread, so blocking
+            // the bridge runtime here is safe and bounded.
             if let Some(engine) = app.engine.clone() {
-                app.bridge.spawn(async move { engine.shutdown().await });
+                let _ = app.bridge.runtime().block_on(async move {
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        engine.shutdown(),
+                    )
+                    .await;
+                });
             }
         })
         .standard_menus();

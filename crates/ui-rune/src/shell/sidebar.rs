@@ -219,8 +219,8 @@ fn row_status(
     now: chrono::DateTime<Utc>,
 ) -> (ChatIndicator, String) {
     let queued = app.send_queued(&chat.id, now);
-    let undelivered = app.send_pending(&chat.id, now) && !queued;
-    let status = crate::state::display_status(chat, app.session_for(&chat.id), now);
+    let undelivered = app.send_undelivered(&chat.id, now);
+    let status = app.display_status_for(chat, now);
     if undelivered {
         (ChatIndicator::Errored, "Failed".to_string())
     } else if queued {

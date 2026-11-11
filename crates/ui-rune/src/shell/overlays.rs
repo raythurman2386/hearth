@@ -320,7 +320,7 @@ pub fn render_jump_to_bottom(app: &App, theme: &Theme, stack_h: f32) -> Option<E
             .w_full()
             .h_full()
             .child(
-                el().pin(None, None, None, Some(stack_h - 14.0))
+                el().pin(None, None, None, Some(stack_h + 8.0))
                     .w_full()
                     .h(30.0)
                     .center()

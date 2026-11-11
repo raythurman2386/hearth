@@ -14,8 +14,8 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use hearth_doc::{SessionMessageEntry, TranscriptDesync, TranscriptFrame};
 use hearth_proto::{
-    AuthState, Chat, ChatConfig, Connectivity, Device, Session, Space, TransferProgress,
-    WorkspaceScope,
+    AuthState, Chat, ChatConfig, ChatIndicator, Connectivity, Device, Session, Space,
+    TransferProgress, WorkspaceScope,
 };
 use hearth_update::UpdateStatus;
 
@@ -62,6 +62,11 @@ pub struct App {
     pub settings: UiSettings,
     pub appearance: AppearanceState,
     pub theme: Theme,
+    /// The OS appearance seen by the view this frame (`Cx::system_dark`), so
+    /// `poll` can reconcile `AppearanceMode::System` without a `Cx`.
+    pub system_dark: std::cell::Cell<bool>,
+    /// The window scale seen by the view this frame, for device-pixel hairlines.
+    pub scale: std::cell::Cell<f32>,
     pub bridge: Bridge,
 
     pub engine: Option<EngineHandle>,
@@ -112,7 +117,12 @@ pub struct App {
 impl App {
     pub fn new(config: UiConfig) -> Self {
         let data_dir = config.data_dir.clone();
-        let settings = UiSettings::load(&data_dir);
+        // Headless snapshots must not depend on the developer's settings file.
+        let settings = if rune::tooling::headless_run().is_some() {
+            UiSettings::default()
+        } else {
+            UiSettings::load(&data_dir)
+        };
         let system = Appearance::Dark;
         let appearance = AppearanceState::new(settings.appearance, system, data_dir.clone());
         let theme = Theme::for_appearance(appearance.resolved());
@@ -121,6 +131,8 @@ impl App {
             settings,
             appearance,
             theme,
+            system_dark: std::cell::Cell::new(true),
+            scale: std::cell::Cell::new(1.0),
             bridge: Bridge::new(),
             engine: None,
             connection: ConnectionStatus::Connecting,
@@ -494,10 +506,63 @@ impl App {
         gate_phase(&self.connection)
     }
 
+    /// Is a send still in flight for this chat (unacked)? Inside the grace
+    /// window normally; while the delivery path is degraded the overlay holds
+    /// indefinitely — the truth IS "Queued".
     pub fn send_pending(&self, chat_id: &str, now: DateTime<Utc>) -> bool {
+        self.pending_sends.get(chat_id).is_some_and(|p| {
+            (now - p.started).num_milliseconds() <= UNDELIVERED_GRACE_MS
+                || self.chat_delivery_degraded(chat_id)
+        })
+    }
+
+    /// The send has sat unadopted past the grace window: surface the explicit
+    /// failed state instead of faking progress or forgetting it.
+    pub fn send_undelivered(&self, chat_id: &str, now: DateTime<Utc>) -> bool {
+        self.pending_sends.get(chat_id).is_some_and(|p| {
+            (now - p.started).num_milliseconds() > UNDELIVERED_GRACE_MS
+        })
+    }
+
+    /// Retry pressed: restart the grace clock so the overlay returns to its
+    /// Sending/Queued phase while the re-kicked delivery runs.
+    pub fn retry_pending_send(&mut self, chat_id: &str, now: DateTime<Utc>) {
+        if let Some(p) = self.pending_sends.get_mut(chat_id) {
+            p.started = now;
+        }
+    }
+
+    /// When the in-flight send (if any) was fired — the elapsed-timer base
+    /// while the overlay reads as Working.
+    pub fn pending_send_started(
+        &self,
+        chat_id: &str,
+        now: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>> {
         self.pending_sends
             .get(chat_id)
-            .is_some_and(|p| (now - p.started).num_milliseconds() < UNDELIVERED_GRACE_MS)
+            .filter(|p| {
+                (now - p.started).num_milliseconds() <= UNDELIVERED_GRACE_MS
+                    || self.chat_delivery_degraded(chat_id)
+            })
+            .map(|p| p.started)
+    }
+
+    /// Percent of one queued attachment's relay transfer, by uploadId.
+    pub fn transfer_percent(&self, upload_id: &str) -> Option<u8> {
+        let (done, total) = self.transfers.get(upload_id)?;
+        if *total == 0 {
+            return None;
+        }
+        Some(((done.min(total) * 100) / total).min(99) as u8)
+    }
+
+    /// Full display status for a chat: a send in flight reads as Working.
+    pub fn display_status_for(&self, chat: &Chat, now: DateTime<Utc>) -> ChatIndicator {
+        if self.send_pending(&chat.id, now) {
+            return ChatIndicator::Working;
+        }
+        display_status(chat, self.session_for(&chat.id), now)
     }
 
     pub fn chat_delivery_degraded(&self, chat_id: &str) -> bool {
@@ -571,39 +636,69 @@ impl App {
     pub fn drain_events(&mut self) -> bool {
         let mut changed = false;
         while let Ok(event) = self.bridge.try_recv() {
-            self.apply_event(event);
-            changed = true;
+            changed |= self.apply_event(event);
         }
         changed
     }
 
-    fn apply_event(&mut self, event: EngineEvent) {
+    fn apply_event(&mut self, event: EngineEvent) -> bool {
         match event {
-            EngineEvent::Ready(handle) => self.attach_engine(*handle),
+            EngineEvent::Ready(handle) => {
+                self.attach_engine(*handle);
+                true
+            }
             EngineEvent::Failed(message) => {
                 tracing::error!(%message, "engine bootstrap failed");
                 self.connection = ConnectionStatus::Failed(message);
+                true
             }
-            EngineEvent::Sessions(sessions) => self.apply_sessions(sessions),
-            EngineEvent::Chats(chats) => self.apply_chats(chats),
-            EngineEvent::Devices(devices) => self.apply_devices(devices),
-            EngineEvent::Spaces(spaces) => self.apply_spaces(spaces),
-            EngineEvent::Connectivity(connectivity) => self.apply_connectivity(connectivity),
-            EngineEvent::Auth(auth) => self.apply_auth(auth),
-            EngineEvent::Update(status) => self.apply_update(status),
-            EngineEvent::Transfers(transfers) => self.apply_transfers(transfers),
+            EngineEvent::Sessions(sessions) => {
+                self.apply_sessions(sessions);
+                true
+            }
+            EngineEvent::Chats(chats) => {
+                self.apply_chats(chats);
+                true
+            }
+            EngineEvent::Devices(devices) => {
+                self.apply_devices(devices);
+                true
+            }
+            EngineEvent::Spaces(spaces) => {
+                self.apply_spaces(spaces);
+                true
+            }
+            EngineEvent::Connectivity(connectivity) => {
+                self.apply_connectivity(connectivity);
+                true
+            }
+            EngineEvent::Auth(auth) => {
+                self.apply_auth(auth);
+                true
+            }
+            EngineEvent::Update(status) => {
+                self.apply_update(status);
+                true
+            }
+            EngineEvent::Transfers(transfers) => {
+                self.apply_transfers(transfers);
+                true
+            }
             EngineEvent::TranscriptFrame { chat_id, frame } => {
-                if self.selected_chat.as_deref() == Some(chat_id.as_str())
-                    && let Err(err) = self.apply_transcript_frame(frame)
-                {
+                if self.selected_chat.as_deref() != Some(chat_id.as_str()) {
+                    return false;
+                }
+                if let Err(err) = self.apply_transcript_frame(frame) {
                     tracing::warn!(%chat_id, error = %err, "resubscribing transcript");
                     self.respawn_transcript_watch();
                 }
+                true
             }
             EngineEvent::SubagentFrame { doc_id, frame } => {
-                if let Some(rows) = self.sub_transcripts.get_mut(&doc_id)
-                    && let Err(err) = hearth_doc::apply_transcript_frame(rows, frame)
-                {
+                let Some(rows) = self.sub_transcripts.get_mut(&doc_id) else {
+                    return false;
+                };
+                if let Err(err) = hearth_doc::apply_transcript_frame(rows, frame) {
                     tracing::warn!(%doc_id, error = %err, "resubscribing subagent watch");
                     if let Some(handle) = self.engine.clone() {
                         if let Some(guard) = self.sub_watch_guards.remove(&doc_id) {
@@ -613,11 +708,23 @@ impl App {
                         self.sub_watch_guards.insert(doc_id, guard);
                     }
                 }
+                true
             }
         }
     }
 
     fn attach_engine(&mut self, handle: EngineHandle) {
+        // A retry must not stack a second set of watches on the first engine.
+        for guard in self.watch_guards.drain(..) {
+            guard.cancel();
+        }
+        if let Some(old) = self.engine.take() {
+            let old_mode = old.mode();
+            let new_mode = handle.mode();
+            if old.info.device_id != handle.info.device_id || old_mode != new_mode {
+                self.bridge.spawn(async move { old.shutdown().await });
+            }
+        }
         self.workspace_scope = Some(handle.info.workspace_scope);
         self.local_device_id = Some(handle.info.device_id.clone());
         self.engine = Some(handle.clone());
@@ -707,6 +814,7 @@ impl App {
         ));
 
         self.connection = ConnectionStatus::Ready;
+        self.transcript_guard = None;
         if let Some(chat_id) = self.selected_chat.clone() {
             self.transcript_guard = Some(spawn_transcript_watch(
                 &self.bridge,

@@ -66,6 +66,14 @@ impl WatchGuard {
     }
 }
 
+/// Dropping a guard aborts its pump: replacing `App::transcript_guard` must
+/// cancel the old watch, not leave it resubscribing forever.
+impl Drop for WatchGuard {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
 struct BridgeInner {
     runtime: tokio::runtime::Runtime,
     event_tx: Sender<EngineEvent>,
