@@ -20,7 +20,7 @@ Hearth is a **local-first control surface** for coding agents (Huginn, Codex, Gr
 
 ## Research and parity (upstream lineage)
 
-These are **design notes**, not a getting-started path. Much of the content describes the Zeron/comet lineage (including retired Cloudflare/WorkOS and removed harnesses). This fork’s live sync path is the Rust Tailscale hub in `crates/sync`:
+These are **design notes**, not a getting-started path. Much of the content describes the earlier multi-device lineage (including retired Cloudflare/WorkOS and removed harnesses). Hearth's live sync path is the Rust Tailscale hub in `crates/sync`:
 
 | Doc | Notes |
 |---|---|

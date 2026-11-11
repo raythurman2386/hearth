@@ -102,7 +102,7 @@ Harnesses that wrap CLIs also honor their own vendor env (for example Codex / Gr
 
 - **Settings → Agents** — enable/disable harnesses on this device (`harness-prefs.json` stores **opt-outs**; newly detected installs turn on by default except Mock).
 - **Composer chips** — mode, model, traits; last picks persist in `composer-defaults.json`.
-- **Appearance** — theme / system appearance (Ravenwood palette is the fork’s default look).
+- **Appearance** — theme / system appearance (the Ravenwood palette is the default look).
 
 ---
 

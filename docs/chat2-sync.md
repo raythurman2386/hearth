@@ -1,6 +1,6 @@
 # chat2: dumb-relay session sync + thin docs
 
-**Implementation (this fork):** Rust hub rooms in `crates/sync` (`chat_room.rs`, `hub.rs`) over Tailscale. The Cloudflare Durable Object references below are historical design notes from the upstream cutover.
+**Implementation:** Rust hub rooms in `crates/sync` (`chat_room.rs`, `hub.rs`) over Tailscale. The Cloudflare Durable Object references below are historical design notes from the upstream cutover.
 
 Status: shipped on the Tailscale hub · Prior art: `docs/registry-sync.md`.
 

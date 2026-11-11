@@ -1,0 +1,876 @@
+//! UI settings persisted to a small JSON file in the data dir — pane widths and
+//! collapse flags (hearth persisted the same set in localStorage).
+//!
+//! Loaded once at boot; saved debounced by the shell ([`SAVE_DEBOUNCE_MS`]).
+//! Corrupt or missing files fall back to defaults; loaded values are clamped so a
+//! hand-edited file can't wedge the layout.
+
+use std::io;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::state::App;
+use crate::theme::Theme;
+
+// Settings page views live beside the shell and are declared in `shell/mod.rs`
+// until the port reaches them; the persisted model below is framework-free.
+
+/// View-local state for the settings pages (section, per-page dialogs, loadables).
+/// The gpui pages each held their own entity; Rune flattens them here.
+#[derive(Debug, Default)]
+pub struct SettingsUi {
+    pub section: SettingsSection,
+    pub devices: crate::settings::devices::DevicesPage,
+    pub harnesses: crate::settings::harnesses::HarnessesPage,
+    pub accounts: crate::settings::accounts::AccountsPage,
+    pub appearance: crate::settings::appearance::AppearancePage,
+    pub notifications: crate::settings::notifications::NotificationsPage,
+    pub shortcuts: crate::settings::shortcuts::ShortcutsPage,
+    pub archived: crate::settings::archived::ArchivedPage,
+}
+
+impl SettingsUi {
+    /// Drain every page's async job results. Call once per frame from
+    /// `App::poll`; true when visible state changed.
+    pub fn poll(&mut self) -> bool {
+        let mut changed = false;
+        changed |= self.devices.poll();
+        changed |= self.harnesses.poll();
+        changed |= self.accounts.poll();
+        changed |= self.appearance.poll();
+        changed |= self.notifications.poll();
+        changed |= self.shortcuts.poll();
+        changed |= self.archived.poll();
+        changed
+    }
+
+    /// Copy live shell data into page-local snapshot slots. Optional: the pages
+    /// render from `App` directly; this keeps the Devices page's `Loadable`
+    /// snapshot in step for the pages that pattern-match on it.
+    pub fn sync(&mut self, devices: &[hearth_proto::Device]) {
+        self.devices.sync(devices);
+    }
+
+    /// A URL the Accounts login flow wants opened in the system browser. Call
+    /// from `App::poll` (which has a `Tx`) and `tx.open_url(&url)`. Without
+    /// wiring this the login dialog still offers a clickable reopen link.
+    pub fn take_open_url(&mut self) -> Option<String> {
+        self.accounts.take_open_url()
+    }
+}
+
+/// The settings sidebar navigation (the shell's settings-mode sidebar).
+pub fn nav(app: &App, theme: &Theme) -> rune::El {
+    use rune::{Cursor, TextStyle, col, icon, row, text};
+
+    let section = app.shell.route.section().unwrap_or(app.settings_ui.section);
+    let mut nav = col()
+        .key("settings-nav")
+        .w_full()
+        .h_full()
+        .child(
+            col()
+                .grow(1.0)
+                .min_h(0.0)
+                .px(Theme::SPACE_SM)
+                .child(
+                    text("Settings")
+                        .font(TextStyle::new(11.0, 500.0))
+                        .color(theme.text_muted.alpha(0.6))
+                        .px(Theme::SPACE_SM)
+                        .pt(12.0)
+                        .pb(4.0),
+                )
+                .child(
+                    col()
+                        .gap(2.0)
+                        .children(SettingsSection::ALL.into_iter().map(|item| {
+                            let selected = item == section;
+                            row()
+                                .key(format!("settings-nav-{}", item.label()))
+                                .w_full()
+                                .gap(8.0)
+                                .radius(8.0)
+                                .px(Theme::SPACE_SM)
+                                .py(6.0)
+                                .center_y()
+                                .cursor(Cursor::Pointer)
+                                .fill(if selected {
+                                    crate::theme::glass_selected_bg(theme.appearance)
+                                } else {
+                                    theme.ink(0.0)
+                                })
+                                .hover(theme.glass_hover())
+                                .on_press(move |app: &mut App| {
+                                    crate::shell::open_settings(app, item)
+                                })
+                                .child(
+                                    icon(crate::shell::routes::section_icon(item), 16.0)
+                                        .color(theme.text_muted),
+                                )
+                                .child(
+                                    text(item.label())
+                                        .font(TextStyle::new(
+                                            13.0,
+                                            if selected { 500.0 } else { 400.0 },
+                                        ))
+                                        .color(if selected {
+                                            theme.text
+                                        } else {
+                                            theme.text_muted
+                                        }),
+                                )
+                        })),
+                ),
+        )
+        .child(
+            rune::el().px(Theme::SPACE_SM).pb(12.0).child(
+                row()
+                    .key("settings-back")
+                    .w_full()
+                    .gap(6.0)
+                    .radius(8.0)
+                    .px(Theme::SPACE_SM)
+                    .py(6.0)
+                    .center_y()
+                    .cursor(Cursor::Pointer)
+                    .hover(theme.glass_hover())
+                    .on_press(|app: &mut App| crate::shell::close_settings(app))
+                    .child(icon(&crate::icons::ALT_ARROW_LEFT, 16.0).color(theme.text_muted))
+                    .child(
+                        text("Back")
+                            .font(TextStyle::new(13.0, 400.0))
+                            .color(theme.text_muted),
+                    ),
+            ),
+        );
+    nav = nav.pt(Theme::TITLEBAR_HEIGHT);
+    nav
+}
+
+/// The active settings page.
+pub fn render(app: &App, theme: &Theme) -> rune::El {
+    let section = app.shell.route.section().unwrap_or(app.settings_ui.section);
+    match section {
+        SettingsSection::Devices => devices::render(&app.settings_ui.devices, app, theme),
+        SettingsSection::Harnesses => harnesses::render(&app.settings_ui.harnesses, app, theme),
+        SettingsSection::Agents => accounts::render(&app.settings_ui.accounts, app, theme),
+        SettingsSection::Appearance => appearance::render(&app.settings_ui.appearance, app, theme),
+        SettingsSection::Notifications => {
+            notifications::render(&app.settings_ui.notifications, app, theme)
+        }
+        SettingsSection::Shortcuts => shortcuts::render(&app.settings_ui.shortcuts, app, theme),
+        SettingsSection::Archived => archived::render(&app.settings_ui.archived, app, theme),
+    }
+}
+
+/// Settings sections, in sidebar order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SettingsSection {
+    #[default]
+    Devices,
+    Harnesses,
+    Agents,
+    Appearance,
+    Notifications,
+    Shortcuts,
+    Archived,
+}
+
+impl SettingsSection {
+    pub const ALL: [SettingsSection; 7] = [
+        SettingsSection::Devices,
+        SettingsSection::Harnesses,
+        SettingsSection::Agents,
+        SettingsSection::Appearance,
+        SettingsSection::Notifications,
+        SettingsSection::Shortcuts,
+        SettingsSection::Archived,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SettingsSection::Devices => "Devices",
+            SettingsSection::Harnesses => "Agents",
+            SettingsSection::Agents => "Accounts",
+            SettingsSection::Appearance => "Appearance",
+            SettingsSection::Notifications => "Notifications",
+            SettingsSection::Shortcuts => "Shortcuts",
+            SettingsSection::Archived => "Archived sessions",
+        }
+    }
+}
+
+pub mod accounts;
+pub mod appearance;
+pub mod archived;
+pub mod devices;
+pub mod harnesses;
+pub mod notifications;
+pub mod shortcuts;
+pub mod widgets;
+
+/// Sidebar drag-resize bounds (px).
+pub const SIDEBAR_MIN: f32 = 208.0;
+pub const SIDEBAR_MAX: f32 = 400.0;
+pub const SIDEBAR_DEFAULT: f32 = 256.0;
+
+/// Right ("Changes") pane drag-resize floor and default (px). Its runtime
+/// maximum is the window space remaining after the left sidebar and the
+/// conversation's [`CHAT_PANEL_MIN`] reservation.
+pub const RIGHT_PANE_MIN: f32 = 360.0;
+pub const RIGHT_PANE_DEFAULT: f32 = 520.0;
+/// Minimum width retained for the conversation when the right pane is open.
+pub const CHAT_PANEL_MIN: f32 = 300.0;
+
+/// Terminal panel height bounds: 160px … 55% of the viewport (§1.10). The
+/// viewport-relative cap applies at runtime; the absolute cap here only heals
+/// hand-edited files.
+pub const TERMINAL_MIN_HEIGHT: f32 = 160.0;
+pub const TERMINAL_MAX_VH: f32 = 0.55;
+pub const TERMINAL_ABS_MAX_HEIGHT: f32 = 2000.0;
+pub const TERMINAL_DEFAULT_HEIGHT: f32 = 280.0;
+
+/// Debounce for settings writes after a drag/toggle.
+pub const SAVE_DEBOUNCE_MS: u64 = 400;
+
+const FILE_NAME: &str = "ui-settings.json";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct UiSettings {
+    pub sidebar_width: f32,
+    pub sidebar_collapsed: bool,
+    /// The last selected space — restored on boot when the row still exists;
+    /// also the new-tab default when the sidebar filter is "All".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_space_id: Option<String>,
+    /// Open session tabs in visual order (drag-reorder edits in place).
+    /// Device-local: a tab is a local viewport onto the synced session list —
+    /// closing one never archives the session. Ids of archived/deleted chats
+    /// are pruned against the doc ([`Shell::sync_open_tabs`]). `None` = file
+    /// written by a pre-tabs build; seeded once from the last space's sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_tabs: Option<Vec<String>>,
+    /// Sidebar session filter: a space id, or `None` for "All spaces".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub space_filter: Option<String>,
+    /// Session notification chimes (done / awaiting-input). `HEARTH_DISABLE_SOUND`
+    /// overrides.
+    pub sound_enabled: bool,
+    /// Desktop banner notifications on the same transitions.
+    /// `HEARTH_DISABLE_NOTIFICATIONS` overrides.
+    pub notifications_enabled: bool,
+    /// Suppress the banner while a Hearth window is focused (the chime covers
+    /// the foreground case).
+    pub notifications_background_only: bool,
+    pub right_pane_width: f32,
+    pub terminal_height: f32,
+    /// Customizable shortcut combos (feature-inventory §1.4).
+    pub keymap: KeymapConfig,
+    /// Light/dark preference. Defaults to following the OS.
+    pub appearance: crate::appearance::AppearanceMode,
+    /// Changes pane: side-by-side diffs instead of the unified stack.
+    pub diff_split: bool,
+}
+
+impl Default for UiSettings {
+    fn default() -> Self {
+        Self {
+            sidebar_width: SIDEBAR_DEFAULT,
+            sidebar_collapsed: false,
+            last_space_id: None,
+            open_tabs: None,
+            space_filter: None,
+            sound_enabled: true,
+            notifications_enabled: true,
+            notifications_background_only: true,
+            right_pane_width: RIGHT_PANE_DEFAULT,
+            terminal_height: TERMINAL_DEFAULT_HEIGHT,
+            keymap: KeymapConfig::default(),
+            appearance: crate::appearance::AppearanceMode::default(),
+            diff_split: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Keymap (customizable shortcuts, §1.4)
+// ---------------------------------------------------------------------------
+
+/// The rebindable app shortcuts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ShortcutId {
+    ToggleSidebar,
+    ToggleChanges,
+    ToggleTerminal,
+    NewSession,
+    NextSession,
+    PrevSession,
+}
+
+impl ShortcutId {
+    pub const ALL: [ShortcutId; 6] = [
+        ShortcutId::ToggleSidebar,
+        ShortcutId::ToggleChanges,
+        ShortcutId::ToggleTerminal,
+        ShortcutId::NewSession,
+        ShortcutId::NextSession,
+        ShortcutId::PrevSession,
+    ];
+
+    /// Row label (hearth lib/shortcuts.ts `SHORTCUT_DEFINITIONS`, verbatim).
+    pub fn label(self) -> &'static str {
+        match self {
+            ShortcutId::ToggleSidebar => "Toggle left sidebar",
+            ShortcutId::ToggleChanges => "Toggle right sidebar",
+            ShortcutId::ToggleTerminal => "Toggle terminal",
+            ShortcutId::NewSession => "New session",
+            ShortcutId::NextSession => "Next session",
+            ShortcutId::PrevSession => "Previous session",
+        }
+    }
+
+    pub fn default_combo(self) -> &'static str {
+        self.default_combo_on(cfg!(target_os = "macos"))
+    }
+
+    /// `default_combo` for an explicit platform, so the spelling invariant is
+    /// testable for both from any machine (see the tests below — the mismatch
+    /// this guards against only exists off macOS).
+    pub fn default_combo_on(self, mac: bool) -> &'static str {
+        match self {
+            ShortcutId::ToggleSidebar => "mod-s",
+            ShortcutId::ToggleChanges => "mod-b",
+            ShortcutId::ToggleTerminal => "mod-j",
+            ShortcutId::NewSession => "mod-n",
+            // Ctrl+Tab on every platform — but spelled the way THAT platform's
+            // recorder spells ctrl (see `combo_from_keystroke`). Off macOS
+            // ctrl IS the primary and stores as "mod"; on macOS it is its own
+            // modifier, and "mod" would mean Cmd+Tab, which the OS app
+            // switcher eats.
+            //
+            // Off macOS "ctrl-tab" and "mod-tab" resolve to the same keystroke
+            // through `platform_combo`, but conflict detection compares the
+            // STORED spelling — so a default the recorder cannot reproduce
+            // would let a rebind onto that same physical key pass as
+            // conflict-free, bind twice, and silently kill one shortcut.
+            ShortcutId::NextSession if mac => "ctrl-tab",
+            ShortcutId::NextSession => "mod-tab",
+            ShortcutId::PrevSession if mac => "ctrl-shift-tab",
+            ShortcutId::PrevSession => "mod-shift-tab",
+        }
+    }
+}
+
+/// Persisted shortcut combos. Stored platform-neutral ("mod-s"); translated to
+/// "cmd-s"/"ctrl-s" at bind time by [`platform_combo`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct KeymapConfig {
+    pub toggle_sidebar: String,
+    pub toggle_changes: String,
+    pub toggle_terminal: String,
+    pub new_session: String,
+    pub next_session: String,
+    pub prev_session: String,
+}
+
+impl Default for KeymapConfig {
+    fn default() -> Self {
+        Self {
+            toggle_sidebar: ShortcutId::ToggleSidebar.default_combo().into(),
+            toggle_changes: ShortcutId::ToggleChanges.default_combo().into(),
+            toggle_terminal: ShortcutId::ToggleTerminal.default_combo().into(),
+            new_session: ShortcutId::NewSession.default_combo().into(),
+            next_session: ShortcutId::NextSession.default_combo().into(),
+            prev_session: ShortcutId::PrevSession.default_combo().into(),
+        }
+    }
+}
+
+impl KeymapConfig {
+    pub fn get(&self, id: ShortcutId) -> &str {
+        match id {
+            ShortcutId::ToggleSidebar => &self.toggle_sidebar,
+            ShortcutId::ToggleChanges => &self.toggle_changes,
+            ShortcutId::ToggleTerminal => &self.toggle_terminal,
+            ShortcutId::NewSession => &self.new_session,
+            ShortcutId::NextSession => &self.next_session,
+            ShortcutId::PrevSession => &self.prev_session,
+        }
+    }
+
+    pub fn set(&mut self, id: ShortcutId, combo: String) {
+        match id {
+            ShortcutId::ToggleSidebar => self.toggle_sidebar = combo,
+            ShortcutId::ToggleChanges => self.toggle_changes = combo,
+            ShortcutId::ToggleTerminal => self.toggle_terminal = combo,
+            ShortcutId::NewSession => self.new_session = combo,
+            ShortcutId::NextSession => self.next_session = combo,
+            ShortcutId::PrevSession => self.prev_session = combo,
+        }
+    }
+
+    pub fn reset(&mut self, id: ShortcutId) {
+        self.set(id, id.default_combo().to_string());
+    }
+}
+
+/// Build a combo string from a recorded keystroke. The primary modifier
+/// (cmd on macOS, ctrl elsewhere) becomes "mod"; bare modifier presses record
+/// nothing.
+pub fn combo_from_keystroke(
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    cmd: bool,
+    key: &str,
+) -> Option<String> {
+    combo_from_keystroke_on(cfg!(target_os = "macos"), ctrl, alt, shift, cmd, key)
+}
+
+/// [`combo_from_keystroke`] for an explicit platform — the ctrl spelling is
+/// platform-dependent, so both paths need to be exercisable from one machine.
+pub fn combo_from_keystroke_on(
+    mac: bool,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    cmd: bool,
+    key: &str,
+) -> Option<String> {
+    let key = key.trim().to_lowercase();
+    if key.is_empty()
+        || matches!(
+            key.as_str(),
+            "ctrl" | "control" | "alt" | "shift" | "cmd" | "platform" | "fn"
+        )
+    {
+        return None;
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    // On macOS ctrl stays its own modifier rather than folding into "mod":
+    // re-recording Ctrl+Tab as Cmd+Tab would hand the combo to the OS app
+    // switcher, which never delivers it to the window.
+    let ctrl_is_primary = ctrl && !mac;
+    if cmd || ctrl_is_primary {
+        parts.push("mod");
+    }
+    if ctrl && !ctrl_is_primary {
+        parts.push("ctrl");
+    }
+    if alt {
+        parts.push("alt");
+    }
+    if shift {
+        parts.push("shift");
+    }
+    parts.push(&key);
+    Some(parts.join("-"))
+}
+
+/// Shortcut ids whose combos collide with another shortcut (conflict detection).
+pub fn conflicted_shortcuts(keymap: &KeymapConfig) -> Vec<ShortcutId> {
+    ShortcutId::ALL
+        .into_iter()
+        .filter(|&id| {
+            let combo = keymap.get(id);
+            !combo.is_empty()
+                && ShortcutId::ALL
+                    .into_iter()
+                    .any(|other| other != id && keymap.get(other) == combo)
+        })
+        .collect()
+}
+
+/// Translate a stored combo into a bindable keystroke for this platform.
+pub fn platform_combo(combo: &str) -> String {
+    platform_combo_on(cfg!(target_os = "macos"), combo)
+}
+
+/// [`platform_combo`] for an explicit platform (see [`combo_from_keystroke_on`]).
+pub fn platform_combo_on(mac: bool, combo: &str) -> String {
+    let primary = if mac { "cmd" } else { "ctrl" };
+    combo
+        .split('-')
+        .map(|part| if part == "mod" { primary } else { part })
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Human-readable combo for the shortcuts table ("mod-s" → "Cmd+S"/"Ctrl+S").
+pub fn display_combo(combo: &str) -> String {
+    display_combo_on(cfg!(target_os = "macos"), combo)
+}
+
+/// [`display_combo`] for an explicit platform (see [`combo_from_keystroke_on`]).
+pub fn display_combo_on(mac: bool, combo: &str) -> String {
+    combo
+        .split('-')
+        .map(|part| match part {
+            "mod" => if mac { "Cmd" } else { "Ctrl" }.to_string(),
+            "alt" => if mac { "Opt" } else { "Alt" }.to_string(),
+            "shift" => "Shift".to_string(),
+            other => {
+                let mut chars = other.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+impl UiSettings {
+    /// Widths are fixed for the cleaner single-pane aesthetic. The persisted
+    /// fields stay for older settings files but are no longer adjustable.
+    pub fn clamped(mut self) -> Self {
+        self.sidebar_width = SIDEBAR_DEFAULT;
+        self.right_pane_width = RIGHT_PANE_DEFAULT;
+        self.terminal_height = clamp_or(
+            self.terminal_height,
+            TERMINAL_MIN_HEIGHT,
+            TERMINAL_ABS_MAX_HEIGHT,
+            TERMINAL_DEFAULT_HEIGHT,
+        );
+        self
+    }
+
+    /// Load from `{data_dir}/ui-settings.json`; defaults on any failure.
+    pub fn load(data_dir: &Path) -> Self {
+        match std::fs::read_to_string(Self::path(data_dir)) {
+            Ok(text) => match serde_json::from_str::<UiSettings>(&text) {
+                Ok(settings) => settings.clamped(),
+                Err(err) => {
+                    tracing::warn!(error = %err, "ui-settings corrupt; using defaults");
+                    Self::default()
+                }
+            },
+            Err(_) => Self::default(),
+        }
+    }
+
+    /// Write atomically (temp file + rename) so a crash mid-write never corrupts.
+    pub fn save(&self, data_dir: &Path) -> io::Result<()> {
+        std::fs::create_dir_all(data_dir)?;
+        let path = Self::path(data_dir);
+        let tmp = path.with_extension("json.tmp");
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        std::fs::write(&tmp, json)?;
+        std::fs::rename(&tmp, &path)
+    }
+
+    pub fn path(data_dir: &Path) -> PathBuf {
+        data_dir.join(FILE_NAME)
+    }
+}
+
+fn clamp_or(value: f32, min: f32, max: f32, default: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(min, max)
+    } else {
+        default
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = UiSettings {
+            sidebar_width: SIDEBAR_DEFAULT,
+            sidebar_collapsed: true,
+            last_space_id: Some("space-1".into()),
+            open_tabs: Some(vec!["b".to_string(), "a".to_string()]),
+            space_filter: Some("space-1".into()),
+            sound_enabled: false,
+            notifications_enabled: false,
+            notifications_background_only: false,
+            right_pane_width: RIGHT_PANE_DEFAULT,
+            terminal_height: 320.0,
+            keymap: KeymapConfig {
+                toggle_sidebar: "mod-shift-s".into(),
+                ..KeymapConfig::default()
+            },
+            appearance: crate::appearance::AppearanceMode::Light,
+            diff_split: true,
+        };
+        settings.save(dir.path()).unwrap();
+        assert_eq!(UiSettings::load(dir.path()), settings);
+    }
+
+    /// A settings file written before light mode existed has no `appearance`
+    /// key; it must load as "follow the OS" rather than failing the whole parse
+    /// and resetting every other preference to defaults.
+    #[test]
+    fn settings_without_appearance_default_to_system() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            UiSettings::path(dir.path()),
+            r#"{"sidebarWidth": 300, "soundEnabled": false}"#,
+        )
+        .unwrap();
+        let loaded = UiSettings::load(dir.path());
+        assert_eq!(loaded.appearance, crate::appearance::AppearanceMode::System);
+        assert_eq!(loaded.sidebar_width, SIDEBAR_DEFAULT);
+        assert!(!loaded.sound_enabled, "other keys still parse");
+        assert!(
+            loaded.notifications_enabled,
+            "pre-banner files default banners on"
+        );
+        assert!(
+            loaded.notifications_background_only,
+            "pre-banner files default background-only on"
+        );
+    }
+
+    #[test]
+    fn missing_and_corrupt_files_yield_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(UiSettings::load(dir.path()), UiSettings::default());
+        std::fs::write(UiSettings::path(dir.path()), "{not json").unwrap();
+        assert_eq!(UiSettings::load(dir.path()), UiSettings::default());
+    }
+
+    #[test]
+    fn loaded_values_are_clamped() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            UiSettings::path(dir.path()),
+            r#"{"sidebarWidth": 10000, "rightPaneWidth": 1}"#,
+        )
+        .unwrap();
+        let loaded = UiSettings::load(dir.path());
+        assert_eq!(loaded.sidebar_width, SIDEBAR_DEFAULT);
+        assert_eq!(loaded.right_pane_width, RIGHT_PANE_DEFAULT);
+    }
+
+    #[test]
+    fn widths_are_fixed() {
+        let loaded = UiSettings {
+            sidebar_width: 2400.0,
+            right_pane_width: 2400.0,
+            ..Default::default()
+        }
+        .clamped();
+        assert_eq!(loaded.sidebar_width, SIDEBAR_DEFAULT);
+        assert_eq!(loaded.right_pane_width, RIGHT_PANE_DEFAULT);
+    }
+
+    #[test]
+    fn nan_heals_to_default() {
+        let healed = UiSettings {
+            sidebar_width: f32::NAN,
+            ..Default::default()
+        }
+        .clamped();
+        assert_eq!(healed.sidebar_width, SIDEBAR_DEFAULT);
+    }
+
+    #[test]
+    fn defaults_match_hearth() {
+        let d = UiSettings::default();
+        assert_eq!(d.sidebar_width, 256.0);
+        assert_eq!(d.right_pane_width, 520.0);
+        assert_eq!(d.terminal_height, 280.0);
+        assert!(!d.sidebar_collapsed);
+    }
+
+    #[test]
+    fn keymap_defaults_and_reset() {
+        let mut keymap = KeymapConfig::default();
+        assert_eq!(keymap.get(ShortcutId::ToggleSidebar), "mod-s");
+        assert_eq!(keymap.get(ShortcutId::ToggleChanges), "mod-b");
+        assert_eq!(keymap.get(ShortcutId::ToggleTerminal), "mod-j");
+        let ctrl = if cfg!(target_os = "macos") {
+            "ctrl"
+        } else {
+            "mod"
+        };
+        assert_eq!(keymap.get(ShortcutId::NextSession), format!("{ctrl}-tab"));
+        assert_eq!(
+            keymap.get(ShortcutId::PrevSession),
+            format!("{ctrl}-shift-tab")
+        );
+        keymap.set(ShortcutId::ToggleSidebar, "mod-shift-x".into());
+        assert_eq!(keymap.get(ShortcutId::ToggleSidebar), "mod-shift-x");
+        keymap.reset(ShortcutId::ToggleSidebar);
+        assert_eq!(keymap.get(ShortcutId::ToggleSidebar), "mod-s");
+    }
+
+    #[test]
+    fn combo_recording() {
+        // How this platform spells a recorded ctrl (see `combo_from_keystroke_on`).
+        let ctrl_combo = |suffix: &str| {
+            if cfg!(target_os = "macos") {
+                format!("ctrl-{suffix}")
+            } else {
+                format!("mod-{suffix}")
+            }
+        };
+        assert_eq!(
+            combo_from_keystroke(true, false, false, false, "s"),
+            Some(ctrl_combo("s"))
+        );
+        assert_eq!(
+            combo_from_keystroke(false, false, false, true, "s"),
+            Some("mod-s".into())
+        );
+        assert_eq!(
+            combo_from_keystroke(true, false, true, false, "tab"),
+            Some(ctrl_combo("shift-tab"))
+        );
+        assert_eq!(
+            combo_from_keystroke(true, true, true, false, "K"),
+            Some(ctrl_combo("alt-shift-k"))
+        );
+        // Plain keys record without modifiers (Esc is filtered by the caller).
+        assert_eq!(
+            combo_from_keystroke(false, false, false, false, "f5"),
+            Some("f5".into())
+        );
+        // Bare modifier presses record nothing.
+        assert_eq!(
+            combo_from_keystroke(true, false, false, false, "ctrl"),
+            None
+        );
+        assert_eq!(
+            combo_from_keystroke(false, false, true, false, "shift"),
+            None
+        );
+        assert_eq!(combo_from_keystroke(false, false, false, false, ""), None);
+    }
+
+    #[test]
+    fn every_default_is_spelled_the_way_the_recorder_spells_it() {
+        // The invariant `default_combo_on` documents. Checked for BOTH
+        // platforms because the hazard only exists off macOS, so a single-OS
+        // CI run would never see it.
+        for mac in [true, false] {
+            for id in ShortcutId::ALL {
+                let combo = id.default_combo_on(mac);
+                // Via the platform spelling, where modifier names are
+                // unambiguous, so the decode can't inherit the bug it checks.
+                let bound = platform_combo_on(mac, combo);
+                let mut parts: Vec<&str> = bound.split('-').collect();
+                let key = parts.pop().expect("a combo always ends in a key");
+                let recorded = combo_from_keystroke_on(
+                    mac,
+                    parts.contains(&"ctrl"),
+                    parts.contains(&"alt"),
+                    parts.contains(&"shift"),
+                    parts.contains(&"cmd"),
+                    key,
+                );
+                assert_eq!(
+                    recorded.as_deref(),
+                    Some(combo),
+                    "{} default {combo:?} is unreachable from the recorder (mac={mac})",
+                    id.label()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn defaults_are_distinct_physical_keys() {
+        // Distinct STRINGS is not enough — two defaults could still resolve to
+        // the same keystroke through `platform_combo`.
+        let mut seen = std::collections::HashSet::new();
+        for id in ShortcutId::ALL {
+            let bound = platform_combo(id.default_combo());
+            assert!(seen.insert(bound.clone()), "{bound:?} bound twice");
+        }
+    }
+
+    #[test]
+    fn conflict_detection() {
+        let mut keymap = KeymapConfig::default();
+        assert!(conflicted_shortcuts(&keymap).is_empty());
+        keymap.set(ShortcutId::ToggleChanges, "mod-s".into());
+        let conflicts = conflicted_shortcuts(&keymap);
+        assert!(conflicts.contains(&ShortcutId::ToggleSidebar));
+        assert!(conflicts.contains(&ShortcutId::ToggleChanges));
+        assert!(!conflicts.contains(&ShortcutId::ToggleTerminal));
+        keymap.reset(ShortcutId::ToggleChanges);
+        assert!(conflicted_shortcuts(&keymap).is_empty());
+    }
+
+    #[test]
+    fn combo_translation() {
+        let primary = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+        assert_eq!(platform_combo("mod-s"), format!("{primary}-s"));
+        assert_eq!(platform_combo("alt-f4"), "alt-f4");
+        let display_primary = if cfg!(target_os = "macos") {
+            "Cmd"
+        } else {
+            "Ctrl"
+        };
+        assert_eq!(
+            display_combo("mod-shift-s"),
+            format!("{display_primary}+Shift+S")
+        );
+        assert_eq!(display_combo("f5"), "F5");
+        assert_eq!(display_combo_on(true, "mod-alt-up"), "Cmd+Opt+Up");
+        assert_eq!(display_combo_on(false, "mod-alt-up"), "Ctrl+Alt+Up");
+        // Literal ctrl passes through untouched — the macOS spelling of
+        // session cycling.
+        assert_eq!(platform_combo("ctrl-shift-tab"), "ctrl-shift-tab");
+        assert_eq!(display_combo("ctrl-shift-tab"), "Ctrl+Shift+Tab");
+    }
+
+    #[test]
+    fn keymap_survives_old_settings_files() {
+        // Files written before the keymap existed load with defaults.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(UiSettings::path(dir.path()), r#"{"sidebarWidth": 300}"#).unwrap();
+        let loaded = UiSettings::load(dir.path());
+        assert_eq!(loaded.keymap, KeymapConfig::default());
+    }
+
+    #[test]
+    fn a_keymap_missing_newer_shortcuts_keeps_its_customizations() {
+        // Upgrade path: a file from a build that predates session cycling
+        // carries the user's rebinds and defaults only the new rows.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            UiSettings::path(dir.path()),
+            r#"{"keymap": {"toggleSidebar": "mod-shift-x"}}"#,
+        )
+        .unwrap();
+        let keymap = UiSettings::load(dir.path()).keymap;
+        assert_eq!(keymap.get(ShortcutId::ToggleSidebar), "mod-shift-x");
+        assert_eq!(keymap.get(ShortcutId::ToggleTerminal), "mod-j");
+        assert_eq!(
+            keymap.get(ShortcutId::NextSession),
+            ShortcutId::NextSession.default_combo()
+        );
+    }
+
+    #[test]
+    fn terminal_height_clamps_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(UiSettings::path(dir.path()), r#"{"terminalHeight": 5}"#).unwrap();
+        assert_eq!(
+            UiSettings::load(dir.path()).terminal_height,
+            TERMINAL_MIN_HEIGHT
+        );
+        std::fs::write(UiSettings::path(dir.path()), r#"{"terminalHeight": 99999}"#).unwrap();
+        assert_eq!(
+            UiSettings::load(dir.path()).terminal_height,
+            TERMINAL_ABS_MAX_HEIGHT
+        );
+    }
+}

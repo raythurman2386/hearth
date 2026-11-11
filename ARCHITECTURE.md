@@ -1,15 +1,15 @@
 # hearth — Architecture
 
-User and contributor guides live under [`docs/`](docs/README.md) (usage, configuration, harnesses, troubleshooting). This file is the **system architecture** note for the engine/UI/optional-tailnet topology. Sync paths described below are **opt-in** in this fork; a bare install stays local-only.
+User and contributor guides live under [`docs/`](docs/README.md) (usage, configuration, harnesses, troubleshooting). This file is the **system architecture** note for the engine/UI/optional-tailnet topology. Sync paths described below are **opt-in**; a bare install stays local-only.
 
 A ground-up native rewrite (Zeron/comet lineage) of a multi-device controller for coding agents
-— in Rust, with a gpui UI. Fresh app; no backwards compatibility required.
+— in Rust, with a Rune UI. Fresh app; no backwards compatibility required.
 
 **Pillars (from the goal):**
 - Optional sync uses Loro CRDT docs (loro-mirror model) over the tailnet; the same docs persist locally when sync is disabled.
 - Room servers (chat2 log + registry) run in Rust on the always-on hub. Everything device-side is Rust.
 - Feature parity with hearth **except token-usage display** (poor fit for CRDTs; excluded).
-- Frontend is **gpui** (pinned Zed rev). Virtualization + markdown techniques ported from
+- Frontend is **Rune** (pinned dev rev). Virtualization + markdown techniques ported from
   **mugen + pretext** (`docs/research/mugen-pretext.md`).
 - One binary, **headed or headless**. Smooth transitions/animations matching the original
   (catalog in `docs/research/feature-inventory.md` §1.12).
@@ -17,7 +17,7 @@ A ground-up native rewrite (Zeron/comet lineage) of a multi-device controller fo
 ## 1. Topology (unchanged shape, new materials)
 
 ```
-gpui UI ─ localhost RPC ─ engine A ══ WS over tailnet ══ engine B (hub) ─ RPC ─ gpui UI
+Rune UI ─ localhost RPC ─ engine A ══ WS over tailnet ══ engine B (hub) ─ RPC ─ Rune UI
                                 │  HEARTH_TAILNET_HOST:PORT
                                 └── chat2 + registry rooms on the hub
                                 └── /rpc on every device (direct peer RPC)
@@ -25,7 +25,7 @@ gpui UI ─ localhost RPC ─ engine A ══ WS over tailnet ══ engine B (h
 
 - **Engine = backend** (was `@hearth/backend`): runs agents, owns auth, terminals, repos/worktrees,
   diff sync, doc hosting. Pure Rust daemon, fully functional headless.
-- **UI = viewport** (was Electron): gpui app rendering engine state. Talks the same typed RPC whether the engine is in-process or a separate daemon. Organized around **spaces** — (device, folder) pairs in the runtime's profile. The sidebar is the data: an attention-sorted Sessions list, filtered by a searchable spaces dropdown ("All spaces" included) that also hosts space management. The horizontal tabs are a **device-local viewport** onto that list (`ui-settings.json` `openTabs`, cross-space): closing a tab is local-only — archiving is an explicit sidebar action — and a sidebar click (re)opens a session as a tab. The new-session canvas carries a space picker (defaulting to the sidebar filter, else the last selected space); new sessions are minted onto the picked space's device via relay-forwardable RPCs.
+- **UI = viewport** (was Electron): Rune app rendering engine state. Talks the same typed RPC whether the engine is in-process or a separate daemon. Organized around **spaces** — (device, folder) pairs in the runtime's profile. The sidebar is the data: an attention-sorted Sessions list, filtered by a searchable spaces dropdown ("All spaces" included) that also hosts space management. The horizontal tabs are a **device-local viewport** onto that list (`ui-settings.json` `openTabs`, cross-space): closing a tab is local-only — archiving is an explicit sidebar action — and a sidebar click (re)opens a session as a tab. The new-session canvas carries a space picker (defaulting to the sidebar filter, else the last selected space); new sessions are minted onto the picked space's device via relay-forwardable RPCs.
 - **Tailnet hub (Rust, `crates/sync`)**: the always-on host binds one TCP port and serves chat2
   rooms, registry rooms, optional `/releases/*`, and (on every device) direct `/rpc`. Identity is
   `tailscale whois`. There is no Cloudflare Worker, Durable Objects package, or WorkOS login on
@@ -144,63 +144,53 @@ hearth/
     rpc/          hearth-rpc      # UiRpc/ControlRpc: typed req/resp/stream over WS (tokio-
                                  # tungstenite) + in-memory transport; direct tailnet /rpc
                                  # peer links
-    ui/           hearth-ui       # gpui app: shell, sidebar, conversation, composer,
+    ui-rune/      hearth-ui-rune  # Rune app: shell, sidebar, conversation, composer,
                                  # terminal view, diff pane, settings, animation kit
   apps/
     hearth/                       # the binary (headed default, `headless` subcommand)
   docs/                          # this file + research reports
 ```
 
-Engine async runtime: **tokio** throughout; the UI bridges via `gpui_tokio` (`Tokio::spawn`
-futures surfaced as gpui `Task`s). In-process mode runs the engine on its own tokio runtime
-thread; the UI never blocks on it.
+Engine async runtime: **tokio** throughout; the UI runs a private tokio runtime
+(`hearth_ui_rune::bridge::Bridge`) and posts `EngineEvent`s to the Rune `poll`.
+In-process mode runs the engine on its own tokio runtime thread; the UI never
+blocks on it.
 
-## 4. UI plan (gpui) — parity + smoothness
+## 4. UI (Rune) — parity + smoothness
 
-Reference: `docs/research/gpui.md`, `docs/research/mugen-pretext.md`,
-feature spec `docs/research/feature-inventory.md` §1.
+Reference: `docs/rune-port.md` (port architecture, ownership, verification),
+feature spec `docs/research/feature-inventory.md` §1, `docs/research/mugen-pretext.md`.
 
-- **Deps**: `gpui` + `gpui_platform` pinned to one Zed rev (Apache-2.0). **We do not use Zed's
-  GPL crates** (`markdown`, `ui`, `theme`, `editor`) — markdown, components, and theme are ours.
-- **Transcript**: gpui `list()` + `ListState::new(n, ListAlignment::Bottom, overdraw)` (sum-tree
-  offsets, follow-tail). On top of it, port the mugen behaviors that gpui doesn't give us:
-  - stick-to-bottom **spring** with feed-forward tracking of streaming growth; interrupt from
-    *user input* (wheel-up / drag), re-engage within a 70px band; own-send re-engages + smooth
-    scrolls;
-  - **block-granularity rows** (one row = one markdown block / tool group, not one message) with
-    stable ids `msgId#blockId`; live turn stays unsplit, re-splits on persist; optimistic echo
-    rows share the client-minted id so persistence never flickers;
-  - row height memoization keyed by (row id, content length, width) so a streamed token
-    re-measures one row;
-  - scroll-anchor absorption for above-viewport height changes.
-- **Markdown** (`hearth-ui::markdown`): `pulldown-cmark` parsing on `background_spawn` with
-  coalescing (Zed's proven pattern), block-level incremental re-parse of the streaming tail
-  (incremark's O(delta) idea: only re-parse from the last stable block boundary), monochrome
-  theme where **numbers drive layout, colors are paint**. Code blocks: monospace, no wrap ⇒
-  height = lines × line-height (layout independent of highlight); syntax highlighting via
-  `synoptic`/`syntect`-class tokenizer run time-sliced in the background, colors applied as text
-  runs (paint-only). Streaming **fade-in veil** on newly appended text via `with_animation`
-  opacity (paint-layer, never affects layout). `prefers-reduced-motion` honored.
-- **Composer**: hand-rolled gpui text input (start from Zed's `examples/input.rs`: IME, selection,
-  clipboard, key actions), compact↔expanded auto-flip by measured text width, auto-grow 76–260px,
-  Enter/Shift+Enter, Send→Steer→Stop morph, drafts + attachments per chat, drag-drop/paste
-  images, QuestionPanel (paged, 1-9 keys, 220ms auto-advance) replacing the composer while input
-  is requested. Pickers (harness/model, traits, repo w/ folder browser, branch w/ worktree
-  toggle) as gpui popovers with `menu-in` scale/fade.
-- **Terminal**: `alacritty_terminal` (vte state machine, MIT/Apache) + `portable-pty` on the
-  engine side; custom gpui grid element; tabs w/ drag-reorder (150ms sliding transforms), height
-  drag 160px–55vh, 12ms input coalescing / 80ms resize debounce, 1MB replay, detach ≠ close.
-- **Diff pane**: unified-patch parser → virtualized file/hunk/line rows, per-file collapse
-  (180ms height tween), time-sliced highlight, 200ms width transition on the pane itself.
-- **Animation kit** (`hearth-ui::motion`): small helpers over gpui `Animation` reproducing the
-  hearth catalog — `fade-in` (0.5s, cubic-bezier(0.16,1,0.3,1), translateY 4→0), `splash-out`,
-  `hearth-pulse` staggered cell wave (boot splash + loaders), `gradient-spin-pulse` matrix
-  spinner (WorkingIndicator + rotating flavour word), `menu-in`/`dialog-in` scale-fades, 200ms
-  ease-out width/height transitions for sidebar/panes, sidebar-resort **slide animation**
-  (we own the list, so animate row positions directly — the View Transitions equivalent, 260ms
-  cubic-bezier(0.22,1,0.36,1)), reduced-motion switch.
-- **Theme**: always-dark monochrome, oklch-derived neutral scale precomputed to Hsla, hairline
-  borders, Geist/Geist Mono bundled fonts.
+- **Deps**: `rune`, `rune-kit`, `rune-motion` pinned to one `dev` rev. The
+  engine/RPC/doc/sync crates are UI-agnostic; `crates/ui-rune` is the only
+  frontend. No Zed/GPL crates.
+- **Model**: one `App` state, `fn view(&App, &mut Cx<App>) -> El`, handlers
+  `|&mut App|` / `&mut Tx`, and a retained element tree diffed by Rune (Taffy
+  layout, springs, Parley text). Async work posts `EngineEvent`s from a private
+  tokio runtime; `AppSpec::poll` drains them, and `WatchGuard` drop cancels the
+  engine-side watch.
+- **Transcript**: Rune `scroll(ScrollSpec{stick_bottom})` + `growth(GrowthSpec)`
+  + `virtual_rows`, keyed by block id (`msgId#blockId`), with own-turn runway,
+  per-chat viewport restore, block-granularity rows, tool groups/chips, message
+  rail, and optimistic echoes.
+- **Markdown**: `pulldown-cmark` incremental parser + display mender, rendered
+  through `rune_kit::Markdown` with `hearth_syntax` paint-only colours; streaming
+  reveal; **numbers drive layout, colors are paint**.
+- **Composer**: Rune `TextEdit` / `text_input` (IME, selection, undo, pills),
+  compact↔expanded hysteresis, auto-grow 76–260px, Send→Steer→Stop morph,
+  per-chat drafts + attachments, question wizard, mention/slash popups.
+- **Terminal**: `alacritty_terminal` emulator + engine-side PTY; Rune rows of
+  `rich` spans over background/selection quads; tabs with drag-reorder,
+  160px–55vh, 12ms input coalescing / 80ms resize debounce, 1MB replay,
+  detach ≠ close.
+- **Diff pane**: unified/split patch model → virtualized line rows, per-file
+  folds, inline comments, `hearth_syntax` highlights, scope/wrap controls and a
+  git-history lane graph.
+- **Animation**: `rune_motion` springs/transitions; the hearth catalog (fade-in,
+  splash-out, pulse, spinner, menu/dialog, 200/260/150ms transitions) is encoded
+  as springs/curves with reduced-motion.
+- **Theme**: the same Ravenwood dark/light palette as `rune::Color`, plus a
+  `rune_kit::Kit` derived for components; Geist/Geist Mono bundled.
 
 ## 5. Engine plan
 
@@ -243,7 +233,7 @@ Loopback is allowed without whois (tests). Other peers must resolve through `tai
 - **Excluded**: token-usage display (profile heatmap, lifetime stats, per-message token columns,
   `WatchUsage`). Rate-limit meters on agent accounts are *kept* (separate concern; probed from
   CLIs, not CRDT-synced).
-- **Changed**: Postgres entity sync/server → workspace registry; Electron/React/mugen → gpui with
+- **Changed**: Postgres entity sync/server → workspace registry; Electron/React/mugen → Rune with
   ported techniques; Node harness SDKs → subprocess protocols; WebRTC/DeviceRoom DO → direct
   tailnet `/rpc`; mobile app → out of scope for this repo.
 - **Kept verbatim**: session-doc schema shape + constants, command ledger rules, chat2/registry
@@ -255,8 +245,8 @@ Loopback is allowed without whois (tests). Other peers must resolve through `tai
 
 Status legend: ✅ shipped · 🟡 shipped with named gaps (see `docs/PARITY.md` for upstream lineage).
 
-- ✅ **M0–M3** — scaffold, doc/sync core, engine core, gpui UI (sessions, composer, transcript).
-- ✅ **M4 Multi-device (this fork)** — Tailscale hub-and-spoke: chat2 + registry rooms on the hub,
+- ✅ **M0–M3** — scaffold, doc/sync core, engine core, Rune UI (sessions, composer, transcript).
+- ✅ **M4 Multi-device** — Tailscale hub-and-spoke: chat2 + registry rooms on the hub,
   direct `/rpc` on every device, `tailscale whois` identity. Proven by `scripts/e2e-smoke.sh`
   (loopback hub) and `crates/sync/tests/hub.rs`.
 - 🟡 **M5 Full surface** — terminals, diff pane, repo/branch/folder pickers + worktrees,
@@ -269,6 +259,6 @@ Status legend: ✅ shipped · 🟡 shipped with named gaps (see `docs/PARITY.md`
 ## 9. Open questions (tracked, non-blocking)
 
 1. `lorosurgeon` fit for the mirror write path vs hand-rolled reconcile.
-2. Text shaping performance for analytic row heights: gpui measures shaped text natively (Rust ⇒
-   cheap), so we start with gpui `list()` measurement + memoization rather than porting pretext's
-   full analytic kernel; revisit only if cold-open of huge transcripts measures slow.
+2. Text shaping performance for analytic row heights: Rune (Parley) measures shaped text natively
+   (Rust ⇒ cheap), so we start with `virtual_rows` measurement + memoization rather than porting
+   pretext's full analytic kernel; revisit only if cold-open of huge transcripts measures slow.

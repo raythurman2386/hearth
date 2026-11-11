@@ -8,7 +8,7 @@ members = [
     "crates/engine",
     "crates/rpc",
     "crates/update",
-    "crates/ui",
+    "crates/ui-rune",
     "crates/syntax",
     "apps/hearth",
 ]
@@ -27,40 +27,23 @@ hearth-harness = { path = "crates/harness" }
 hearth-engine = { path = "crates/engine" }
 hearth-rpc = { path = "crates/rpc" }
 hearth-update = { path = "crates/update" }
-hearth-ui = { path = "crates/ui" }
+hearth-ui-rune = { path = "crates/ui-rune" }
 hearth-syntax = { path = "crates/syntax" }
+
+# Rune — Anomaly's native GPU UI framework (pre-release). Pinned to a `dev`
+# rev; `dev` is fast-forward-only. Bump deliberately, never to a branch head.
+rune = { git = "https://github.com/anomalyco/rune", rev = "424e0f5904b9bc314734370f462b4f4e71a2cc07", default-features = false, features = [
+    "svg",
+    "accessibility",
+    "dbus",
+] }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "424e0f5904b9bc314734370f462b4f4e71a2cc07", features = [
+    "markdown",
+] }
+rune-motion = { git = "https://github.com/anomalyco/rune", rev = "424e0f5904b9bc314734370f462b4f4e71a2cc07" }
 
 # CRDT
 loro = "1.13"
-
-# gpui — the wingleeio/zed fork: upstream f14fea9 + commits on
-# `comet/edge-fade-horizontal` (tip of `comet/line-wrap-closing-punctuation`
-# + 5d1f83d horizontal per-pixel EdgeFade for quads/images; rebase when bumping the
-# upstream rev): a6bf17c fixes BOTH wrap-rule copies (LineWrapper +
-# line_layout's shaped-text duplicate); 14baea0 adds the EdgeFade primitive
-# (Window::with_edge_fade — per-primitive scroll-edge fades for the glass
-# sidebar); a6c1ad5 adds BackdropBlur + horizontal EdgeFade + glass fixes;
-# 9b672fa bounds renderer GPU memory (region-sized backdrop blur scratch,
-# idle release of blur/path intermediates, instance pool shrink,
-# HEARTH_GPU_STATS=1 diagnostics); b687328 adds ImageSource::evict (frees
-# sprite-atlas tiles — remove_asset alone leaked them, see
-# attachments::flush_evicted); ac135eb adds device memory to the stats line;
-# f596cde fixes destination alpha on transparent windows (Porter-Duff OVER,
-# not additive); 53518c0 merges the edge-fade line: per-edge fade bands +
-# per-pixel EdgeFade for quads/images (true fade-into-glass), and
-# object-fit Cover cropping via atlas-tile UVs so image corner radii hold;
-# 8a8954c switches the macOS blurred view to UnderWindowBackground (macOS 26
-# stopped vending CABackdropLayer for Selection — window blur went dead);
-# b68970e rasterizes BackdropBlur in the wgpu renderer (frosted floats on
-# Linux — the Metal path's snapshot/blur/composite, ported).
-gpui = { git = "https://github.com/wingleeio/zed", rev = "e2ddcc6805f8c5088e62a60dfe517abcccd61a9a" }
-gpui_platform = { git = "https://github.com/wingleeio/zed", rev = "e2ddcc6805f8c5088e62a60dfe517abcccd61a9a", features = [
-    "wayland",
-    "x11",
-    "font-kit",
-    "runtime_shaders",
-] }
-gpui_tokio = { git = "https://github.com/wingleeio/zed", rev = "e2ddcc6805f8c5088e62a60dfe517abcccd61a9a" }
 
 # diffs
 similar = "3"
@@ -99,7 +82,6 @@ notify = "8"
 portable-pty = "0.9"
 alacritty_terminal = "0.26"
 pulldown-cmark = "0.13"
-unicode-segmentation = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 ignore = "0.4"
 nucleo-matcher = "0.3"
@@ -111,7 +93,7 @@ lto = "thin"
 strip = "symbols"
 
 [profile.dev]
-# gpui is slow unoptimized; match zed's approach for deps
+# Rune + wgpu are slow unoptimized; match zed's approach for deps.
 opt-level = 0
 
 [profile.dev.package."*"]

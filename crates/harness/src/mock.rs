@@ -437,7 +437,7 @@ impl Harness for MockHarness {
                     AgentEvent::ToolCall {
                         id: "mock-code-tool".into(),
                         call: hearth_proto::ToolCall::Exec {
-                            command: "set -e\nfixture_in_original=0\ngrep -rn \"veil\" crates/ui/src | wc -l".into(),
+                            command: "set -e\nfixture_in_original=0\ngrep -rn \"veil\" crates/ui-rune/src | wc -l".into(),
                         },
                     },
                     AgentEvent::ToolResult {

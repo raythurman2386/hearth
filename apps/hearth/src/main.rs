@@ -192,7 +192,7 @@ fn main() -> anyhow::Result<()> {
             // Headed: the UI probes HEARTH_IPC_PORT and connects to a running
             // daemon, or embeds the engine in-process (ARCHITECTURE §1).
             let cfg = engine_config_from_env();
-            hearth_ui::run_app(hearth_ui::UiConfig {
+            hearth_ui_rune::run_app(hearth_ui_rune::UiConfig {
                 data_dir: cfg.data_dir,
                 ipc_port: cfg.ipc_port,
                 edge_url: cfg.edge_url,

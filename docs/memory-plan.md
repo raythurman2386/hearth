@@ -5,6 +5,11 @@ Written 2026-08-03 after a full-codebase audit plus empirical benchmarks
 Problem: Activity Monitor shows Hearth at 450–600MB on viewer-only laptops and
 >1GB after heavy use. Target: ~150–250MB steady-state, flat over a workday.
 
+> **Rune port note (2026-11):** the viewport is now `crates/ui-rune` (Rune).
+> The image-lifecycle items below are ported: the transcript and composer caches
+> are byte-bounded, and staged attachments are purged on send/chat delete. The
+> engine measurements remain the baseline.
+
 ## 1. What we measured
 
 Engine benchmarks ran the real `hearth headless` debug binary (v0.1.12) with the
@@ -60,7 +65,7 @@ originally verified 2026-08-03; refreshed against current tree).
 | Item | Change | Evidence | Expected |
 |---|---|---|---|
 | Allocator | mimalloc (or jemalloc) as global alloc in `apps/hearth` | system malloc watermark; churn sources below | watermark becomes recoverable; biggest single lever on macOS |
-| Image lifecycle | Call gpui `remove_asset` when transcript rows drop / adopt an LRU image cache with byte budget; bound the global encoded-bytes cache (`attachments.rs:553` `IMAGE_CACHE_BUDGET_BYTES`, eviction via `ImageSource::evict` note at `:692`); clear staged attachments on chat delete | decoded RGBA + atlas tile + encoded bytes ≈ 2.5× decoded size per image, permanent; one screenshot ≈ 48MB decoded | 100MB+ on image-heavy use |
+| Image lifecycle | Evict decoded images when transcript rows drop / adopt an LRU image cache with byte budget; bound the global encoded-bytes cache; clear staged attachments on chat delete | decoded RGBA + atlas tile + encoded bytes ≈ 2.5× decoded size per image, permanent; one screenshot ≈ 48MB decoded | 100MB+ on image-heavy use |
 | Doc delete eviction | DeleteChat/DeleteSpace drop the doc handle, close the room, delete the snapshot row (`DocHostInner` at `doc_host.rs:224`; mutate arms at `rpc.rs:788` / `rpc.rs:845`; `purge_chat` at `doc_host.rs:2174`) | audit §1 | correctness + a few MB per deleted chat |
 | Bound channels | `STREAM_QUEUE_CAP` (`client.rs:17`) bounds RPC stream subscribe (`client.rs:176`). Terminal PTY raw + subscriber channels (`terminals.rs:211`, `terminals.rs:243`) still unbounded — keep a drop policy in mind. Offline pending queues: RegistryDoc (`registry.rs:346`); pending VecDeque (`chat_client.rs:322`); `ChatClient` (`chat_client.rs:378`). Not the removed room.rs. | leak-shaped under slow consumer / disconnect | removes the balloon modes (dev builds, sleep/wake, firehose terminals) |
 | Hygiene | clear codex `streamed_text` per turn; evict idle journal fds; prune `dial_locks` | audit §3/§9/§7 | small, stops slow creep |
@@ -96,7 +101,7 @@ originally verified 2026-08-03; refreshed against current tree).
    whole-container scan on every 120ms `is_host` check.
 
 Expected after phases 1–2: streaming multiplication ~11.6× → ~2–3× raw text;
-viewer-laptop steady state ≈ gpui baseline + selected chat ≈ 150–250MB, flat.
+viewer-laptop steady state ≈ Rune baseline + selected chat ≈ 150–250MB, flat.
 
 ## 6. Phase 3 — larger surfaces, more care
 
@@ -124,7 +129,7 @@ viewer-laptop steady state ≈ gpui baseline + selected chat ≈ 150–250MB, fl
 Phases 1–2 landed on `hearth/hearth-memory-usage-investigation` (phase 3
 deliberately skipped — terminals get their own pass with the terminal bug
 work). Shipped: mimalloc in both binaries; attachment-image LRU (64MB encoded
-budget) with gpui asset release on eviction + staged-attachment purge on chat
+budget) with decoded-image release on eviction + staged-attachment purge on chat
 delete; doc eviction on DeleteChat/DeleteSpace; doc LRU (12 warm docs / 80MB
 estimate, pinned: watched, live-writer, host-pending-commands) with lazy
 mirror; in-place event fold; container-scoped doc reads + single-row workspace
@@ -138,7 +143,7 @@ LRU evicting (8×), post-cap growth slope halved, and RSS recovering at idle —
 which the baseline never did. Cold-open stayed on the measured ~62ms path.
 
 Known follow-ups: GPU atlas tiles for raw-bytes images still free only on
-window close (needs a small gpui-fork patch exposing a drop path for
+window close (needs a small Rune patch exposing a drop path for
 `ImageSource::Image`); UI-side full-transcript clone per frame
 (`transcript.rs` sync) could move to Arc-per-entry; boot-time warm-open of
 recent chats (PARITY gap) is unchanged.
