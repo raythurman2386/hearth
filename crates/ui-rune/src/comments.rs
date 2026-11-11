@@ -110,6 +110,82 @@ pub fn chip_label(count: usize) -> String {
     }
 }
 
+/// One review-comment bullet read back out of a prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommentBadgeDetail {
+    /// `path:line`.
+    pub location: String,
+    /// `L` or `R`.
+    pub tag: Option<String>,
+    pub body: String,
+}
+
+/// What the transcript's badge shows for a sent prompt: the count and the
+/// per-comment details. The transcript module maps this onto its own badge
+/// type (the Rune `badges` module is another owner's file).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommentBadge {
+    pub label: String,
+    pub details: Vec<CommentBadgeDetail>,
+}
+
+/// [`crate::comments::with_comments`]'s inverse: split the trailing comment
+/// block back out and describe it. Matched only as a whole trailing block, so
+/// a prompt quoting the header mid-body is left alone.
+pub fn extract_badge(text: &str) -> Option<(String, CommentBadge)> {
+    let marker = format!("\n\n{COMMENT_BLOCK_HEADER}\n");
+    let at = text.rfind(&marker)?;
+    let block = &text[at + marker.len()..];
+    if block.is_empty()
+        || !block
+            .lines()
+            .all(|line| line.starts_with("- ") || line.starts_with("  "))
+    {
+        return None;
+    }
+    let details = parse_bullets(block);
+    if details.is_empty() {
+        return None;
+    }
+    Some((
+        text[..at].to_string(),
+        CommentBadge {
+            label: chip_label(details.len()),
+            details,
+        },
+    ))
+}
+
+fn parse_bullets(block: &str) -> Vec<CommentBadgeDetail> {
+    let mut details: Vec<CommentBadgeDetail> = Vec::new();
+    for line in block.lines() {
+        let Some(bullet) = line.strip_prefix("- ") else {
+            if let (Some(indented), Some(last)) = (line.strip_prefix("  "), details.last_mut()) {
+                last.body = format!("{}\n{indented}", last.body);
+            }
+            continue;
+        };
+        // Earliest marker wins: a body may contain "(L): " itself, and matching
+        // that would swallow the body into the location.
+        let split = [CommentSide::Old, CommentSide::New]
+            .into_iter()
+            .filter_map(|side| {
+                let marker = side_marker(side);
+                bullet.find(&marker).map(|at| (at, marker.len(), side))
+            })
+            .min_by_key(|(at, _, _)| *at);
+        let Some((at, marker_len, side)) = split else {
+            continue;
+        };
+        details.push(CommentBadgeDetail {
+            location: bullet[..at].to_string(),
+            tag: Some(side.tag().to_string()),
+            body: bullet[at + marker_len..].to_string(),
+        });
+    }
+    details
+}
+
 pub const CARD_PAD_V: f32 = 20.0;
 pub const CARD_HEADER_HEIGHT: f32 = 22.0;
 pub const CARD_LINE_HEIGHT: f32 = 18.0;
@@ -173,5 +249,45 @@ mod tests {
     fn card_height_grows_with_body_lines() {
         assert!(card_height("two\nlines") > card_height("one"));
         assert_eq!(card_height(""), card_height("one"));
+    }
+
+    #[test]
+    fn card_body_lines_charge_for_soft_wraps() {
+        assert_eq!(card_body_lines("short"), 1);
+        assert_eq!(card_body_lines(&"x".repeat(64)), 1);
+        assert_eq!(card_body_lines(&"x".repeat(65)), 2);
+        assert_eq!(card_body_lines(&"line\n".repeat(200)), 8);
+    }
+
+    #[test]
+    fn a_body_quoting_a_side_marker_survives_the_round_trip() {
+        let staged = vec![comment(
+            "a.rs",
+            CommentSide::New,
+            5,
+            "see (L): the other one",
+        )];
+        let (text, badge) = extract_badge(&with_comments("x", &staged)).unwrap();
+        assert_eq!(text, "x");
+        assert_eq!(badge.label, "1 comment");
+        assert_eq!(badge.details.len(), 1);
+        assert_eq!(badge.details[0].location, "a.rs:5");
+        assert_eq!(badge.details[0].tag.as_deref(), Some("R"));
+        assert_eq!(badge.details[0].body, "see (L): the other one");
+    }
+
+    #[test]
+    fn a_prompt_without_the_trailing_block_has_no_badge() {
+        assert!(extract_badge("just a prompt").is_none());
+        // A mid-body quote is not the whole trailing block.
+        let quoted = format!("see {COMMENT_BLOCK_HEADER}\nnot a real block");
+        assert!(extract_badge(&quoted).is_none());
+    }
+
+    #[test]
+    fn multiline_bodies_round_trip_through_the_badge() {
+        let staged = vec![comment("a.rs", CommentSide::New, 3, "first\nsecond")];
+        let (_, badge) = extract_badge(&with_comments("x", &staged)).unwrap();
+        assert_eq!(badge.details[0].body, "first\nsecond");
     }
 }

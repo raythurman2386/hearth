@@ -73,7 +73,7 @@ impl Default for UiConfig {
 /// Run the headed app: Rune window, engine bootstrap, shell root.
 pub fn run_app(config: UiConfig) {
     let spec = app::spec();
-    rune::App::new(spec)
+    let app = rune::App::new(spec)
         .init(move || App::new(config))
         .chrome(rune::Chrome {
             full_size_content: true,
@@ -90,6 +90,6 @@ pub fn run_app(config: UiConfig) {
                 app.bridge.spawn(async move { engine.shutdown().await });
             }
         })
-        .standard_menus()
-        .run();
+        .standard_menus();
+    app_menus::install(app).run();
 }

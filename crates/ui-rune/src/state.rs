@@ -106,6 +106,7 @@ pub struct App {
     pub terminal: TerminalState,
     pub changes: ChangesState,
     pub pickers: PickersState,
+    pub settings_ui: crate::settings::SettingsUi,
 }
 
 impl App {
@@ -157,6 +158,7 @@ impl App {
             terminal: TerminalState::default(),
             changes: ChangesState::default(),
             pickers: PickersState::default(),
+            settings_ui: crate::settings::SettingsUi::default(),
         }
     }
 

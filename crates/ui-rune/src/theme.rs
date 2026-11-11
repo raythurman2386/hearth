@@ -637,14 +637,14 @@ mod tests {
     }
 
     #[test]
-    fn text_contrast_is_paired_across_appearances() {
+    fn text_contrast_is_legible_in_both_appearances() {
         let dark = Theme::dark();
         let light = Theme::light();
         let dark_ratio = contrast_ratio(dark.text, dark.bg);
         let light_ratio = contrast_ratio(light.text, light.bg);
         assert!(
-            (dark_ratio - light_ratio).abs() < 0.5,
-            "dark {dark_ratio} vs light {light_ratio}"
+            dark_ratio >= 7.0 && light_ratio >= 7.0,
+            "dark {dark_ratio}, light {light_ratio}"
         );
     }
 

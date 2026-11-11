@@ -61,14 +61,21 @@ fn setup(app: &mut App, waker: rune::runtime::Waker) {
     }
 }
 
-/// Drain engine events once per frame; true when visible state changed.
+/// Drain engine events and run the per-frame pumps; true when visible state
+/// changed.
 fn poll(app: &mut App, _now: f64, _tx: &mut Tx) -> bool {
-    app.drain_events()
+    let mut changed = app.drain_events();
+    changed |= crate::shell::poll(app);
+    changed |= crate::changes::poll(app);
+    changed |= app.terminal.poll();
+    changed |= app.pickers.poll();
+    changed |= crate::pickers::pump(app);
+    changed
 }
 
 /// Window-level keys not handled by a focused control.
-fn on_key(_app: &mut App, _ev: &KeyEvent, _tx: &mut Tx) -> bool {
-    false
+fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    crate::shell::on_key(app, ev, tx)
 }
 
 /// Window geometry shared with the shell.

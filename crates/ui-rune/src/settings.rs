@@ -13,6 +13,66 @@ use serde::{Deserialize, Serialize};
 // Settings page views live beside the shell and are declared in `shell/mod.rs`
 // until the port reaches them; the persisted model below is framework-free.
 
+/// View-local state for the settings pages (section, per-page dialogs, loadables).
+/// The gpui pages each held their own entity; Rune flattens them here.
+#[derive(Debug, Default)]
+pub struct SettingsUi {
+    pub section: SettingsSection,
+    pub devices: crate::settings::devices::DevicesPage,
+    pub harnesses: crate::settings::harnesses::HarnessesPage,
+    pub accounts: crate::settings::accounts::AccountsPage,
+    pub appearance: crate::settings::appearance::AppearancePage,
+    pub notifications: crate::settings::notifications::NotificationsPage,
+    pub shortcuts: crate::settings::shortcuts::ShortcutsPage,
+    pub archived: crate::settings::archived::ArchivedPage,
+}
+
+/// Settings sections, in sidebar order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SettingsSection {
+    #[default]
+    Devices,
+    Harnesses,
+    Agents,
+    Appearance,
+    Notifications,
+    Shortcuts,
+    Archived,
+}
+
+impl SettingsSection {
+    pub const ALL: [SettingsSection; 7] = [
+        SettingsSection::Devices,
+        SettingsSection::Harnesses,
+        SettingsSection::Agents,
+        SettingsSection::Appearance,
+        SettingsSection::Notifications,
+        SettingsSection::Shortcuts,
+        SettingsSection::Archived,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SettingsSection::Devices => "Devices",
+            SettingsSection::Harnesses => "Agents",
+            SettingsSection::Agents => "Accounts",
+            SettingsSection::Appearance => "Appearance",
+            SettingsSection::Notifications => "Notifications",
+            SettingsSection::Shortcuts => "Shortcuts",
+            SettingsSection::Archived => "Archived sessions",
+        }
+    }
+}
+
+pub mod accounts;
+pub mod appearance;
+pub mod archived;
+pub mod devices;
+pub mod harnesses;
+pub mod notifications;
+pub mod shortcuts;
+pub mod widgets;
+
 /// Sidebar drag-resize bounds (px).
 pub const SIDEBAR_MIN: f32 = 208.0;
 pub const SIDEBAR_MAX: f32 = 400.0;
