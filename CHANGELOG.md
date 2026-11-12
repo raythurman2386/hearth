@@ -4,6 +4,8 @@ Notable changes to **Hearth**. Format inspired by [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-11
+
 ### Fixed
 
 - The new-session canvas centers its device/project selectors and no longer repeats the mode/model cluster and checkout/ref footer that the composer already draws. The composer's model chip uses the harness brand mark instead of a two-letter monogram.
