@@ -7,10 +7,8 @@
 //! composer just calls [`popovers`] after building its body. Colors come from
 //! [`crate::theme::Theme`]; layout numbers match the gpui constants.
 //!
-//! Harness brands use the shared icon catalogue in the rail and model rows; the
-//! compact chip keeps a two-letter mark where a full icon would crowd the label.
-//! harness brands draw as a compact two-letter monogram (`harness_mark`) rather
-//! than the gpui SVG marks. Everything else keeps the gpui geometry.
+//! Harness brands use the shared icon catalogue everywhere, including the
+//! compact composer chip. Everything else keeps the gpui geometry.
 
 use rune::{
     Color, El, GrowthSpec, Key, KeyEvent, ScrollSpec, TextStyle, Tx, col, el, icon, row, text,
@@ -24,8 +22,7 @@ use crate::theme::Theme;
 
 use super::loads::{Loadable, ensure_harnesses, ensure_refs, prefetch_models};
 use super::model::{
-    CheckoutKind, MAX_REF_ROWS, NO_ACTIVE_ROW, default_reasoning, harness_mark, mode_label,
-    reasoning_label,
+    CheckoutKind, MAX_REF_ROWS, NO_ACTIVE_ROW, default_reasoning, mode_label, reasoning_label,
 };
 use super::selection::{self, selected_chat_row, traits_active, traits_label};
 use super::{ModelRail, ModelRowData, PickerKind, PickersState, checkout, menu_step, space_picker};
@@ -71,12 +68,15 @@ pub fn render_cluster(state: &PickersState, app: &App, theme: &Theme) -> El {
     let model_label = model_chip_label(state, app, no_agents);
     let harness = state.effective_harness(app);
     let mark = if no_agents {
-        "!"
+        Some((&crate::icons::TERMINAL, theme.text_muted))
     } else {
-        harness.map(harness_mark).unwrap_or("AI")
+        match harness {
+            Some(harness) => Some(crate::shell::titlebar::harness_mark(harness, theme)),
+            None => Some((&crate::icons::HUGINN_MARK, theme.text_muted)),
+        }
     };
     let traits_set = traits_label(app);
-    let model_chip = chip(theme, ANCHOR_MODEL, &model_label, true, Some(mark), false)
+    let model_chip = chip(theme, ANCHOR_MODEL, &model_label, true, mark, false)
         .on_press(|app: &mut App| toggle_picker(app, PickerKind::HarnessModel));
 
     let has_traits = selection::has_traits(app);
@@ -140,8 +140,9 @@ pub fn render_cluster(state: &PickersState, app: &App, theme: &Theme) -> El {
 }
 
 /// The new-session canvas's picker block: the device + project selectors under
-/// the canvas logo, then the action cluster. Their popovers open downward
-/// ([`popovers`] anchors them below the chips).
+/// the canvas logo. Their popovers open downward ([`popovers`] anchors them
+/// below the chips). The mode/model cluster and the checkout/ref footer belong
+/// to the composer below, so the canvas does not repeat them.
 pub fn render_new_session(state: &PickersState, app: &App, theme: &Theme) -> El {
     let device_id = app.effective_device_id();
     let device_label = device_id
@@ -178,26 +179,21 @@ pub fn render_new_session(state: &PickersState, app: &App, theme: &Theme) -> El 
     )
     .on_press(|app: &mut App| toggle_picker(app, PickerKind::Space));
 
-    col()
-        .w_full()
-        .gap(Theme::SPACE_SM)
-        .child(
-            row()
-                .w_full()
-                .gap(4.0)
-                .center_y()
-                .child(open_state(
-                    device_chip,
-                    theme,
-                    state.open == Some(PickerKind::Device),
-                ))
-                .child(open_state(
-                    project_chip,
-                    theme,
-                    state.open == Some(PickerKind::Space),
-                )),
-        )
-        .child(render_cluster(state, app, theme))
+    row()
+        .max_w(560.0)
+        .min_w(0.0)
+        .gap(4.0)
+        .center_y()
+        .child(open_state(
+            device_chip,
+            theme,
+            state.open == Some(PickerKind::Device),
+        ))
+        .child(open_state(
+            project_chip,
+            theme,
+            state.open == Some(PickerKind::Space),
+        ))
 }
 
 /// The composer footer: the checkout-kind + ref chips on a new-session canvas,
@@ -545,7 +541,7 @@ fn chip(
     anchor: &'static str,
     label: &str,
     set: bool,
-    mark: Option<&str>,
+    mark: Option<(&'static rune::Icon, rune::Color)>,
     compact: bool,
 ) -> El {
     let mut e = row()
@@ -568,8 +564,8 @@ fn chip(
         );
         return e;
     }
-    if let Some(mark) = mark {
-        e = e.child(mark_badge(theme, mark, 16.0));
+    if let Some((mark, tint)) = mark {
+        e = e.child(icon(mark, 16.0).color(tint));
     }
     let ink = if set {
         theme.text.alpha(0.9)
@@ -638,19 +634,6 @@ fn footer_label(theme: &Theme, mark: &'static rune::Icon, label: &str) -> El {
                 .truncate()
                 .grow(1.0)
                 .min_w(0.0),
-        )
-}
-
-fn mark_badge(theme: &Theme, mark: &str, size: f32) -> El {
-    el().size(size, size)
-        .min_w(size)
-        .radius(4.0)
-        .center()
-        .fill(theme.ink(0.07))
-        .child(
-            text(mark.to_string())
-                .font(text_style(if size <= 16.0 { 8.0 } else { 10.0 }, 600.0))
-                .color(theme.text_muted),
         )
 }
 

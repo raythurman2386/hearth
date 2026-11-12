@@ -132,6 +132,15 @@ fn rendered() -> Rendered {
     Rendered { rt, _dir: dir }
 }
 
+fn new_chat_rendered() -> Rendered {
+    let (mut app, dir) = demo_app();
+    app.selected_chat = None;
+    let mut rt = Runtime::new(app, App::view, (W, H), Env::new(true, 1.0));
+    rt.frame(0.0);
+    rt.frame(1.0 / 60.0);
+    Rendered { rt, _dir: dir }
+}
+
 #[test]
 fn the_window_splits_into_sidebar_main_and_chrome() {
     let rt = rendered();
@@ -199,6 +208,40 @@ fn the_conversation_column_keeps_a_viewport_and_a_composer() {
         transcript[3],
         composer[3],
         outlet[3]
+    );
+}
+
+#[test]
+fn the_new_chat_canvas_centers_its_targets_and_leaves_the_cluster_to_the_composer() {
+    let rt = new_chat_rendered();
+    assert!(
+        rt.find("new-chat-canvas").is_some(),
+        "the new-session canvas drew"
+    );
+
+    let (main, _) = rt.presented("main-pane").expect("the main pane drew");
+    let center = main[0] + main[2] * 0.5;
+    let (device, _) = rt
+        .presented("pickers/anchor-device")
+        .expect("the device selector drew");
+    let (project, _) = rt
+        .presented("pickers/anchor-space")
+        .expect("the project selector drew");
+    let left = device[0].min(project[0]);
+    let right = (device[0] + device[2]).max(project[0] + project[2]);
+    assert!(
+        ((left + right) * 0.5 - center).abs() < 1.0,
+        "the target selectors should sit on the canvas centre ({center}), got {left}…{right}"
+    );
+
+    let model_chips = rt
+        .elements()
+        .into_iter()
+        .filter(|element| element.key.as_deref() == Some("pickers/anchor-model"))
+        .count();
+    assert_eq!(
+        model_chips, 1,
+        "only the composer carries the mode/model cluster; the canvas must not repeat it"
     );
 }
 

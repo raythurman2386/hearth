@@ -307,8 +307,8 @@ fn new_chat_canvas(app: &App, theme: &Theme) -> El {
                 // new-chat canvas. Their popovers mount from
                 // `composer::popups` like the composer's own pickers.
                 .child(
-                    el().w_full()
-                        .max_w(460.0)
+                    el().max_w(560.0)
+                        .min_w(0.0)
                         .mt(16.0)
                         .child(crate::pickers::render_new_session(&app.pickers, app, theme)),
                 )

@@ -52,6 +52,11 @@ static SCENES: &[Scene] = &[
         app.connection = crate::state::ConnectionStatus::Ready;
     }),
     ("demo", demo_scene),
+    ("new-chat", |app| {
+        demo_scene(app);
+        app.selected_chat = None;
+        crate::pickers::seed_demo_catalog(app);
+    }),
     ("settings", |app| {
         demo_scene(app);
         app.shell.route = crate::shell::Route::Settings(crate::settings::SettingsSection::Devices);
